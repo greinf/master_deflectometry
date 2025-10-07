@@ -1,0 +1,63 @@
+# Build folders
+build/
+out/
+bin/
+lib/
+
+# Visual Studio
+.vs/
+*.VC.db
+*.suo
+*.userosscache
+*.sln.docstates
+*.user
+*.filters
+*.opensdf
+*.sdf
+*.ipch
+*.log
+
+# Visual Studio Code
+.vscode/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CMakeUserPresets.json
+CMakePresets.json
+
+# Executables and build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.pdb
+*.obj
+*.pch
+*.ilk
+
+# Vcpkg build outputs (if local)
+vcpkg_installed/
+_installed/
+*.vcpkg_lock.json
+
+# Test logs, temp
+Testing/
+*.tmp
+*.cache
+
+# macOS/Linux (if you ever port)
+.DS_Store
+*.swp
+*.out
+
+# Git
+*.orig
+
+# Compression
+*.zip
+*.tar
+*.gz
