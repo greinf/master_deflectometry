@@ -4,6 +4,8 @@ out/
 bin/
 lib/
 
+#Word
+*.docx
 # Visual Studio
 .vs/
 *.VC.db
