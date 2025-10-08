@@ -65,20 +65,25 @@ Camera::Camera()
                 //auto device = deviceManager.Devices().at(selectedDevice)->OpenDevice(peak::core::DeviceAccessType::Control);
                 //auto nodeMapRemoteDevice = device->RemoteDevice()->NodeMaps().at(0);
             }
-            else if (deviceManager.Devices().size() == 1) {
-                m_device.push_back(deviceManager.Devices().at(0)->OpenDevice(peak::core::DeviceAccessType::Control));
-                m_nodemapRemoteDevice.push_back(m_device.at(0)->RemoteDevice()->NodeMaps().at(0));
-            }
         }
+        else if (deviceManager.Devices().size() == 1) {
+            m_device.push_back(deviceManager.Devices().at(0)->OpenDevice(peak::core::DeviceAccessType::Control));
+            m_nodemapRemoteDevice.push_back(m_device.at(0)->RemoteDevice()->NodeMaps().at(0));
+        }
+        
     }
     catch (const std::exception& e)
     {
         std::cout << "EXCEPTION: " << e.what() << std::endl;
     }
+
 }
 
 Camera::~Camera() {
-    //Check for open Datastreams
+    for (auto& ds : m_dataStream) {
+        try { ds->StopAcquisition(); }
+        catch (...) {}
+    }
     peak::Library::Close();
 }
 
@@ -88,7 +93,7 @@ bool Camera::PrepareAcuqisition(std::size_t i) {
         if (dataStreams.empty()) {
             return false;
         }
-        m_dataStream.at(i) = m_device.at(i)->DataStreams().at(0)->OpenDataStream();
+        m_dataStream.push_back(m_device.at(i)->DataStreams().at(0)->OpenDataStream());
         return true;
     }
     catch (std::exception& e) {
@@ -107,6 +112,7 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         int64_t w_min = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->Minimum();
         int64_t h_min = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Height")->Minimum();
 
+        //Set the minimal ROI
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("OffsetX")->SetValue(x_min);
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("OffsetY")->SetValue(y_min);
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->SetValue(w_min);
@@ -117,6 +123,12 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         int64_t y_max = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("OffsetY")->Maximum();
         int64_t w_max = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->Maximum();
         int64_t h_max = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Height")->Maximum();
+        
+        //Check for maximum values
+        //std::cout << "Maximum Width: " << w_max << '\n';
+        //std::cout << "Maximum Hight: " << h_max << '\n';
+        //auto pixFmt = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("PixelFormat");
+        //pixFmt->SetCurrentEntry(pixFmt->FindEntry("Mono8"));
 
         if ((x < x_min) || (y < y_min) || (x > x_max) || (y > y_max))
         {
@@ -133,6 +145,43 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
             m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("OffsetY")->SetValue(y);
             m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->SetValue(width);
             m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Height")->SetValue(height);
+            
+            return true;
+        }
+    }
+    catch (std::exception& e)
+    {
+        std::cout << "EXCEPTION " << e.what() << std::endl;
+    }
+
+    return false;
+}
+
+bool Camera::AllocAndAnnounceBuffers(std::size_t i) {
+    try
+    {
+        if (m_dataStream.at(i))
+        {
+            // Flush queue and prepare all buffers for revoking
+            m_dataStream.at(i)->Flush(peak::core::DataStreamFlushMode::DiscardAll);
+
+            // Clear all old buffers
+            for (const auto& buffer : m_dataStream.at(i)->AnnouncedBuffers())
+            {
+                m_dataStream.at(i)->RevokeBuffer(buffer);
+            }
+
+            int64_t payloadSize = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("PayloadSize")->Value();
+
+            // Get number of minimum required buffers
+            int numBuffersMinRequired = m_dataStream.at(i)->NumBuffersAnnouncedMinRequired();
+
+            // Alloc buffers
+            for (size_t count = 0; count < numBuffersMinRequired; count++)
+            {
+                auto buffer = m_dataStream.at(i)->AllocAndAnnounceBuffer(static_cast<size_t>(payloadSize), nullptr);
+                m_dataStream.at(i)->QueueBuffer(buffer);
+            }
 
             return true;
         }
@@ -145,55 +194,49 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
     return false;
 }
 
+bool Camera::StartAcquisition(std::size_t i){
+    try
+    {
+        m_dataStream.at(i)->StartAcquisition(peak::core::AcquisitionStartMode::Default, peak::core::DataStream::INFINITE_NUMBER);
+        m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("TLParamsLocked")->SetValue(1);
+        m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::CommandNode>("AcquisitionStart")->Execute();
+        
+        return true;
+    }
+    catch (std::exception& e)
+    {
+        std::cout << "EXCEPTION " << e.what() << std::endl;
+    }
 
-void Camera::getFrames(std::size_t i) {
+    return false;
+}
+
+void Camera::getFrames(std::size_t i) {  //Index for camera numeration
     //Create Buffer
-    if (!PrepareAcuqisition(i)) {
+    if (!PrepareAcuqisition()) {
         std::cout << "Acquisition Failed " << std::endl;
         return;
     }
-    if (!SetRoi()) //Here input the needed ROI 
+    if (!SetRoi(0, 0, 1280, 1024)) //Here input the needed ROI 
     {
         std::cout << "Setting for ROI failed " << std::endl;
     }
-    if (!AllocAndAnnonceBuffers()) {
+    
+    if (!AllocAndAnnounceBuffers()) {
         std::cout << "Buffer allocation failed " << std::endl;
     }
-    if (!StartAcuisation()) {
+
+    if (!StartAcquisition()) {
         std::cout << "Acquisation failed " << std::endl;
     }
 
-    auto dataStreams = m_device.at(i)->DataStreams();
-    if (dataStreams.empty()) {
-        std::cout << "No Data stream available! " << std::endl;
-        return;
-    }
-    std::shared_ptr<peak::core::DataStream> dataStream = m_device.at(i)->DataStreams().at(0)->OpenDataStream();
-    std::shared_ptr<peak::core::NodeMap> nodemapDataStream = dataStream->NodeMaps().at(0);
-    
-    std::int64_t payloadSize = m_device.at(i)->RemoteDevice()->NodeMaps().at(0)
-        ->FindNode<peak::core::nodes::IntegerNode>("PayloadSize")->Value();
-    std::size_t numBuffersMinRequired = dataStream->NumBuffersAnnouncedMinRequired();
-    for (size_t count = 0; count < numBuffersMinRequired; ++count) {
-        auto buffer = dataStream->AllocAndAnnounceBuffer(static_cast<size_t>(payloadSize), nullptr);
-        dataStream->QueueBuffer(buffer);
-    }
+    auto worker = std::make_unique<AcquisitionWorker>(m_dataStream.at(i));
+    worker->start();
 
-    //Acquisition
-    dataStream->StartAcquisition(peak::core::AcquisitionStartMode::Default, PEAK_INFINITE_NUMBER);
-    nodemapRemoteDevice->FindNode<peak::core::nodes::IntegerNode>("TLParamsLocked")->SetValue(1);
-    nodemapRemoteDevice->FindNode<peak::core::nodes::CommandNode>("AcquisitionStart")->Execute();
+    // Let it run for a few seconds
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    worker->stop();
 
-    //Remove an Release buffers from the buffer pool 
-    if (dataStream)
-    {
-        dataStream->Flush(peak::core::DataStreamFlushMode::DiscardAll);
-
-        for (const auto& buffer : dataStream->AnnouncedBuffers())
-        {
-            dataStream->RevokeBuffer(buffer);
-        }
-    }
 }
 
 void wait_for_enter()

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.2...3.12 FATAL_ERROR)
 
-project ("open_camera_cpp")
+project(open_camera_cpp CXX)
+set(CMAKE_CXX_STANDARD 17)
 
 message (STATUS "[${PROJECT_NAME}] Processing ${CMAKE_CURRENT_LIST_FILE}")
 
@@ -17,13 +18,15 @@ if (NOT TARGET ids_peak)
             ../../../../../../../lib/
     )
 endif ()
-
 find_package (Threads REQUIRED)
+find_package(OpenCV REQUIRED)
+
 
 # Link against libraries
 target_link_libraries (${PROJECT_NAME}
     ids_peak
     ${CMAKE_THREAD_LIBS_INIT}
+    ${OpenCV_LIBS}
 )
 
 # Call deploy function

@@ -7,9 +7,9 @@
 int main()
 {
     Camera camera{};
-    
-    std::cout << "Camera initialization succesfully! " << std::endl;
+    camera.getFrames();
+    //std::cout << "Camera initialization succesfully! " << std::endl;
     std::int16_t i;
-    std::cin >> i;
+    //std::cin >> i;
     
 }
