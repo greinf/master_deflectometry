@@ -6,8 +6,10 @@
 
 int main()
 {
-    Camera camera();
+    Camera camera{};
+    
     std::cout << "Camera initialization succesfully! " << std::endl;
     std::int16_t i;
     std::cin >> i;
+    
 }
