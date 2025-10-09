@@ -11,21 +11,21 @@
 
 class AcquisitionWorker {
 public:
-	explicit AcquisitionWorker(std::shared_ptr<peak::core::DataStream> ds):
-	m_datastream{ds}, m_running{ false }
+	explicit AcquisitionWorker(std::shared_ptr<peak::core::DataStream> ds, std::shared_ptr<peak::core::NodeMap> nm):
+		m_datastream{ ds }, m_nodemapRemoteDevice{ nm }, m_running {false}
 	{
-		try {
-			m_nodemapRemoteDevice = m_datastream->ParentDevice()->RemoteDevice()->NodeMaps().at(0);
-		}
-		catch (std::exception& e) {
-			std::cout << "EXCEPTION " << e.what() << std::endl;
+		if  (!m_datastream && !m_nodemapRemoteDevice){
+			throw (std::exception("Acuqisition Worker has empty Datastream or RemoteDevice Object \n"));
 		}
 	}
 
 	~AcquisitionWorker() { stop(); }
 
 	void start() {
-		if (m_running) return;
+		if (m_running) {
+			std::cout << "Controll Varialbe m_running is already set to true. Acuisition is already running!" << std::endl;
+			return; //if already true no other running is allowed
+		}
 		m_running = true;
 		readout = std::thread([this] { run(); });
 	}
@@ -34,7 +34,16 @@ public:
 		try { m_datastream->StopAcquisition(); } catch(...){}
 		if (readout.joinable()) readout.join();
 	}
+
+	void assignFunct_ptr(void(*funct_ptr)(const cv::Mat&)) {
+		m_funct_ptr = funct_ptr;
+	}
+
 private:
+	// Try to work with a function pointer this time for callback.
+	// While the m_funct_ptr is a member, the adresse it not owned by the class!
+	void(*m_funct_ptr)(const cv::Mat&) = nullptr;
+
 	std::shared_ptr<peak::core::DataStream> m_datastream;
 	std::shared_ptr<peak::core::NodeMap> m_nodemapRemoteDevice;
 	std::atomic<bool> m_running;
@@ -44,10 +53,14 @@ private:
 			try {
 				const auto buffer = m_datastream->WaitForFinishedBuffer(1000);
 				if (buffer) {
-					// Option A (no IPL, Mono8 forced):
+					// Be carefull!!! view does NOT own the data. It is read directly from the buffer through 
+					// the void pointer, pointing to the first element of the Buffer. 
+					// Even more dangerous -> Void pointer used. At this point openCV does not know 
+					// if the image is Mono8 Mono10 or Mono12. 
+					
 					cv::Mat view(buffer->Height(), buffer->Width(), CV_8UC1, (void*)buffer->BasePtr(), buffer->Width());
-					cv::imshow("Stream", view);
-					cv::waitKey(5);
+					//Callback called
+					m_funct_ptr(view);
 					m_datastream->QueueBuffer(buffer);
 				}
 			}
@@ -67,6 +80,7 @@ public:
 	~Camera();
 	
 	void getFrames(std::size_t i = 0);
+
 private:
 	std::vector<std::shared_ptr<peak::core::Device>> m_device; //normally only one camera is used
 	std::vector<std::shared_ptr<peak::core::DataStream>> m_dataStream;

@@ -1,6 +1,8 @@
 #include "camera.hpp"
 
 void wait_for_enter();
+void showImage(const cv::Mat& mat);
+
 
 Camera::Camera()
 {
@@ -8,6 +10,7 @@ Camera::Camera()
 
     // create a device manager object
     auto& deviceManager = peak::DeviceManager::Instance();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     //std::cout << "entered Constructor " << std::endl;
     try
     {
@@ -22,6 +25,12 @@ Camera::Camera()
             // close peak library
             peak::Library::Close();
         }
+        // deviceManager.Devices() gives Device Descriptors. These are NOT the active devices, more like a first descriptor 
+        // of what could be opended. Hyrachie: System -> Interface -> DeviceDescriptor -> Device
+        // 1. System ( ParentSystem() ) -> Represent hardware transport layer
+        // 2. Interface ( ParentInterface() ) -> Represent a single interface on that system
+        // 3. Device Descriptor -> Represent a camera found on that interface, BUT not yet opended. 
+        // 4. Device -> The actual open Camera that one gets by calling deviceManager.Devices().at(i)->OpenDevice(...Devices Acces Type...)
 
         if (deviceManager.Devices().size() >= 2) {
             // list all available devices
@@ -82,7 +91,7 @@ Camera::Camera()
 Camera::~Camera() {
     for (auto& ds : m_dataStream) {
         try { ds->StopAcquisition(); }
-        catch (...) {}
+        catch (...) { std::cout << "Camera Object destroyed " << std::endl; }
     }
     peak::Library::Close();
 }
@@ -117,6 +126,14 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("OffsetY")->SetValue(y_min);
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->SetValue(w_min);
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Height")->SetValue(h_min);
+
+        //Camera only gives 
+        auto availableEntries = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("PixelFormat")->AvailableEntries();
+        std::cout << "Num Options: " << availableEntries.size() << '\n';
+        for (const auto& entry : availableEntries) {
+            std::cout << entry->Name() << std::endl;
+        }
+
 
         // Get the maximum ROI values
         int64_t x_max = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("OffsetX")->Maximum();
@@ -230,11 +247,12 @@ void Camera::getFrames(std::size_t i) {  //Index for camera numeration
         std::cout << "Acquisation failed " << std::endl;
     }
 
-    auto worker = std::make_unique<AcquisitionWorker>(m_dataStream.at(i));
+    auto worker = std::make_unique<AcquisitionWorker>(m_dataStream.at(i), m_nodemapRemoteDevice.at(i));
+    worker->assignFunct_ptr(showImage);
     worker->start();
 
     // Let it run for a few seconds
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::this_thread::sleep_for(std::chrono::seconds(10));
     worker->stop();
 
 }
@@ -245,4 +263,15 @@ void wait_for_enter()
 #if defined(_WIN32)
     system("pause");
 #endif
+}
+
+
+//Declare further functionality like saving pictures or ask for user input
+// void *function_name*(const cv::Mat& mat){}
+
+
+
+void showImage(const cv::Mat& mat) {
+    cv::imshow("Frame", mat);
+    cv::waitKey(10);
 }
