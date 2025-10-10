@@ -1,8 +1,7 @@
 #include "camera.hpp"
 
 void wait_for_enter();
-void showImage(const cv::Mat& mat);
-
+void showRawImage(const cv::Mat& mat);
 
 Camera::Camera()
 {
@@ -127,13 +126,14 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->SetValue(w_min);
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Height")->SetValue(h_min);
 
-        //Camera only gives 
+        //Debugging 
+        /*
         auto availableEntries = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("PixelFormat")->AvailableEntries();
         std::cout << "Num Options: " << availableEntries.size() << '\n';
         for (const auto& entry : availableEntries) {
             std::cout << entry->Name() << std::endl;
         }
-
+        */
 
         // Get the maximum ROI values
         int64_t x_max = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("OffsetX")->Maximum();
@@ -248,11 +248,12 @@ void Camera::getFrames(std::size_t i) {  //Index for camera numeration
     }
 
     auto worker = std::make_unique<AcquisitionWorker>(m_dataStream.at(i), m_nodemapRemoteDevice.at(i));
-    worker->assignFunct_ptr(showImage);
+    worker->assignImageHandler(showRawImage);
     worker->start();
 
-    // Let it run for a few seconds
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+    std::cout << "Wait for Results ";
+    char a;
+    std::cin >> a;
     worker->stop();
 
 }
@@ -265,13 +266,10 @@ void wait_for_enter()
 #endif
 }
 
-
 //Declare further functionality like saving pictures or ask for user input
 // void *function_name*(const cv::Mat& mat){}
 
-
-
-void showImage(const cv::Mat& mat) {
+void showRawImage(const cv::Mat& mat) {
     cv::imshow("Frame", mat);
     cv::waitKey(10);
 }
