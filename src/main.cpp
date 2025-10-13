@@ -1,15 +1,21 @@
 #define VERSION "1"
 
-#include "camera.hpp"
 #include <cstddef>
 #include <iostream>
 
+#include "camera.hpp"
+#include "screen.hpp"
+
 int main()
 {
-    Camera camera{};
-    camera.getFrames();
-    //std::cout << "Camera initialization succesfully! " << std::endl;
-    std::int16_t i;
-    //std::cin >> i;
+
+    Screen screen{};
+    screen.generate_phaseShift();
+    screen.displayPattern();
     
+    
+    //Camera camera{};
+    //camera.getFrames();
+     
+
 }

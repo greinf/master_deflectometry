@@ -250,12 +250,7 @@ void Camera::getFrames(std::size_t i) {  //Index for camera numeration
     auto worker = std::make_unique<AcquisitionWorker>(m_dataStream.at(i), m_nodemapRemoteDevice.at(i));
     worker->assignImageHandler(showRawImage);
     worker->start();
-
-    std::cout << "Wait for Results ";
-    char a;
-    std::cin >> a;
     worker->stop();
-
 }
 
 void wait_for_enter()

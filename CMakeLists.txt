@@ -8,6 +8,7 @@ message (STATUS "[${PROJECT_NAME}] Processing ${CMAKE_CURRENT_LIST_FILE}")
 # Setup target executable with the same name as our project
 add_executable (${PROJECT_NAME}
     src/camera.cpp
+    src/screen.cpp
     src/main.cpp
 )
 
@@ -19,8 +20,9 @@ if (NOT TARGET ids_peak)
     )
 endif ()
 find_package (Threads REQUIRED)
+# For vcpkg manifest mode (local install)
+set(OpenCV_ROOT "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/share/opencv4")
 find_package(OpenCV REQUIRED)
-
 
 # Link against libraries
 target_link_libraries (${PROJECT_NAME}
