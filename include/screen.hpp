@@ -17,8 +17,8 @@
 
 class Screen {
 public:
-	//Constructor (Width, Height, PixelPitch in micrometer)
-	explicit Screen(std::int32_t screen_x = 1920, std::int32_t screen_y = 1080, std::int32_t pixel_pitch = 250);
+	//Constructor (Width, Height, PixelPitch in micrometer, Number of periods 
+	explicit Screen(std::int32_t screen_x = 1920, std::int32_t screen_y = 1080, std::int32_t pixel_pitch = 250, float m_numberperiods = (float)10);
 
 	enum class Shift_mode {
 		four_phase_shift,
@@ -36,13 +36,15 @@ public:
 		"beat frequency shift "};
 
 	//void grayValueCalibration();
-	void generate_phaseShift();
+	void generate_phaseShift(Shift_mode);
+	//void generate_phaseShift();
 	void displayPattern();
 
 private:
-	bool preparePhaseshift(bool horizontal_shift, const Shift_mode mode = Shift_mode::four_phase_shift);
-	
-
+	//bool preparePhaseshift(bool horizontal_shift, const Shift_mode mode = Shift_mode::four_phase_shift);
+	bool preparefourShiftParameters();
+	bool generateSinusPatterns();
+	/*
 	cv::structured_light::SinusoidalPattern::Params m_params;
 	
 	cv::Ptr<cv::structured_light::SinusoidalPattern> m_sinus_vertical = 
@@ -50,14 +52,18 @@ private:
 
 	cv::Ptr<cv::structured_light::SinusoidalPattern> m_sinus_horizontal = 
 		cv::structured_light::SinusoidalPattern::create(cv::makePtr<cv::structured_light::SinusoidalPattern::Params>(m_params));
-
+	*/
 	Shift_mode m_mode;
-	std::int32_t m_frequency;
 	std::int32_t m_pixel_x;
 	std::int32_t m_pixel_y;
-	std::int32_t m_pixel_pitch; //in mirco-meter
+	std::int32_t m_pixel_pitch; 
+	float m_amp{ 127.5 };
+	float m_mean{ 127.5 };
 	bool gray_val_calibrated{ false };
-	std::vector<cv::Mat> m_patterns;
+	float m_wavelength;
+	float m_numberPeriods;
+	float m_shift_length;
+	std::vector<cv::Mat> m_patterns{};
 };
 
 

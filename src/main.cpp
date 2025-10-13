@@ -10,7 +10,7 @@ int main()
 {
 
     Screen screen{};
-    screen.generate_phaseShift();
+    screen.generate_phaseShift(Screen::Shift_mode::four_phase_shift);
     screen.displayPattern();
     
     
