@@ -1,3 +1,4 @@
+#pragma once
 #include "camera.hpp"
 
 void wait_for_enter();
@@ -95,7 +96,11 @@ Camera::~Camera() {
     peak::Library::Close();
 }
 
-bool Camera::PrepareAcuqisition(std::size_t i) {
+void Camera::grayValueCalibration(std::shared_ptr<Screen> screen) {
+
+}
+
+bool Camera::PrepareAcquisition(std::size_t i) {
     try {
         auto dataStreams = m_device.at(i)->DataStreams();
         if (dataStreams.empty()) {
@@ -126,13 +131,30 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->SetValue(w_min);
         m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Height")->SetValue(h_min);
 
-        //Debugging 
+        //  ***** Debugging Settings *****
         /*
-        auto availableEntries = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("PixelFormat")->AvailableEntries();
+        auto availableEntries = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("Gamma")->AvailableEntries();
         std::cout << "Num Options: " << availableEntries.size() << '\n';
         for (const auto& entry : availableEntries) {
             std::cout << entry->Name() << std::endl;
         }
+        */
+        /*
+        //available nodes
+        for (auto& nodes : m_nodemapRemoteDevice.at(i)->Nodes()) {
+            if (nodes->DisplayName().find("") != std::string::npos) {
+                std::cout << nodes->DisplayName() << '\n';
+            }
+        }
+        */
+        /* ToDo!!!
+        Auto exposure / auto gain / auto white balance ? OFF.
+
+        PixelFormat ? keep BayerRG8 (or Mono8 if the camera supports truly monochrome output without ISP).
+
+        Color transforms / sRGB / LUT ? if such nodes exist, disable or leave default (=off).
+
+        BlackLevel ? if present, read/record it and subtract in processing.
         */
 
         // Get the maximum ROI values
@@ -228,29 +250,24 @@ bool Camera::StartAcquisition(std::size_t i){
     return false;
 }
 
-void Camera::getFrames(std::size_t i) {  //Index for camera numeration
+//Does set up the camera to acquire images. 
+//If more than camera is used index gives possability to choose between cameras. 
+//Return a worker class for controll over Image Acquisition.
+void Camera::setUpAcquisition(std::size_t i) {  
     //Create Buffer
-    if (!PrepareAcuqisition()) {
-        std::cout << "Acquisition Failed " << std::endl;
-        return;
+    if (!PrepareAcquisition(i)) {
+        std::runtime_error e("Acquisition Failed ");
     }
-    if (!SetRoi(0, 0, 1280, 1024)) //Here input the needed ROI 
+    if (!SetRoi(0, 0, 1280, 1024, i)) //Here input the needed ROI 
     {
         std::cout << "Setting for ROI failed " << std::endl;
     }
-    
-    if (!AllocAndAnnounceBuffers()) {
+    if (!AllocAndAnnounceBuffers(i)) {
         std::cout << "Buffer allocation failed " << std::endl;
     }
-
-    if (!StartAcquisition()) {
+    if (!StartAcquisition(i)) {
         std::cout << "Acquisation failed " << std::endl;
     }
-
-    auto worker = std::make_unique<AcquisitionWorker>(m_dataStream.at(i), m_nodemapRemoteDevice.at(i));
-    worker->assignImageHandler(showRawImage);
-    worker->start();
-    worker->stop();
 }
 
 void wait_for_enter()
@@ -264,7 +281,4 @@ void wait_for_enter()
 //Declare further functionality like saving pictures or ask for user input
 // void *function_name*(const cv::Mat& mat){}
 
-void showRawImage(const cv::Mat& mat) {
-    cv::imshow("Frame", mat);
-    cv::waitKey(10);
-}
+
