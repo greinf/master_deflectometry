@@ -17,7 +17,6 @@ enum class DisplayMode {
 enum class AcquisitionMode {
 	UserInput,
 	Automatic,
-	max_value,
 };
 
 #endif // !1

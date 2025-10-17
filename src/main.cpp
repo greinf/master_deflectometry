@@ -4,13 +4,17 @@
 #include <iostream>
 #include "deflectometry.hpp"
 #include "enums.hpp"
+#include <opencv2/opencv.hpp>
 
 
 int main()
 {
+    //Supress open CV Information -only warnings are logged. 
+    cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
+
     Deflectometry meassure{};
 
-    meassure.start_meassurement(Shift_mode::four_phase_shift, DisplayMode::Automatic, 0);
+    meassure.start_meassurement(Shift_mode::user_defined, DisplayMode::Automatic, 0);
     
 
     /*
@@ -26,4 +30,5 @@ int main()
     //Camera camera{};
     //camera.getFrames();
     */ 
+    
 }

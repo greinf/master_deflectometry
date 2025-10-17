@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.2...3.12 FATAL_ERROR)
+project(open_camera_cpp LANGUAGES CXX)
 
-project(open_camera_cpp CXX)
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 message (STATUS "[${PROJECT_NAME}] Processing ${CMAKE_CURRENT_LIST_FILE}")
 
@@ -38,7 +40,7 @@ ids_peak_deploy(${PROJECT_NAME})
 
 # Set C++ standard to 14 (required for ids_peak)
 set_target_properties(${PROJECT_NAME} PROPERTIES
-    CXX_STANDARD 14
+    #CXX_STANDARD 14
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS NO
 )

@@ -33,7 +33,8 @@ public:
 	void generate_phaseShift(Shift_mode);
 	
 	//Displays Generated Pattern Sequence. Next Picture after 2sec. 
-	void displayPatterns();
+	void displayPatterns_single_thread();
+	void displayPatterns_multi_thread();
 	std::vector<cv::Mat> m_patterns{};
 	void showImage(const cv::Mat&);
 
@@ -44,20 +45,19 @@ public:
 private:
 	Shift_mode m_mode;
 	int m_steps{};
-	bool preparefourShiftParameters();
+	bool prepareShiftParameters();
 	bool generateSinusPatterns();
 
 	std::atomic<bool> m_keepDisplaying{ true };
-	std::int32_t m_pixel_x;
-	std::int32_t m_pixel_y;
-	std::int32_t m_pixel_pitch; 
+	std::int32_t m_pixel_x{};
+	std::int32_t m_pixel_y{};
+	std::int32_t m_pixel_pitch{};
 	float m_amp{ 127.5 };
 	float m_mean{ 127.5 };
 	bool gray_val_calibrated{ false };
-	float m_wavelength;
-	float m_numberPeriods;
-	float m_shift_length;
-
+	float m_wavelength{};
+	float m_numberPeriods{};
+	float m_shift_length{};
 };
 
 

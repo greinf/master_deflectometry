@@ -1,5 +1,6 @@
 #pragma once
 #include "camera.hpp"
+#include "flagHandler.hpp"
 
 void wait_for_enter();
 void showRawImage(const cv::Mat& mat);
@@ -70,25 +71,29 @@ Camera::Camera()
             if (deviceManager.Devices().at(selectedDevice)->IsOpenable()) {
                 m_device.push_back(deviceManager.Devices().at(selectedDevice)->OpenDevice(peak::core::DeviceAccessType::Control));
                 m_nodemapRemoteDevice.push_back(m_device.at(selectedDevice)->RemoteDevice()->NodeMaps().at(0));
-
-                //auto device = deviceManager.Devices().at(selectedDevice)->OpenDevice(peak::core::DeviceAccessType::Control);
-                //auto nodeMapRemoteDevice = device->RemoteDevice()->NodeMaps().at(0);
+                //Camera running Flag is set here. Even if multiple camera are found. 
+                runtime_flags.set_start_camera_running_flag();
+                
             }
         }
         else if (deviceManager.Devices().size() == 1) {
             m_device.push_back(deviceManager.Devices().at(0)->OpenDevice(peak::core::DeviceAccessType::Control));
             m_nodemapRemoteDevice.push_back(m_device.at(0)->RemoteDevice()->NodeMaps().at(0));
+            runtime_flags.set_start_camera_running_flag();
+            //Camera running Flag is set here.
         }
         
     }
     catch (const std::exception& e)
     {
         std::cout << "EXCEPTION: " << e.what() << std::endl;
+        //Sets stop camera running flag
+        runtime_flags.set_stop_camera_running_flag();
     }
-
 }
 
 Camera::~Camera() {
+    runtime_flags.set_stop_camera_running_flag();
     for (auto& ds : m_dataStream) {
         try { ds->StopAcquisition(); }
         catch (...) { std::cout << "Camera Object destroyed " << std::endl; }
@@ -256,7 +261,7 @@ bool Camera::StartAcquisition(std::size_t i){
 void Camera::setUpAcquisition(std::size_t i) {  
     //Create Buffer
     if (!PrepareAcquisition(i)) {
-        std::runtime_error e("Acquisition Failed ");
+        std::runtime_error e("Prepare Acquisition Failed ");
     }
     if (!SetRoi(0, 0, 1280, 1024, i)) //Here input the needed ROI 
     {
