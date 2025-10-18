@@ -21,7 +21,7 @@ public:
 	 Deflectometry();
 
 	 void start_meassurement(Shift_mode, DisplayMode, int);
-
+	 void show_acquistion();
 private:
 	std::shared_ptr<Screen> m_screen{nullptr};
 	std::shared_ptr<AcquisitionWorker> m_acquisition_worker{ nullptr };
@@ -34,6 +34,8 @@ private:
 	// Controller thread for automatic acquisaition. Default argument is ammount of pictures taken per 
 	// Meassurment. Information about ammount of shift_steps is saved in flagHandler.hpp.
 	void controller_automatic();
+
+	
 };
 
 #endif

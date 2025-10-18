@@ -181,16 +181,18 @@ void Screen::displayPatterns_multi_thread() {
 	for (const auto& m_pattern : m_patterns) {
 		while (true) {
 			//Fringe Pattern update 
+			
+			runtime_flags.set_finished_fringe_Iteration_false();
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			imgHandler.imshow_Pattern(m_pattern);
-			runtime_flags.set_finished_fringe_Iteration_false();
 			if (runtime_flags.get_next_fringe_pattern_flag()) {
 				runtime_flags.set_next_fringe_pattern_flag_false();
-				if (&m_pattern == &m_patterns.back()) {
-					std::cout << "Reached Last fringe Pattern \n";
-					runtime_flags.set_finished_fringe_Iteration_true();
-				}
 				break;  // show next image
+			}
+			if (&m_pattern == &m_patterns.back()) {
+				std::cout << "Reached Last fringe Pattern \n";
+				runtime_flags.set_finished_fringe_Iteration_true();
+				return;
 			}
 			//If stop_fringe_projection_flag is set -> early return
 			else if (runtime_flags.get_stop_fringe_projection_flag()) { 

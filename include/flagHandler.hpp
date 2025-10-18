@@ -104,6 +104,10 @@ public:
 		finished_fringe_Iteration.store(false);
 	}
 
+	bool get_finished_fringe_Iteration() {
+		return finished_fringe_Iteration.load();
+	}
+
 	void set_number_of_pictures_per_pattern(int n){
 		n_pictures_per_pattern = n;
 	}

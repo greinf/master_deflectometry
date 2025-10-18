@@ -7,12 +7,25 @@
 #include "imageHandler.hpp"
 #include "flagHandler.hpp"
 
-
+cv::Mat rotImage180(const cv::Mat&);
 
 //if image should be saved, assign here a handler function that can save the image. 
 void showRawImage(const cv::Mat& mat) {
-	imgHandler.imshow_Camera(mat);
+	cv::Mat rotated = rotImage180(mat);
+	imgHandler.imshow_Camera(rotated);
 }
+
+cv::Mat rotImage180(const cv::Mat& mat) {
+	int width = mat.cols; //no function just public member variable
+	int height = mat.rows;
+	cv::Vec<float, 2> center(float(width / 2.), float(height / 2.));
+	cv::Mat rot_Matrix = cv::getRotationMatrix2D(center, 180., 1.);
+	cv::Mat destination(height, width, CV_8UC1);
+	cv::warpAffine(mat, destination, rot_Matrix, destination.size());
+	return destination;
+}
+
+
 
 // Constructor Deflectometry() takes no argument. Automatically creates Camera class with ids::peak library. Acuqistionworker inherits from that. 
 // If multiple cameras are used these can be choosen by the input Argument of Acquisitionworker. 
@@ -21,6 +34,16 @@ void showRawImage(const cv::Mat& mat) {
 Deflectometry::Deflectometry() {
 	m_screen = std::make_shared<Screen>();
 	m_acquisition_worker = std::make_shared<AcquisitionWorker>(0); 
+}
+
+void Deflectometry::show_acquistion() {
+	std::cout << m_acquisition_worker->m_frames.size() << std::endl;
+	for (const auto& frame : m_acquisition_worker->m_frames) {
+		cv::namedWindow("Raw Phase", cv::WINDOW_NORMAL);
+		cv::setWindowProperty("Raw Phase", cv::WINDOW_NORMAL, cv::WINDOW_FREERATIO);
+		cv::imshow("Raw Phase", frame);
+		cv::waitKey(0);
+	}
 }
 
 void Deflectometry::controller_automatic() {
@@ -44,11 +67,18 @@ void Deflectometry::controller_automatic() {
 	for (int i = 0; i < runtime_flags.get_number_of_shifts()*2; ++i) { //times two for vertikal and horizontal
 		for (int j = 0; j < runtime_flags.get_number_of_pictures_per_pattern(); ++j) {
 			runtime_flags.set_true_imSave_flag();
-			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
 		}
 		runtime_flags.set_next_fringe_pattern_flag_true();
 	}
 	std::cout << "Finished :D \n";
+	if (runtime_flags.get_finished_fringe_Iteration()) {
+		std::cout << "finished? \n";
+		runtime_flags.set_false_acquisition_flag();
+		runtime_flags.set_stop_fringe_projection_flag_true();
+		imgHandler.stop();
+		
+	}
 }
 
 

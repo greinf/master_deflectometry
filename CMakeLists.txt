@@ -13,6 +13,8 @@ add_executable (${PROJECT_NAME}
     src/screen.cpp
     src/main.cpp
     src/deflectometry.cpp
+    src/imgProcessing.cpp
+
 )
 
 # Find packages

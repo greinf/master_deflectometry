@@ -15,6 +15,9 @@ int main()
     Deflectometry meassure{};
 
     meassure.start_meassurement(Shift_mode::user_defined, DisplayMode::Automatic, 0);
+
+    
+    meassure.show_acquistion();
     
 
     /*
