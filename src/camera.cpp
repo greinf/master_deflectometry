@@ -138,7 +138,7 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
 
         //  ***** Debugging Settings *****
         /*
-        auto availableEntries = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("Gamma")->AvailableEntries();
+        auto availableEntries = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("PixelFormat")->AvailableEntries();
         std::cout << "Num Options: " << availableEntries.size() << '\n';
         for (const auto& entry : availableEntries) {
             std::cout << entry->Name() << std::endl;
@@ -168,8 +168,13 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         int64_t w_max = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Width")->Maximum();
         int64_t h_max = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::IntegerNode>("Height")->Maximum();
         
-        //Check for maximum values
-        //std::cout << "Maximum Width: " << w_max << '\n';
+
+        // Set pixel Value for 
+        runtime_flags.pixel_x = w_max;
+        runtime_flags.pixel_y = h_max;
+
+        // Check for maximum values
+        // std::cout << "Maximum Width: " << w_max << '\n';
         //std::cout << "Maximum Hight: " << h_max << '\n';
         //auto pixFmt = m_nodemapRemoteDevice.at(i)->FindNode<peak::core::nodes::EnumerationNode>("PixelFormat");
         //pixFmt->SetCurrentEntry(pixFmt->FindEntry("Mono8"));

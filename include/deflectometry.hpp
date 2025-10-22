@@ -15,6 +15,7 @@ enum class DisplayMode;
 
 class Screen;
 class AcquisitionWorker;
+class ImageProcessing;
 
 class Deflectometry {
 public:
@@ -22,9 +23,12 @@ public:
 
 	 void start_meassurement(Shift_mode, DisplayMode, int);
 	 void show_acquistion();
+	 void phase_unwrap();
+
 private:
 	std::shared_ptr<Screen> m_screen{nullptr};
 	std::shared_ptr<AcquisitionWorker> m_acquisition_worker{ nullptr };
+	std::shared_ptr<ImageProcessing> m_img_processing{ nullptr };
 	std::thread img_handler_thread;
 
 	// Contoller_thread that is used to oversee the acquisition of camera frames

@@ -29,6 +29,23 @@ find_package (Threads REQUIRED)
 set(OpenCV_ROOT "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/share/opencv4")
 find_package(OpenCV REQUIRED)
 
+# Include Goldstein headers
+include_directories(
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/include
+)
+
+# Add Goldstein source files to your executable
+target_sources(${PROJECT_NAME}
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/extract.c
+        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/grad.c
+        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/goldstein.c
+        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/Queue.c
+        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/util.c
+	${CMAKE_SOURCE_DIR}/src/GoldsteinWrapper.cpp    # our new wrapper
+)
+
 # Link against libraries
 target_link_libraries (${PROJECT_NAME}
     ids_peak

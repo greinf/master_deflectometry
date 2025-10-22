@@ -5,6 +5,7 @@
 #include "imageHandler.hpp"
 
 #include <mutex>
+cv::Mat rotImage180(const cv::Mat& mat);
 
 class AcquisitionWorker: public Camera{
 public:
@@ -48,17 +49,19 @@ public:
 			if (m_readout_thread.joinable()) m_readout_thread.join();
 		}
 		catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
-		
 	}
+
+	void camera_calibration();
 
 	
 	void assignImageHandler(void(*funct_ptr)(const cv::Mat&)) {
 		m_image_handler = funct_ptr;
 	}
 
+	// Readout Frames are stored here. 
 	std::vector<cv::Mat> m_frames;
 
-
+	
 	void image_save() {
 		runtime_flags.set_true_imSave_flag();
 	}
@@ -110,9 +113,12 @@ private:
 					// if the image is Mono8 Mono10 or Mono12. 
 					cv::Mat view(buffer->Height(), buffer->Width(), CV_8UC1, (void*)buffer->BasePtr(), buffer->Width());
 					//Callback called
-					m_image_handler(view);
+					cv::cvtColor(view, view, cv::COLOR_BayerRG2GRAY); //Camera is BayerBG
+					cv::Mat rotated = rotImage180(view);
+					m_image_handler(rotated);
 					if (runtime_flags.get_imSave_flag()) {
-						m_frames.push_back(view.clone());
+						std::this_thread::sleep_for(std::chrono::milliseconds(400));
+						m_frames.push_back(rotated.clone());
 						runtime_flags.set_false_imSave_flag();
 					}
 					//if (runtime_flags.get_acquisition_flag()) return;
@@ -129,6 +135,18 @@ private:
 		m_image_handler = nullptr;
 	}
 };
+
+
+cv::Mat rotImage180(const cv::Mat& mat) {
+	int width = mat.cols; //no function just public member variable
+	int height = mat.rows;
+	cv::Vec<float, 2> center(float(width / 2.), float(height / 2.));
+	cv::Mat rot_Matrix = cv::getRotationMatrix2D(center, 180., 1.);
+	cv::Mat destination(height, width, CV_8UC1);
+	cv::warpAffine(mat, destination, rot_Matrix, destination.size());
+	return destination;
+}
+
 
 
 #endif //  ACUISITIONWORKER_H

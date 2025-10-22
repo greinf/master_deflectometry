@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <stdexcept>
+#include <iostream>
 
 struct Flags {
 public:
@@ -119,6 +120,9 @@ public:
 	~Flags() {
 		--instance_counter; std::cout << "Flag Handler Object destroyed. \n";
 	}
+
+	int pixel_x;
+	int pixel_y;
 
 private:
 	// ImageSaveFlags

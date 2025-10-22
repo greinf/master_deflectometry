@@ -181,9 +181,7 @@ void Screen::displayPatterns_multi_thread() {
 	for (const auto& m_pattern : m_patterns) {
 		while (true) {
 			//Fringe Pattern update 
-			
 			runtime_flags.set_finished_fringe_Iteration_false();
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			imgHandler.imshow_Pattern(m_pattern);
 			if (runtime_flags.get_next_fringe_pattern_flag()) {
 				runtime_flags.set_next_fringe_pattern_flag_false();
@@ -200,6 +198,7 @@ void Screen::displayPatterns_multi_thread() {
 				std::cout << "Fringe Pattern interrupt \n";
 				return;  // exit the function early
 			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		}
 	}
 }

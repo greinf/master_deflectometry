@@ -21,8 +21,8 @@ public:
 	Camera();
 	Camera(const Camera&) = delete;
 	Camera& operator=(const Camera&) = delete;
-	Camera(Camera&&) = default;
-	Camera& operator=(Camera&&) = default;
+	Camera(Camera&&) = delete;
+	Camera& operator=(Camera&&) = delete;
 	~Camera();
 	
 	void setUpAcquisition(std::size_t i = 0);
