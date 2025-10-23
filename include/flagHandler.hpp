@@ -12,7 +12,7 @@ public:
 		++instance_counter;
 	}
 	
-	// ImageSaveFlags
+	// ******* ImageSaveFlags *************
 	
 	// Sets the imSave flag to true.
 	void set_true_imSave_flag() {
@@ -26,8 +26,20 @@ public:
 	bool get_imSave_flag() {
 		return image_save.load();
 	}
-	
-	// Acquisition Flags
+	//Is true if saving is finished 
+	void set_true_save_process_finished() {
+		save_process_finished.store(true);
+	}
+
+	void set_false_save_process_finished() {
+		save_process_finished.store(false);
+	}
+
+	bool get_save_processed_finished_flag() {
+		return save_process_finished.load();
+	}
+
+	// **************  Acquisition Flags ***********
 	// Sets the Acuqisition flag to true
 	void set_true_acquisition_flag() {
 		acquisition_flag.store(true);
@@ -41,7 +53,7 @@ public:
 		return acquisition_flag.load();
 	}
 
-	// CameraRunningFlags
+	// *************** CameraRunningFlags ************
 	
 	// Sets camera running flat to false
 	// Datastream of camera gets closed. 
@@ -57,7 +69,7 @@ public:
 		return camera_running_flag.load();
 	}
 
-	// Next Fringe Pattern Flags.
+	// *********Next Fringe Pattern Flags. ***************
 	// Sets next fringe pattern flag true.
 	void set_next_fringe_pattern_flag_true() {
 		next_fringe_pattern.store(true);
@@ -67,12 +79,23 @@ public:
 	void set_next_fringe_pattern_flag_false() {
 		next_fringe_pattern.store(false);
 	}
-
 	//Gets the fringe pattern flag. 
-	//
 	bool get_next_fringe_pattern_flag() {
 		return next_fringe_pattern.load();
 	}
+	//Processed next fringe finished flags.
+	void next_fringe_process_finished_true() {
+		next_pattern_finished.store(true);
+	}
+
+	void next_fringe_process_finished_false() {
+		next_pattern_finished.store(false);
+	}
+
+	bool get_next_fringe_process_finished_flag() {
+		return next_pattern_finished.load();
+	}
+	
 	
 	// Stop Fringe Projection 
 	// Sets the Stop fringe Projection flag true. 
@@ -127,10 +150,14 @@ public:
 private:
 	// ImageSaveFlags
 	std::atomic<bool> image_save{ false };
+	std::atomic<bool> save_process_finished{ false };
+
 	//CameraRunningFlags
 	std::atomic<bool> camera_running_flag{ false };
 	// Next Fringe Pattern Flags.
 	std::atomic<bool> next_fringe_pattern{ false };
+	std::atomic<bool> next_pattern_finished{ false };
+
 	// Stop Fringe Projection
 	std::atomic<bool> stop_fringe_projection{ false };
 	// Acuqisition flag

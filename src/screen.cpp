@@ -179,6 +179,7 @@ void Screen::displayPatterns_single_thread() {
 
 void Screen::displayPatterns_multi_thread() {
 	for (const auto& m_pattern : m_patterns) {
+		runtime_flags.next_fringe_process_finished_true();
 		while (true) {
 			//Fringe Pattern update 
 			runtime_flags.set_finished_fringe_Iteration_false();

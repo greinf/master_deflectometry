@@ -426,7 +426,7 @@ bool runCameraCalibration(vector<Mat>& frames,
         view = s.nextvecString(frames);
 
         //-----  If no more image, or got enough, then stop calibration and show result -------------
-        if (mode == CAPTURING && imagePoints.size() >= frames.size()) //s.nrFrames
+        if (mode == CAPTURING && imagePoints.size() >= s.nrFrames) // frames.size()
         {
             if (runCalibrationAndSave(s, imageSize, cameraMatrix, distCoeffs, imagePoints, grid_width,
                 release_object, rigid_calibration))
@@ -592,9 +592,9 @@ bool runCameraCalibration(vector<Mat>& frames,
                 CV_16SC2, map1, map2);
         }
 
-        for (size_t i = 0; i < s.imageList.size(); i++)
+        for (size_t i = 0; i < frames.size(); i++)
         {
-            view = imread(s.imageList[i], IMREAD_COLOR);
+            view = frames[i]; //imread(frames[i], IMREAD_COLOR)
             if (view.empty())
                 continue;
             remap(view, rview, map1, map2, INTER_LINEAR);

@@ -2,8 +2,8 @@
 <opencv_storage>
 <Settings>
   <!-- Number of inner corners per a item row and column. (square, circle) Boardsize width 23 height 9  -->
-  <BoardSize_Width>9</BoardSize_Width> 
-  <BoardSize_Height>6</BoardSize_Height>
+  <BoardSize_Width>11</BoardSize_Width> 
+  <BoardSize_Height>8</BoardSize_Height>
   
   <!-- The size of a square in some user defined metric system (pixel, millimeter)-->
   <Square_Size>30</Square_Size>
@@ -25,7 +25,7 @@
   <Input_Delay>100</Input_Delay>	
   
   <!-- How many frames to use, for calibration. -->
-  <Calibrate_NrOfFrameToUse>21</Calibrate_NrOfFrameToUse>
+  <Calibrate_NrOfFrameToUse>14</Calibrate_NrOfFrameToUse>
   <!-- Consider only fy as a free parameter, the ratio fx/fy stays the same as in the input cameraMatrix. 
 	   Use or not setting. 0 - False Non-Zero - True-->
   <Calibrate_FixAspectRatio> 1 </Calibrate_FixAspectRatio>
@@ -35,7 +35,7 @@
   <Calibrate_FixPrincipalPointAtTheCenter> 1 </Calibrate_FixPrincipalPointAtTheCenter>
   
   <!-- The name of the output log file. -->
-  <Write_outputFileName>"C:/Users/grein/Desktop/Master/Project/deflectometrie/out/out_camera_data.xml"</Write_outputFileName>
+  <Write_outputFileName>"C:/Users/grein/Desktop/Master/Project/deflectometrie/out/out_camera_data_First_real_calib.xml"</Write_outputFileName>
   <!-- If true (non-zero) we write to the output file the feature points.-->
   <Write_DetectedFeaturePoints>1</Write_DetectedFeaturePoints>
   <!-- If true (non-zero) we write to the output file the extrinsic camera parameters.-->

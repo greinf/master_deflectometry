@@ -7,6 +7,7 @@
 #include <iostream>
 #include <cassert>
 #include <thread>
+#include <opencv2/opencv.hpp>
 
 //Forward Decleration Enums + Class
 enum class AcquisitionMode;
@@ -25,6 +26,12 @@ public:
 	 void show_acquistion();
 	 void phase_unwrap();
 
+	 void camera_calibration(int camera);
+	 
+	 void Deflectometry::save_unwrap(std::string&);
+
+	 void save_frames(std::vector<cv::Mat>& frames, const std::string& path);
+
 private:
 	std::shared_ptr<Screen> m_screen{nullptr};
 	std::shared_ptr<AcquisitionWorker> m_acquisition_worker{ nullptr };
@@ -35,10 +42,13 @@ private:
 	// druing the meassurment. This is done by UserInput.
 	void controller_userInput();
 
+
+	
 	// Controller thread for automatic acquisaition. Default argument is ammount of pictures taken per 
 	// Meassurment. Information about ammount of shift_steps is saved in flagHandler.hpp.
 	void controller_automatic();
 
+	
 	
 };
 

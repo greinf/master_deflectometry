@@ -10,12 +10,14 @@ class ImageProcessing {
 public:
 	ImageProcessing();
 
-	void wrapped_phase(std::vector<cv::Mat>& );
+	void wrapped_phase();
 
 	void bayerToGray();
 
 	void unwrapped_phase();
 	void goldsteinUnwrap();
+
+	void saveImages(std::string& path);
 
 	std::array<cv::Mat, (std::size_t) 2> m_baseIntensity;
 	std::array<cv::Mat, (std::size_t) 2> m_contrast;
@@ -28,10 +30,16 @@ public:
 	ImageProcessing(ImageProcessing&&) = delete;
 	ImageProcessing& operator=(ImageProcessing&&) = delete;
 
+	void assginFrames(std::vector<cv::Mat>&& mat) {
+		m_frames = mat;
+	}
+
+
 private:	
 	// If number_of_frames_per_pattern > 0. Here mean values get stored. 
 	// Starting point for Image Processing steps. 
 	static inline int instance_counter{ 0 };
+	std::vector<cv::Mat> m_frames{};
 	std::vector<cv::Mat> m_raw_phase{};
 	
 	std::array<cv::Mat, (std::size_t)2> m_unwrapped_phase{};

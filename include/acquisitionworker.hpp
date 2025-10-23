@@ -1,11 +1,28 @@
-#ifndef  ACQUISITIONWORKER_H
+#ifndef ACQUISITIONWORKER_H
 #define ACQUISITIONWORKER_H
 #include "camera.hpp"
 #include "flagHandler.hpp"
 #include "imageHandler.hpp"
 
 #include <mutex>
-cv::Mat rotImage180(const cv::Mat& mat);
+inline cv::Mat rotImage180(const cv::Mat& mat);
+
+
+struct calibrationData {
+	cv::Mat cameraMatrix;
+	cv::Mat distCoeffs;
+};
+
+inline calibrationData getfromFile(std::string& path) {
+	cv::FileStorage fs(path, cv::FileStorage::READ);
+	calibrationData data;
+	fs["distortion_coefficients"] >> data.distCoeffs;
+	fs["camera_matrix"] >> data.cameraMatrix;
+	return data;
+}
+
+
+
 
 class AcquisitionWorker: public Camera{
 public:
@@ -36,7 +53,7 @@ public:
 		max_value
 	};
 
-	void start(DisplayMode mode) {
+	void start() {
 		//one instaces of the AcquisitionWorker class is allowed to have only one start() function running
 		std::lock_guard<std::mutex> acquisition_block(m_acquisition_block);
 		
@@ -50,8 +67,6 @@ public:
 		}
 		catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
 	}
-
-	void camera_calibration();
 
 	
 	void assignImageHandler(void(*funct_ptr)(const cv::Mat&)) {
@@ -70,6 +85,7 @@ public:
 		m_datastream_A = m_dataStream.at(i);
 	}
 
+	
 private:
 	// Try to work with a function pointer this time for callback.
 	// While the m_funct_ptr is a member, the adresse it not owned by the class!
@@ -117,9 +133,10 @@ private:
 					cv::Mat rotated = rotImage180(view);
 					m_image_handler(rotated);
 					if (runtime_flags.get_imSave_flag()) {
-						std::this_thread::sleep_for(std::chrono::milliseconds(400));
+						std::this_thread::sleep_for(std::chrono::milliseconds(200));
 						m_frames.push_back(rotated.clone());
 						runtime_flags.set_false_imSave_flag();
+						runtime_flags.set_true_save_process_finished();
 					}
 					//if (runtime_flags.get_acquisition_flag()) return;
 					m_datastream_A->QueueBuffer(buffer);

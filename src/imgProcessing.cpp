@@ -30,6 +30,7 @@ void ImageProcessing::create(std::vector<cv::Mat>& vec) {
     for (auto& m : m_contrast) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
     for (auto& m : m_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
     for (auto& m : m_wrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_unwrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
 }
 
 void ImageProcessing::bayerToGray()
@@ -40,7 +41,7 @@ void ImageProcessing::bayerToGray()
 }
 
 //Debugging function to calculate gradient strength
-auto grad_strength = [](const cv::Mat& f) {
+auto grad_strength = [](const cv::Mat& f) -> std::pair<double, double> {
     cv::Mat fx, fy;
     cv::Sobel(f, fx, CV_32F, 1, 0, 3); // d/dx
     cv::Sobel(f, fy, CV_32F, 0, 1, 3); // d/dy
@@ -53,14 +54,28 @@ auto grad_strength = [](const cv::Mat& f) {
     );
     };
 
+void ImageProcessing::saveImages(std::string& path) {
+    cv::FileStorage fs(path, cv::FileStorage::WRITE);
+    
+    if (fs.isOpened()) {
+        fs << "wrappedPhasehorizontal" << m_wrapped_phase.at(0);
+        fs << "wrappedPhasevertical" << m_wrapped_phase.at(1);
+        fs << "contrasthorizontal" << m_contrast.at(0);
+        fs << "contrastvertical" << m_contrast.at(1);
+        fs << "baseIntensityhorizontal" << m_baseIntensity.at(0);
+        fs << "baseIntensityvertical" << m_baseIntensity.at(1);
+        fs << "unwrappedPhasehorizontal" << m_unwrapped_phase.at(0);
+        fs << "unwrappedPhasevertical" << m_unwrapped_phase.at(1);
+    }
+}
 
 ImageProcessing::~ImageProcessing() {
     --instance_counter;
 }
-void ImageProcessing::wrapped_phase(std::vector<cv::Mat>& vec) {
+void ImageProcessing::wrapped_phase() {
     
-    create(vec);
-	std::cout << "Datatype " << vec[0].type() << '\n';
+    create(m_frames);
+	std::cout << "Datatype " << m_frames[0].type() << '\n';
     
     if (runtime_flags.get_number_of_pictures_per_pattern() <= 0) {
         std::cerr << "Flag how many Picutres per Pattern are created must be set to specific value != 0 \n";
@@ -71,11 +86,11 @@ void ImageProcessing::wrapped_phase(std::vector<cv::Mat>& vec) {
         int n_expected_frames = runtime_flags.get_number_of_pictures_per_pattern() *
             runtime_flags.get_number_of_shifts() * 2;
         std::cout << "Expected " << n_expected_frames << '\n' <<
-            "std::vector size " << vec.size() << '\n';
+            "std::vector size " << m_frames.size() << '\n';
 
-        assert(n_expected_frames == vec.size() && "For valid Processing, number of expected Frames (calculated from flagHandler.hpp\
+        assert(n_expected_frames == m_frames.size() && "For valid Processing, number of expected Frames (calculated from flagHandler.hpp\
 			 flags) must match vector size \n");
-        std::vector<cv::Mat>::iterator begin = vec.begin();
+        std::vector<cv::Mat>::iterator begin = m_frames.begin();
         
         for (int i = 0; i < (runtime_flags.get_number_of_shifts()*2); ++i) {
             std::vector<cv::Mat>::iterator end = begin + runtime_flags.get_number_of_pictures_per_pattern();
@@ -85,7 +100,7 @@ void ImageProcessing::wrapped_phase(std::vector<cv::Mat>& vec) {
     }
 
     if (runtime_flags.get_number_of_pictures_per_pattern() == 1) {
-        m_raw_phase = vec;
+        m_raw_phase = m_frames;
     }
     
     for (auto& frame : m_raw_phase) {
@@ -147,7 +162,6 @@ void ImageProcessing::wrapped_phase(std::vector<cv::Mat>& vec) {
 	std::filesystem::path path4 = outDir / "contrast1.png";
 	std::filesystem::path path5 = outDir / "base_intensity2.png";
 	std::filesystem::path path6 = outDir / "contrast2.png";
-
 
     try {
         cv::imwrite(path1.string(), wrapped8cu1);
@@ -243,7 +257,7 @@ void ImageProcessing::unwrapped_phase() {
     cv::Ptr<cv::phase_unwrapping::HistogramPhaseUnwrapping> unwrapping = cv::phase_unwrapping::HistogramPhaseUnwrapping::create(params);
     cv::Mat mask1 = (m_contrast.at(0) > 0.1f);  // choose threshold as needed
 	cv::Mat mask2 = (m_contrast.at(1) > 0.1f);  // choose threshold as needed
-    unwrapping->unwrapPhaseMap(m_wrapped_phase.at(0), unwrappedPhase1, mask1);
+    unwrapping->unwrapPhaseMap(m_wrapped_phase.at(0), m_unwrapped_phase.at(0), mask1);
 
     // vertical unwrap, rotated to horizontal orientation
     cv::Mat wrappedTransposed, maskTransposed, unwrappedTransposed;
@@ -265,13 +279,16 @@ void ImageProcessing::unwrapped_phase() {
 
     // transpose back
     cv::transpose(unwrappedTransposed, unwrappedPhase2);
+    m_unwrapped_phase.at(1) = unwrappedPhase2;
     cv::Mat unwrappedPhase1_8u, unwrappedPhase2_8u;
 
-    cv::normalize(unwrappedPhase1, unwrappedPhase1_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::normalize(unwrappedPhase2, unwrappedPhase2_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
+    cv::normalize(m_unwrapped_phase.at(0), unwrappedPhase1_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
+    cv::normalize(m_unwrapped_phase.at(1), unwrappedPhase2_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
 
     cv::imshow("Unwrapped Phase 1", unwrappedPhase1_8u);
     cv::imshow("Unwrapped Phase 2", unwrappedPhase2_8u);
+    cv::waitKey(0);
+    /*
     std::filesystem::path outDir("C:\\Users\\grein\\Desktop\\Master\\Project\\deflectometrie\\out");
     if (std::filesystem::exists(outDir) == false) {
         std::filesystem::create_directory(outDir);
@@ -280,7 +297,7 @@ void ImageProcessing::unwrapped_phase() {
     std::filesystem::path path2 = outDir / "unwrapped_phase2.png";
     cv::imwrite(path1.string(), unwrappedPhase1_8u);
     cv::imwrite(path2.string(), unwrappedPhase2_8u);
-    cv::waitKey(0);
+    */
 }
 
 cv::Mat ImageProcessing::mean(std::vector<cv::Mat> vec) {
