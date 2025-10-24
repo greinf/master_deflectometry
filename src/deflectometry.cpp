@@ -8,7 +8,9 @@
 #include "flagHandler.hpp"
 #include "imgProcessing.hpp"
 #include "camera_calib.hpp"
+
 #include <filesystem>
+#include <utility>
 
 // ****Just for Fun ****
 //Marcro to check type of expression at compile time 
@@ -113,6 +115,10 @@ decltype(auto) apply(F&& f, Tuple&& t)
 	);
 }
 
+// Also look into the c++ explenation file for the std::reference_wrapper -- insane
+// There is a ChatGPT chat for that. 
+
+
 */
 
 cv::Mat rotImage180(const cv::Mat&);
@@ -161,10 +167,14 @@ auto check_create_dir = [&](auto&& p) -> bool {
 		: (std::filesystem::create_directory(p), false);
 	};
 
-void Deflectometry::save_unwrap(std::string& path) {
+
+void Deflectometry::save_frames(std::string& path) {
 	m_img_processing->saveImages(path);
 }
 
+void Deflectometry::load_frames(const std::string& path) {
+	m_img_processing->load_frames(path);
+}
 
 void Deflectometry::save_frames(std::vector<cv::Mat>& frames, const std::string& path) {
 	int counter = 0;

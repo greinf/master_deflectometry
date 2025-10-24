@@ -5,6 +5,7 @@
 #include "imageHandler.hpp"
 #include <opencv2/opencv.hpp>
 #include <vector>
+#include <functional>
 
 class ImageProcessing {
 public:
@@ -18,6 +19,8 @@ public:
 	void goldsteinUnwrap();
 
 	void saveImages(std::string& path);
+
+	void load_frames(const std::string& path);
 
 	std::array<cv::Mat, (std::size_t) 2> m_baseIntensity;
 	std::array<cv::Mat, (std::size_t) 2> m_contrast;
@@ -51,13 +54,21 @@ private:
 	std::array<cv::Mat, (std::size_t)2> m_s3{};
 	
 	std::string path{ "C:\\Users\\grein\\Desktop\\Master\\Project\\deflectometrie\\out" };
+	void create();
 	void create(std::vector<cv::Mat>& vec);
 	cv::Mat load_images(std::string path_to_image);
+	
+	// Just have some fun with std::reference_wrapper. Extremly good c++ documentation code for implementation of generic std::reference_wrapper. 
+	// std::string str{ "roflcopter" };
+	// std::array<std::reference_wrapper<std::string>, (std::size_t)1> str {str};
+	
+	std::array<std::string, (std::size_t)8> m_save_keys{ {
+		{"wrappedPhasehorizontal"}, {"wrappedPhasevertical"}, {"contrasthorizontal"}, {"contrastvertical"},
+		{"baseIntensityhorizontal"}, {"baseIntensityvertical"}, {"unwrappedPhasehorizontal"},
+		{"unwrappedPhasevertical"}
+	} };
 
 };
-
-
-
 
 
 #endif

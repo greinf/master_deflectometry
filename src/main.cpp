@@ -16,19 +16,21 @@ int main()
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
 
     Deflectometry meassure{};
-    std::filesystem::path file("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-24CompleteData.xml");
+    
+    std::filesystem::path file("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-23/2025-10-24CompleteData.xml");
     if (!std::filesystem::exists(file.parent_path())) {
         std::cerr << "Wrong addres used \n";
         return 0;
     }
-    meassure.start_meassurement(Shift_mode::four_phase_shift, DisplayMode::Automatic, 0);
+    //meassure.start_meassurement(Shift_mode::four_phase_shift, DisplayMode::Automatic, 0);
 
-   
-    meassure.phase_unwrap();
+    //meassure.phase_unwrap();
+
+    meassure.load_frames(file.string());
+
+    //meassure.save_frames(file.string());
+    std::cout << "Jaaa man \n";
     
-    
-    meassure.save_unwrap(file.string());
-    return 0;
     /*
     std::string str("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/out_camera_data_First_real_calib.xml");
     calibrationData data(getfromFile(str));

@@ -28,9 +28,20 @@ public:
 
 	 void camera_calibration(int camera);
 	 
-	 void Deflectometry::save_unwrap(std::string&);
+	 // Access Image Processing class, there all imgaes of the PhaseUnwrap are stored. 
+	 // A .xml file is created at the given address, where the image data can be accesed. The
+	 // data is stored in the original CV_32F format. Therefore not showable.
+	 // Acces image files by creating a cv::FileStorage fs Instance at this point. and fs["std::string"] >> cv::Mat 
+	 void save_frames(std::string&);
 
+	 // Stores 8 bit images in .png / .jpg format. Images have to be given in in a uchar 8 bit with 1 or 3 channels, in 
+	 // a vector<cv::Mat> format and the address where the files need to be stored. 
+	 // If floating point images are given to this function, cv::imwrite will try to save them which leads to data loss. 
 	 void save_frames(std::vector<cv::Mat>& frames, const std::string& path);
+
+
+
+	 void load_frames(const std::string& path);
 
 private:
 	std::shared_ptr<Screen> m_screen{nullptr};

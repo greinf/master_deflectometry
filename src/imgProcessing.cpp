@@ -15,6 +15,41 @@ ImageProcessing::ImageProcessing() {
     
 }
 
+void ImageProcessing::load_frames(const std::string& path) {
+    try {
+        //Checks only for the first element in arrays. It is assumed when the first is empty the second one must be to. 
+        if (m_s1[0].empty() && m_s2[0].empty() && m_s3[0].empty() && m_baseIntensity[0].empty() &&
+            m_contrast[0].empty() && m_phase[0].empty() && m_wrapped_phase[0].empty() && m_unwrapped_phase[0].empty()) {
+            create();
+            cv::FileStorage fs(path, cv::FileStorage::READ);
+            if (fs.isOpened()) {
+                fs[m_save_keys[0]] >> m_wrapped_phase[0];
+                fs[m_save_keys[1]] >> m_wrapped_phase[1];
+                fs[m_save_keys[2]] >> m_contrast[0];
+                fs[m_save_keys[3]] >> m_contrast[1];
+                fs[m_save_keys[4]] >> m_baseIntensity[0];
+                fs[m_save_keys[5]] >> m_baseIntensity[1];
+                fs[m_save_keys[6]] >> m_unwrapped_phase[0];
+                fs[m_save_keys[7]] >> m_unwrapped_phase[1];
+            }
+        }
+        else std::runtime_error e("The image container already have data in it. This is not allowed. \n");
+
+    }
+    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
+}
+
+void ImageProcessing::create() {
+    for (auto& m : m_s1) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_s2) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_s3) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_baseIntensity) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_contrast) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_wrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+    for (auto& m : m_unwrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
+}
+
 // create() initializes the arrays for the processing. This methods needs to be called one time before further processsing. 
 void ImageProcessing::create(std::vector<cv::Mat>& vec) {
     for (size_t i = 1; i < vec.size(); ++i) {
