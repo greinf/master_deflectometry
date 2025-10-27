@@ -128,6 +128,9 @@ void showRawImage(const cv::Mat& mat) {
 	imgHandler.imshow_Camera(mat);
 }
 
+void Deflectometry::calc_reproject_error() {
+	m_img_processing->calc_reproject_error();
+}
 
 // Constructor Deflectometry() takes no argument. Automatically creates Camera class with ids::peak library. Acuqistionworker inherits from that. 
 // If multiple cameras are used these can be choosen by the input Argument of Acquisitionworker. 
@@ -135,7 +138,7 @@ void showRawImage(const cv::Mat& mat) {
 // For each camera, a new Acuistionworker instance must be created with the according index. 
 // Screen class is created for Fringe projection
 Deflectometry::Deflectometry() {
-	m_screen = std::make_shared<Screen>();
+	m_screen = std::make_shared<Screen>(10); //Use constructor that works with flag file 
 	m_acquisition_worker = std::make_shared<AcquisitionWorker>(0); 
 	m_img_processing = std::make_shared<ImageProcessing>();
 }
@@ -150,6 +153,13 @@ void Deflectometry::phase_unwrap() {
 
 }
 
+//Just a small helper function that the shift parameters are available for later processing.
+void Deflectometry::generatePattern() {
+	m_screen->generate_phaseShift(Shift_mode::four_phase_shift);
+}
+
+// Shows RawFrames runtime_flags.n_pictures_per_pattern * pattern * 2
+// Takes directly the frames stored in Acquisistionworker and Dispalys them 
 void Deflectometry::show_acquistion() {
 	std::cout << m_acquisition_worker->m_frames.size() << std::endl;
 	for (const auto& frame : m_acquisition_worker->m_frames) {
@@ -309,6 +319,9 @@ void Deflectometry::controller_userInput() {
 	}
 }
 
+void Deflectometry::load_calib(std::string path) {
+	m_img_processing->load_calib(path);
+}
 
 void Deflectometry::start_meassurement(Shift_mode shift_mode, DisplayMode disp_mode, int camera) {
 	

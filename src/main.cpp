@@ -22,15 +22,22 @@ int main()
         std::cerr << "Wrong addres used \n";
         return 0;
     }
+    
+    meassure.generatePattern();
     //meassure.start_meassurement(Shift_mode::four_phase_shift, DisplayMode::Automatic, 0);
 
+    //meassure.show_acquistion();
     //meassure.phase_unwrap();
 
     meassure.load_frames(file.string());
+    meassure.load_calib();
+    meassure.calc_reproject_error();
 
     //meassure.save_frames(file.string());
-    std::cout << "Jaaa man \n";
+
     
+
+
     /*
     std::string str("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/out_camera_data_First_real_calib.xml");
     calibrationData data(getfromFile(str));

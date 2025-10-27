@@ -1,4 +1,4 @@
-#include "imgProcessing.hpp"
+ï»¿#include "imgProcessing.hpp"
 
 #include <opencv2/opencv.hpp>
 #include <cassert>
@@ -9,11 +9,363 @@
 #include <filesystem>
 
 
+
+//Debugging function to calculate gradient strength
+auto grad_strength = [](const cv::Mat& f) -> std::pair<cv::Mat, cv::Mat> {
+    cv::Mat fx, fy;
+    std::pair<cv::Mat, cv::Mat> pair;
+    cv::Sobel(f, fx, CV_32F, 1, 0, 3); // d/dx
+    cv::Sobel(f, fy, CV_32F, 0, 1, 3); // d/dy
+    pair.first = fx;
+    pair.second = fy;
+    
+    return pair;
+    /*
+    return std::pair<double, double>(
+        cv::mean(cv::abs(fx))[0],
+        cv::mean(cv::abs(fy))[0]
+        */
+    };
+
+
+ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(cv::Mat& mat) const {
+    minmaxloc helper;
+    cv::minMaxLoc(mat, &helper.minval, &helper.maxval, &helper.minloc, &helper.maxloc);
+    return helper;
+}
+
 ImageProcessing::ImageProcessing() {
     ++instance_counter;
     if (instance_counter > 1) throw std::runtime_error("Only one instance of ImageProcessing allowed");
     
 }
+//Calculates Mask from both the contrast pictures. 
+cv::Mat ImageProcessing::createMask() {
+    cv::Mat mask, sum_contrast_n;
+    cv::Mat sum_contrast = (m_contrast[0] + m_contrast[1])/2;
+
+    // minMaxloc data for sum_contrast
+    minmaxloc data{ get_minmaxloc(sum_contrast) };
+    //std::cout << data;
+    // Threshold
+    cv::threshold(sum_contrast, mask, 0.5 * data.maxval, 1, cv::THRESH_BINARY);
+    //normalizeAndDisplay(mask);
+    // Create Structuring Element for opening&closing
+    cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
+    cv::morphologyEx(mask, mask, cv::MORPH_OPEN, strucutre);
+    cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, strucutre);
+
+    minmaxloc data1{ get_minmaxloc(mask) };
+    //std::cout << data1;
+    //cv::normalize(sum_contrast, sum_contrast_n, 0, 255, cv::NORM_MINMAX, CV_32F);
+
+    return mask;
+
+
+    // Debugging and somehting where i tried to use findcontours from opencv
+    /*
+    cv::imshow("sumcontrast ", sum_contrast);
+    cv::imshow("Treshholded", mask);
+    cv::waitKey(0);
+    */
+
+    /*
+    std::pair<cv::Mat, cv::Mat> gradient_horizontal{ grad_strength(m_contrast[0]) };
+    std::pair<cv::Mat, cv::Mat> gradient_vertical{ grad_strength(m_contrast[1]) };
+    
+    //Use gradient pictures
+    mask = (gradient_horizontal.first + gradient_horizontal.second)/2;
+    cv::Mat mask8u;
+    cv::normalize(mask, mask8u, 0, 255.0, cv::NORM_MINMAX, CV_8U);
+    minmaxloc value_information(get_minmaxloc(mask8u));
+    cv::imshow("NormalizedMask", mask8u);
+    cv::Mat canny, edges;
+    cv::waitKey(0);
+    cv::Canny(mask8u, canny, value_information.maxval*0.15, value_information.maxval*0.3 );
+    cv::imshow("Canny", canny);
+
+    cv::waitKey(0);
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(canny, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    int largest_index = 0;
+    double largest_area = 0.0;
+
+    for (size_t i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
+        if (area > largest_area) {
+            largest_area = area;
+            largest_index = i;
+        }
+    }
+
+    std::vector<cv::Point> approx;
+    cv::approxPolyDP(contours[largest_index], approx, 10, true);
+
+    cv::Mat mask_f = cv::Mat::zeros(canny.size(), CV_8UC1);
+    cv::drawContours(mask_f, std::vector<std::vector<cv::Point>>{approx}, -1, cv::Scalar(255), cv::FILLED);
+    cv::imshow("Hopefully Contour", mask_f);
+    cv::waitKey(0);
+    */
+    /*Debugging*/
+    /*
+    cv::imshow("fringeHorizontal_fx", gradient_horizontal.first);
+    cv::imshow("fringeHorizontal_fy", gradient_horizontal.second);
+    cv::imshow("fringevertical_fx", gradient_vertical.first);
+    cv::imshow("fringevertical_fy", gradient_vertical.second);
+    cv::waitKey();
+    */
+}
+
+
+
+auto normalizeAndDisplay = [](const cv::Mat& img) -> void {
+    cv::Mat norm;
+    cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+    cv::imshow("Normalized", norm);
+    cv::waitKey(0);
+    };
+
+// Function that takes two images. If Mask image is != the original value is saved. Else it is 0.
+// This function can be templated
+// When the double value is != 0 all values that not masked are shifted about this value. 
+// Also in this case the masked values are set to -1!!!!!
+cv::Mat ImageProcessing::applyMask(const cv::Mat& mask, const cv::Mat& img, float shift) {
+    assert(mask.size() == img.size() && "Mask and image must be of the same size \n");
+    assert(img.type() == CV_32FC1 && "Expected float image");
+
+    cv::Mat result = cv::Mat::zeros(img.size(), CV_32FC1);
+
+    for (int row = 0; row < img.rows; ++row) {
+        const float* pImg = img.ptr<float>(row);
+        const float* pMask = mask.ptr<float>(row);
+        float* pRes = result.ptr<float>(row);
+        if (!shift) {
+            //int this line no shifiting is applied -> all masked values sare set to zero
+            for (int col = 0; col < img.cols; ++col) {
+                pRes[col] = (pMask[col] != 0.0f) ? pImg[col] : 0.0f;
+            }
+        }
+        else {
+            // here the double value != 0, masked pixels are set to -1 and for valid pixel the shift is applied. 
+            for (int col = 0; col < img.cols; ++col) {
+                *(pRes + col) = (*(pMask + col) != 0.0f) ? (*(pImg + col)+shift) : -1.0f;
+            }
+        }
+    }
+
+    return result;
+}
+
+// Shifts all valids pixel about the shift value. IMG(x,y) + shift_value. 
+// Just sets all not valid pixels to -1000
+void ImageProcessing::shiftStartPhasetoZero(const cv::Mat& mask, cv::Mat& img, float shift_value) {
+    assert(mask.size() == img.size());
+    assert(img.type() == CV_32FC1 && "Expected float image");
+
+    for (int row = 0; row < img.rows; ++row) {
+        float* pImg = img.ptr<float>(row);
+        const float* pMask = mask.ptr<float>(row);
+        for (int cols = 0; cols < img.cols; ++cols) {
+            if (!*(pMask + cols)) {
+                *(pImg + cols) = -10.0f;
+                continue;
+            }
+            else if (*(pMask + cols)) {
+                *(pImg + cols) -= shift_value;
+
+            }
+        }
+    }
+}
+
+void ImageProcessing::calc_reproject_error() {
+    assert(runtime_flags.disp.wavelength && "Parameters of the phase pattern are not available. Call generatePattern() before \n");
+    m_mask = { createMask() };
+    cv::Mat unwrap1_masked, unwrap2_masked;
+    unwrap1_masked = applyMask(m_mask, m_unwrapped_phase[0]);
+    unwrap2_masked = applyMask(m_mask, m_unwrapped_phase[1]);
+    minmaxloc masked_unwrap1{ get_minmaxloc(unwrap1_masked) };
+    minmaxloc masked_unwrap2{ get_minmaxloc(unwrap2_masked) };
+    std::cout << "Horizontal unwrap " << masked_unwrap1 << '\n' <<
+        "Vertical unwrap " << masked_unwrap2 << '\n';
+
+    /*
+    //Debugging
+    
+    normalizeAndDisplay(m_mask);
+    normalizeAndDisplay(m_unwrapped_phase[0]);
+    normalizeAndDisplay(m_unwrapped_phase[1]);
+    normalizeAndDisplay(unwrap1_masked);
+    normalizeAndDisplay(unwrap2_masked);
+    */
+
+    //Not valid pixels at -10 
+    shiftStartPhasetoZero(m_mask, unwrap1_masked, masked_unwrap1.minval);
+    shiftStartPhasetoZero(m_mask, unwrap2_masked, masked_unwrap2.minval);
+
+    /*
+    minmaxloc shifted1{ get_minmaxloc(unwrap1_masked) };
+    minmaxloc shifted2{ get_minmaxloc(unwrap2_masked) };
+    std::cout << "Horizontal unwrap " << shifted1 << '\n' <<
+        "Vertical unwrap " << shifted2 << '\n';
+
+    normalizeAndDisplay(unwrap1_masked);
+    normalizeAndDisplay(unwrap2_masked);
+    */
+
+    /*
+    cv::cvtColor(m_unwrapped_phase[0], unwrap_rgb, cv::COLOR_GRAY2RGB);
+    cv::drawMarker(unwrap_rgb, unwrap1.maxloc, cv::Scalar(255, 0, 0));
+    cv::drawMarker(unwrap_rgb, unwrap1.minloc, cv::Scalar(0, 255, 0));
+    
+    std::pair<cv::Mat, cv::Mat> gradients_horizontal = grad_strength(m_unwrapped_phase[0]);
+    std::pair<cv::Mat, cv::Mat> gradients_vertical = grad_strength(m_unwrapped_phase[1]);
+    cv::imshow("Gradient horizontal ", gradients_horizontal.first);
+    */
+    
+    std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>> calibrationPoints = 
+        generateCalibrationPoints(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength);
+
+    
+    CV_Assert(!calibrationPoints.first.empty() && calibrationPoints.first.size() == calibrationPoints.second.size());
+    CV_Assert(!m_calib_data.cameraMatrix.empty() && !m_calib_data.distCoeffs.empty());
+
+    cv::Mat rvec, tvec;
+
+    /*Calculates Matrix that transforms points from display coordinate system into the camera coordinate system
+    X_camera = R*X_Dispaly + t   */
+    bool ok = cv::solvePnP(calibrationPoints.second, calibrationPoints.first,
+        m_calib_data.cameraMatrix, m_calib_data.distCoeffs, rvec, tvec,
+        false, 
+        cv::SOLVEPNP_ITERATIVE);
+         
+    if (!ok) throw std::runtime_error("solvePnP failed.");
+    //normalizeAndDisplay(unwrap1_masked);
+
+
+    // Project Points
+    std::vector<cv::Point2f> projected;
+    // This function takes the object points. 
+    cv::projectPoints(calibrationPoints.second, rvec, tvec, 
+        m_calib_data.cameraMatrix, m_calib_data.distCoeffs, projected);
+
+    double sumSq = 0.0;
+    double maxErr = 0.0;
+    //Visualization
+    cv::Mat error_visualizer;
+    cv::cvtColor(m_mask.clone(), error_visualizer, cv::COLOR_GRAY2BGR);
+    for (std::size_t i=0; i < calibrationPoints.first.size(); ++i) {
+        cv::arrowedLine(error_visualizer, projected[i], calibrationPoints.first[i], cv::Scalar(255,0,0), 2);
+    }
+    cv::imshow("Error mask", error_visualizer);
+    cv::waitKey(0);
+
+
+    for (size_t i = 0; i < calibrationPoints.first.size(); ++i) {
+        double e = cv::norm(calibrationPoints.first[i] - projected[i]); // pixels
+        sumSq += e * e;
+        maxErr = std::max(maxErr, e);
+    }
+
+
+    double rms = std::sqrt(sumSq / calibrationPoints.first.size());
+
+    std::cout << "Reprojection RMS: " << rms << " px,  max: " << maxErr << " px\n";
+
+    cv::Mat R;
+    cv::Rodrigues(rvec, R);
+    std::cout << "R =\n" << R << "\n";
+    std::cout << "t = " << tvec.t() << " (same units as your objectPoints, here mm)\n";
+
+    // Distance cameraâ†”screen plane (norm of t)
+    std::cout << "Camera distance â‰ˆ " << cv::norm(tvec) << " mm\n";
+
+}
+
+std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>>
+ImageProcessing::generateCalibrationPoints(
+    const cv::Mat& unwrapX,
+    const cv::Mat& unwrapY,
+    float pixelsPer2pi,
+    int gridX,
+    int gridY,
+    float screenWidth_mm,
+    float screenHeight_mm,
+    float pixel_pitch)
+{
+    CV_Assert(unwrapX.size() == unwrapY.size());
+    CV_Assert(unwrapX.type() == CV_32FC1 && unwrapY.type() == CV_32FC1);
+    int screenPxWidth{ runtime_flags.disp.width };
+    int screenPxHeight{ runtime_flags.disp.height };
+    std::vector<cv::Point2f> imagePoints;
+    std::vector<cv::Point3f> objectPoints;
+
+    // Define spacing across image (camera pixels)
+    float stepX = static_cast<float>(unwrapX.cols) / (gridX + 1);
+    float stepY = static_cast<float>(unwrapX.rows) / (gridY + 1);
+
+    //Debug Copy
+    cv::Mat debug = unwrapX.clone();
+
+    for (int gy = 1; gy <= gridY; ++gy) {
+        int dy = static_cast<int>(gy * stepY);
+        if (dy < 0 || dy >= unwrapX.rows)
+            continue;
+
+        const float* row_ptr_X = unwrapX.ptr<float>(dy);
+        const float* row_ptr_Y = unwrapY.ptr<float>(dy);
+        for (int gx = 1; gx <= gridX; ++gx) {
+            int px = static_cast<int>(gx * stepX);
+            //int py = static_cast<int>(gx * stepY);
+
+            if ((*(row_ptr_X + px) == -10.0f) || (*(row_ptr_Y + px) == -10.0f)) continue; // Ye haa -> pointer arithmetic bitches 
+
+            if (px < 0 || dy < 0 || px >= unwrapX.cols || dy >= unwrapX.rows) {
+                std::cout << "Something must have went terribly wrong: GenerateCalibrationPoints() \n";
+                continue;
+            }
+
+            //Can be used to acces array element, but documentatoins says it is slow.
+            //float phiX = unwrapX.at<float>(py, px);
+            //float phiY = unwrapY.at<float>(py, px);
+            // Get the phase value in each pictures for the same pixel if valid. 
+            float phiX = (*(row_ptr_X + px));
+            float phiY = (*(row_ptr_Y + dy));
+
+            // Maximum possible phase values
+            float max_phase_value_u = (static_cast<float>(runtime_flags.disp.width) / pixelsPer2pi) * CV_2PI;
+            float max_phase_value_v = (static_cast<float>(runtime_flags.disp.height) / pixelsPer2pi) * CV_2PI;
+            //Check if phase value is in logical range. 
+            if (phiX > max_phase_value_u || phiY > max_phase_value_v) { throw std::runtime_error ("The phase is not within allowed bounds. "); }
+
+            // Convert unwrapped phase  screen coordinates in subpixel (float, float) values. 
+            // Be carefull -> the phase direction is: <- (left for horizontal) and Ã® (upwards for vertical)
+            // The coordinate system should be in top left so we have to convert back.  
+            float u_s = (phiX / (2.0f * CV_PI)) * pixelsPer2pi;
+            float v_s = (phiY / (2.0f * CV_PI)) * pixelsPer2pi;
+
+            u_s = screenPxWidth - u_s;
+            v_s = screenPxHeight - v_s;
+
+            // Convert to millimetres using screen dimensions
+            float Xs = u_s * pixel_pitch;
+            float Ys = v_s * pixel_pitch;
+
+            // Store results
+            imagePoints.emplace_back(static_cast<float>(px), static_cast<float>(dy));
+            objectPoints.emplace_back(Xs, Ys, 0.0f);
+            //cv::drawMarker(debug, cv::Point(px,dy), cv::Scalar(0));
+        } 
+    }
+    //normalizeAndDisplay(debug);
+    return { imagePoints, objectPoints };
+}
+
+void ImageProcessing::load_calib(std::string path) {
+    m_calib_data = getfromFile(path);
+}
+
 
 void ImageProcessing::load_frames(const std::string& path) {
     try {
@@ -33,7 +385,7 @@ void ImageProcessing::load_frames(const std::string& path) {
                 fs[m_save_keys[7]] >> m_unwrapped_phase[1];
             }
         }
-        else std::runtime_error e("The image container already have data in it. This is not allowed. \n");
+        else { std::runtime_error e("The image container already have data in it. This is not allowed. \n"); }
 
     }
     catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
@@ -75,19 +427,6 @@ void ImageProcessing::bayerToGray()
     }
 }
 
-//Debugging function to calculate gradient strength
-auto grad_strength = [](const cv::Mat& f) -> std::pair<double, double> {
-    cv::Mat fx, fy;
-    cv::Sobel(f, fx, CV_32F, 1, 0, 3); // d/dx
-    cv::Sobel(f, fy, CV_32F, 0, 1, 3); // d/dy
-	cv::imshow("Sobel X", fx);
-	cv::imshow("Sobel Y", fy);
-    cv::waitKey();
-    return std::pair<double, double>(
-        cv::mean(cv::abs(fx))[0],
-        cv::mean(cv::abs(fy))[0]
-    );
-    };
 
 void ImageProcessing::saveImages(std::string& path) {
     cv::FileStorage fs(path, cv::FileStorage::WRITE);
@@ -178,9 +517,9 @@ void ImageProcessing::wrapped_phase() {
     cv::minMaxLoc(m_baseIntensity[1], &baseminVal, &basemaxval);
     cv::minMaxLoc(m_contrast[1], &conminval, &conmaxval);
 
-    std::cout << "Phase: " << phaseminVal << " … " << phasemaxVal << '\n'
-        << "Base intensity: " << baseminVal << " … " << basemaxval << '\n'
-        << "Contrast: " << conminval << " … " << conmaxval << '\n';
+    std::cout << "Phase: " << phaseminVal << " â€¦ " << phasemaxVal << '\n'
+        << "Base intensity: " << baseminVal << " â€¦ " << basemaxval << '\n'
+        << "Contrast: " << conminval << " â€¦ " << conmaxval << '\n';
 
     cv::Mat wrapped8cu1, wrapped8cu2, constrast8cu1, contrast8cu2;
     cv::normalize(m_wrapped_phase[0], wrapped8cu1, 0, 255, cv::NORM_MINMAX, CV_8U);
@@ -274,8 +613,8 @@ void ImageProcessing::goldsteinUnwrap() {
     cv::minMaxLoc(m_unwrapped_phase[0], &phaseminVal, &phasemaxVal);
     cv::minMaxLoc(m_unwrapped_phase[1], &baseminVal, &basemaxval);
 
-    std::cout << "Phase1: " << phaseminVal << " … " << phasemaxVal << '\n'
-        << "Phase 2: " << baseminVal << " … " << basemaxval << '\n';
+    std::cout << "Phase1: " << phaseminVal << " â€¦ " << phasemaxVal << '\n'
+        << "Phase 2: " << baseminVal << " â€¦ " << basemaxval << '\n';
         */
 }
 
@@ -353,7 +692,7 @@ cv::Mat ImageProcessing::mean(std::vector<cv::Mat> vec) {
 
     acc /= static_cast<float>(vec.size());  // pixelweise Division
 
-    // Zurück zu 8 Bit
+    // ZurÃ¼ck zu 8 Bit
     cv::Mat average;
     acc.convertTo(average, CV_8UC1);
     //Debugging

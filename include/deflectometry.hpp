@@ -39,10 +39,11 @@ public:
 	 // If floating point images are given to this function, cv::imwrite will try to save them which leads to data loss. 
 	 void save_frames(std::vector<cv::Mat>& frames, const std::string& path);
 
-
+	 void calc_reproject_error();
 
 	 void load_frames(const std::string& path);
-
+	 void generatePattern();
+	 void load_calib(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-23/2025_10-23_Camera_calib.xml");
 private:
 	std::shared_ptr<Screen> m_screen{nullptr};
 	std::shared_ptr<AcquisitionWorker> m_acquisition_worker{ nullptr };
@@ -63,4 +64,4 @@ private:
 	
 };
 
-#endif
+#endif 

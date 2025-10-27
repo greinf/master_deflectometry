@@ -8,22 +8,6 @@
 inline cv::Mat rotImage180(const cv::Mat& mat);
 
 
-struct calibrationData {
-	cv::Mat cameraMatrix;
-	cv::Mat distCoeffs;
-};
-
-inline calibrationData getfromFile(std::string& path) {
-	cv::FileStorage fs(path, cv::FileStorage::READ);
-	calibrationData data;
-	fs["distortion_coefficients"] >> data.distCoeffs;
-	fs["camera_matrix"] >> data.cameraMatrix;
-	return data;
-}
-
-
-
-
 class AcquisitionWorker: public Camera{
 public:
 	explicit AcquisitionWorker(int i) : //try to acess the m_datastream and m_nodemapRemoteDevicec from m_camera

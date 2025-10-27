@@ -21,7 +21,8 @@ class AcquisitionWorker;
 class Screen {
 public:
 	//Constructor (Width, Height, PixelPitch in micrometer, Number of periods 
-	explicit Screen(std::int32_t screen_x = 1920, std::int32_t screen_y = 1080, std::int32_t pixel_pitch = 250, float m_numberperiods = (float)10);
+	//explicit Screen(std::int32_t screen_x = 1920, std::int32_t screen_y = 1080, std::int32_t pixel_pitch = 250, float m_numberperiods = (float)10);
+	explicit Screen(int n_shifts);
 
 	enum class shift_axis {
 		horizontal,
@@ -58,6 +59,7 @@ private:
 	float m_wavelength{};
 	float m_numberPeriods{};
 	float m_shift_length{};
+	void getfromFlag_H(int n_shifts);
 };
 
 

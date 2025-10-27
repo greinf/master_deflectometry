@@ -7,7 +7,7 @@
 #include <mutex>
 #include <atomic>
 #include <stdexcept>
-
+#include "flagHandler.hpp"
 
 struct ImageHandler {
 public:
@@ -29,8 +29,23 @@ public:
 		case(2):
 			cv::namedWindow("CameraFrame", cv::WINDOW_NORMAL);
 			cv::setWindowProperty("CameraFrame", cv::WINDOW_NORMAL, cv::WINDOW_FREERATIO);
-			cv::namedWindow("FringePattern", cv::WINDOW_NORMAL);
-			cv::setWindowProperty("FringePattern", cv::WINDOW_NORMAL, cv::WINDOW_FREERATIO); //For train debugging cv::WINDOW_FULLSCREEN
+			if (!runtime_flags.disp.height && !runtime_flags.disp.width) {
+				cv::namedWindow("FringePattern", cv::WINDOW_NORMAL);
+				cv::setWindowProperty("FringePattern", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN); //For train debugging , cv::WINDOW_FREERATIO
+			}
+			else {
+				/*
+				cv::namedWindow("FringePattern", cv::WINDOW_NORMAL);
+				cv::resizeWindow("FringePattern", runtime_flags.disp.width, runtime_flags.disp.height);
+				cv::setWindowProperty("FringePattern", cv::WND_PROP_TOPMOST, 1); // optional: keep on top
+				cv::moveWindow("FringePattern", runtime_flags.disp.posx, runtime_flags.disp.posy);
+				*/
+				cv::namedWindow("FringePattern", cv::WINDOW_NORMAL);
+				cv::resizeWindow("FringePattern", runtime_flags.disp.width, runtime_flags.disp.height);
+				cv::setWindowProperty("FringePattern", cv::WND_PROP_TOPMOST, 1); // optional: keep on top
+				cv::moveWindow("FringePattern", runtime_flags.disp.posx, runtime_flags.disp.posy);
+
+			}
 			while (m_running.load()) {
 				//std::cout << "Cv::waitkey called \n";
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));

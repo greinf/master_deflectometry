@@ -3,19 +3,36 @@
 #include "enums.hpp"
 #include "flagHandler.hpp"
 #include "imageHandler.hpp"
-
+/*
 Screen::Screen(std::int32_t pixel_x, std::int32_t pixel_y, std::int32_t pixel_pitch, float numberPeriods):
 	m_pixel_x{pixel_x}, m_pixel_y{pixel_y}, m_pixel_pitch{pixel_pitch}, m_numberPeriods { numberPeriods },
 	m_mode{Shift_mode::max_value}
 { }
+*/
+Screen::Screen(int n_shifts) {
+	getfromFlag_H(n_shifts);
+}
+
+void Screen::getfromFlag_H(int n_shifts) {
+	m_pixel_x = runtime_flags.disp.width;
+	m_pixel_y = runtime_flags.disp.height;
+	m_pixel_pitch = runtime_flags.disp.pixelptich_mm;
+	m_numberPeriods = n_shifts;
+	runtime_flags.set_number_of_shifts(n_shifts);
+	m_mode = Shift_mode::max_value;
+}
+
 
 bool Screen::prepareShiftParameters() {
 	try {
 		runtime_flags.set_number_of_shifts(m_steps);
 		CV_Assert(m_pixel_x > 0 && m_pixel_y > 0);
 		CV_Assert(m_numberPeriods >= 1);
-		m_wavelength = static_cast<float>(m_pixel_y) / m_numberPeriods;
+		m_wavelength = static_cast<float>(m_pixel_y) / m_numberPeriods; //Number of periods is bound to the y-Axis here! 
+
+		//runtime_flags
 		m_shift_length = ((CV_2PI) / m_steps);
+		runtime_flags.disp.wavelength = m_wavelength;
 	}
 	catch (std::exception& e) {
 		std::cout << e.what() << " Parameter generation failed \n ";
