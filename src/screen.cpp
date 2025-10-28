@@ -23,6 +23,31 @@ void Screen::getfromFlag_H(int n_shifts) {
 }
 
 
+void Screen::gray_value_calib() {
+	runtime_flags.set_finished_fringe_Iteration_false();
+	const std::vector<int> gray_val{ 0, 32, 64, 96, 128, 160, 192, 224, 255 };
+	for (size_t counter = 0; counter < gray_val.size(); ++counter) {
+		// Display new gray pattern
+		cv::Mat gray_image(runtime_flags.disp.posy, runtime_flags.disp.posx, CV_8UC1, cv::Scalar(gray_val[counter]));
+		imgHandler.imshow_Pattern(gray_image);
+
+		// Wait for the next pattern trigger
+		while (!runtime_flags.get_next_fringe_pattern_flag()) {
+			if (runtime_flags.get_stop_fringe_projection_flag()) {
+				runtime_flags.set_stop_fringe_projection_flag_false();
+				std::cout << "Gray value projection interrupted\n";
+				return;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+
+		// Reset flag and continue
+		runtime_flags.set_next_fringe_pattern_flag_false();
+	}
+	std::cout << "Reached last gray value\n";
+	runtime_flags.set_finished_fringe_Iteration_true();
+}
+
 bool Screen::prepareShiftParameters() {
 	try {
 		runtime_flags.set_number_of_shifts(m_steps);

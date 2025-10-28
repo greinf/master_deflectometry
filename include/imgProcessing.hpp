@@ -6,6 +6,7 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <functional>
+#include <tuple>
 
 struct calibrationData {
 	cv::Mat cameraMatrix;
@@ -24,12 +25,16 @@ class ImageProcessing {
 public:
 	ImageProcessing();
 
+	void gray_value_calib(const std::vector<cv::Mat>&);
+
 	void wrapped_phase();
 
 	cv::Mat createMask();
+
 	void bayerToGray();
 
 	void unwrapped_phase();
+
 	void goldsteinUnwrap();
 
 	void saveImages(std::string& path);
@@ -39,7 +44,6 @@ public:
 	void load_calib(std::string path);
 
 	void calc_reproject_error();
-
 
 	std::array<cv::Mat, (std::size_t) 2> m_baseIntensity;
 	std::array<cv::Mat, (std::size_t) 2> m_contrast;
@@ -56,7 +60,8 @@ public:
 		m_frames = mat;
 	}
 	
-
+	template<typename func, typename... Mats>
+	static auto forEachPixel(func, Mats&&... mats);
 
 	struct minmaxloc {
 		double minval{}, maxval{};
@@ -89,6 +94,13 @@ private:
 	void create();
 	void create(std::vector<cv::Mat>& vec);
 
+	// First try to write a tempalte function that allows to input a arbitrary number of input matrices
+	// The template iterates through all arrays simultaniously and allows to operato on the elemnts. 
+	
+	
+	template<int Depth, typename Func, typename... Mats>
+	static cv::Mat forEachPixelImpl(const Func& func, Mats&&... mats);
+
 	cv::Mat applyMask(const cv::Mat&, const cv::Mat&, float shift = 0.0f);
 	cv::Mat load_images(std::string path_to_image);
 	
@@ -101,8 +113,8 @@ private:
 			const cv::Mat& unwrapX,
 			const cv::Mat& unwrapY,
 			float pixelsPer2pi = runtime_flags.disp.wavelength,
-			int gridX = 10,
-			int gridY = 10,
+			int gridX = 10, //runtime_flags.disp.width
+			int gridY = 10, //runtime_flags.disp.height,
 			float screenWidth_mm = runtime_flags.disp.width_mm,
 			float screenHeight_mm = runtime_flags.disp.height_mm,
 			float pixel_pitch_mm = runtime_flags.disp.pixelptich_mm

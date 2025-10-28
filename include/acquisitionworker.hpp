@@ -87,8 +87,10 @@ private:
 	// Used by ~AcquisitioWorker() to close according Datastream()
 	void close() {
 		runtime_flags.set_false_acquisition_flag();
-		try { m_datastream_A->StopAcquisition(); }
-		catch (...) {}
+		if (!m_datastream_A) {
+			try { m_datastream_A->StopAcquisition(); }
+			catch (...) {}
+		}
 		if (m_readout_thread.joinable()) m_readout_thread.join();
 
 		// avoid self-join deadlock: only join process thread from a different thread

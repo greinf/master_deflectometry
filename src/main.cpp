@@ -23,11 +23,8 @@ int main()
         return 0;
     }
     
-    meassure.generatePattern();
-    //meassure.start_meassurement(Shift_mode::four_phase_shift, DisplayMode::Automatic, 0);
 
-    //meassure.show_acquistion();
-    //meassure.phase_unwrap();
+    //meassure.grayValueCalib();
 
     meassure.load_frames(file.string());
     meassure.load_calib();
@@ -36,7 +33,10 @@ int main()
     //meassure.save_frames(file.string());
 
     
+    //meassure.start_meassurement(Shift_mode::four_phase_shift, DisplayMode::Automatic, 0);
 
+    //meassure.show_acquistion();
+    //meassure.phase_unwrap();
 
     /*
     std::string str("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/out_camera_data_First_real_calib.xml");

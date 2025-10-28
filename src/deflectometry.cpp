@@ -128,7 +128,37 @@ void showRawImage(const cv::Mat& mat) {
 	imgHandler.imshow_Camera(mat);
 }
 
+void Deflectometry::grayValueCalib(int camera){
+	
+	assert(m_screen && m_acquisition_worker && runtime_flags.get_camera_running_flag());
+	//After setUpAcuqisition Datastream is available
+	m_acquisition_worker->setUpAcquisition(camera);
+	m_acquisition_worker->getDatastream(camera);
+
+	// All image dispalying is running via the image handler class
+	m_acquisition_worker->assignImageHandler(showRawImage);
+	runtime_flags.set_next_fringe_pattern_flag_false(); //First set "next image flag" to false
+
+	// Lauch	
+	std::thread img_handler_thread(&ImageHandler::run, &imgHandler, 2);
+	std::thread controller(&Deflectometry::controller_userInput, this);
+	std::thread camera_thread(&AcquisitionWorker::start, m_acquisition_worker.get());
+	std::thread gray_value_thread(&Screen::gray_value_calib, m_screen.get());
+	if (gray_value_thread.joinable()) gray_value_thread.join();
+	if (controller.joinable()) controller.join();
+	if (camera_thread.joinable()) camera_thread.join();
+	if (img_handler_thread.joinable()) img_handler_thread.join();
+
+	std::vector<cv::Mat> gray_val_calibration_frames(std::move(m_acquisition_worker->m_frames)); //Moves the frames from acquisitionworker to local variable calibratoin_frames
+	std::cout << "Number of calibration frames taken: " << gray_val_calibration_frames.size() << '\n' <<
+		" m_acuqisitionworker m_frames hopefully empty " << m_acquisition_worker->m_frames.size() << std::endl;
+
+	m_img_processing->gray_value_calib(gray_val_calibration_frames);
+}
+
+
 void Deflectometry::calc_reproject_error() {
+	m_screen->generate_phaseShift(Shift_mode::four_phase_shift);
 	m_img_processing->calc_reproject_error();
 }
 

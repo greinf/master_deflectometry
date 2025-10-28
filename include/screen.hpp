@@ -42,6 +42,7 @@ public:
 	void stopDisplaying() {
 		m_keepDisplaying.store(false);
 	}
+	void gray_value_calib();
 
 private:
 	Shift_mode m_mode;
@@ -60,6 +61,8 @@ private:
 	float m_numberPeriods{};
 	float m_shift_length{};
 	void getfromFlag_H(int n_shifts);
+
+
 };
 
 

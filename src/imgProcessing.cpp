@@ -7,7 +7,7 @@
 #include <opencv2/phase_unwrapping/histogramphaseunwrapping.hpp>
 #include "GoldsteinWrapper.hpp"
 #include <filesystem>
-
+#include "cvDepthTraits.hpp"
 
 
 //Debugging function to calculate gradient strength
@@ -179,6 +179,81 @@ void ImageProcessing::shiftStartPhasetoZero(const cv::Mat& mask, cv::Mat& img, f
     }
 }
 
+void ImageProcessing::gray_value_calib(const std::vector<cv::Mat>& vec) {
+    //create mask
+    // Subtrakt the first image (black) from the brightest (white) the difference is hopefully a usable mask;
+    cv::Mat mask = vec.back() - vec.front();
+    cv::Mat mask_8u;
+    cv::normalize(mask, mask_8u, 255, 0, CV_8U);
+    normalizeAndDisplay(mask_8u);
+    minmaxloc mask_info{ get_minmaxloc(mask_8u) };
+    cv::threshold(mask_8u, mask_8u, mask_info.maxval * 0.5, 255, cv::THRESH_BINARY);
+    normalizeAndDisplay(mask_8u);
+}
+
+
+
+// This is the first implementation of a template elipsis. The function takes a arbitrary ammount of cv::MAts and a function pointer. 
+// Becasue the cv::Mat datatype can not be decued at compile time this functions template calls a second inner function where, 
+// for the datatypes it is differntiatied. 
+template<typename func, typename... Mats>
+auto ImageProcessing::forEachPixel(func, Mats&&... mats) {
+    static_assert(sizeof...(mats) > 0, "Need at least one matrix."); //compile time check
+    auto first std::get<0>(std::forward_as_tuple(std::forward<Mats>(mats)));
+    const cv::Size size = first.size();
+    const int type = first.type();
+    (assert(size == mats.size() && type == mats.type()), ...); //compiler expands at compile time, checkupt at runtime.
+    // giving a conditional datatype back, std::is_same<>::value is static function
+    // if condition is true give back the first datatype, if false give back the second datatype 
+    // But mats.size() and mats.type() are runtime functions, therefore static assert does not work. 
+    
+    // This line does not work becasue in decltype it is assumed that .at<float> for each datatype
+    // This line typename std::conditional -> typename is necessary to tell the compiler that a type is named. not a value. wihtout std::conditional<...>::type could be interpreted as static
+    // typenmae std::remove_reference -> the function itself is template class and ::type nested type alias. 
+    // Whenever <T>::type (or something) is used and it is not a static member function we have to use typename becasue the comiler can not now. 
+    // using T = typename std::conditional<
+    //    std::is_same<Func, float(*)(float,float) >>::value, float, typename std::remove_reference<decltype(first.at<float>(0, 0))>::type>::type;
+    
+    // typenabhängiger Name. 
+    int type = mat.type();           
+    int depth = CV_MAT_DEPTH(type);  //Macros to extract depth (datatype)
+    int channels = CV_MAT_CN(type);  //Macros to define extract how manc channels are there
+    
+    // type dependend name here, therefore "typename" before. Also this line does not work. becasue type is runtime constant at the 
+    // template deduction would hapen at comile time the value is not available when the programm runs. 
+    //using T = typename CvDepthTraits<CV_MAT_DEPTH(type)>::value_type;
+
+    switch (depth) {
+    case CV_8U:  return forEachPixelImpl<CV_8U>(func, std::forward<Mats>(mats)...);
+    case CV_8S:  return forEachPixelImpl<CV_8S>(func, std::forward<Mats>(mats)...);
+    case CV_16U: return forEachPixelImpl<CV_16U>(func, std::forward<Mats>(mats)...);
+    case CV_16S: return forEachPixelImpl<CV_16S>(func, std::forward<Mats>(mats)...);
+    case CV_32S: return forEachPixelImpl<CV_32S>(func, std::forward<Mats>(mats)...);
+    case CV_32F: return forEachPixelImpl<CV_32F>(func, std::forward<Mats>(mats)...);
+    case CV_64F: return forEachPixelImpl<CV_64F>(func, std::forward<Mats>(mats)...);
+    default:
+        throw std::runtime_error("Unsupported depth.");
+
+    }
+}
+
+
+template<int Depth, typename Func, typename... Mats>
+cv::Mat ImageProcessing::forEachPixelImpl(const Func& func, Mats&&... mats) {
+    using T = typename CvDepthTraits<Depth>::value_type;   //again typename necessary because of ...<dependen>::...
+    auto&& first = std::get<0>(std::forward_as_tuple(mats...));
+
+    cv::Mat result(first.size(), first.type());
+
+    for (int y = 0; y < result.rows; ++y) {
+        for (int x = 0; x < result.cols; ++x) {
+            result.at<T>(y, x) = func(mats.at<T>(y, x)...);
+        }
+    }
+    return result;
+}
+
+
 void ImageProcessing::calc_reproject_error() {
     assert(runtime_flags.disp.wavelength && "Parameters of the phase pattern are not available. Call generatePattern() before \n");
     m_mask = { createMask() };
@@ -224,8 +299,10 @@ void ImageProcessing::calc_reproject_error() {
     cv::imshow("Gradient horizontal ", gradients_horizontal.first);
     */
     
+    // is set to the maximum value
     std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>> calibrationPoints = 
-        generateCalibrationPoints(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength);
+        generateCalibrationPoints(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength,
+            runtime_flags.disp.width, runtime_flags.disp.height);
 
     
     CV_Assert(!calibrationPoints.first.empty() && calibrationPoints.first.size() == calibrationPoints.second.size());
@@ -243,7 +320,6 @@ void ImageProcessing::calc_reproject_error() {
     if (!ok) throw std::runtime_error("solvePnP failed.");
     //normalizeAndDisplay(unwrap1_masked);
 
-
     // Project Points
     std::vector<cv::Point2f> projected;
     // This function takes the object points. 
@@ -252,13 +328,55 @@ void ImageProcessing::calc_reproject_error() {
 
     double sumSq = 0.0;
     double maxErr = 0.0;
-    //Visualization
-    cv::Mat error_visualizer;
-    cv::cvtColor(m_mask.clone(), error_visualizer, cv::COLOR_GRAY2BGR);
+
+    // Visualization
+    // mainly to see error of the camera calibartion (verzeichnung)
+    cv::Mat error_visualizer1;
+    cv::cvtColor(m_mask.clone(), error_visualizer1, cv::COLOR_GRAY2BGR);
     for (std::size_t i=0; i < calibrationPoints.first.size(); ++i) {
-        cv::arrowedLine(error_visualizer, projected[i], calibrationPoints.first[i], cv::Scalar(255,0,0), 2);
+        cv::arrowedLine(error_visualizer1, projected[i], calibrationPoints.first[i], cv::Scalar(255,0,0), 2);
     }
-    cv::imshow("Error mask", error_visualizer);
+    cv::imshow("Error mask", error_visualizer1);
+    cv::waitKey(0);
+
+    // mainly to see the error of the grayvalue calibration (periodic errors)
+    cv::Mat_<cv::Point_<float>> error_visualizer2(m_mask.size(), cv::Point_<float>(0,0));
+    for (std::size_t i = 0; i < calibrationPoints.first.size(); ++i) {
+        cv::Point pt(cvRound(calibrationPoints.first[i].x), cvRound(calibrationPoints.first[i].y));
+        if (pt.inside(cv::Rect(0, 0, error_visualizer2.cols, error_visualizer2.rows)))
+            error_visualizer2.at<cv::Point2f>(pt) = calibrationPoints.first[i] - projected[i];
+    }
+
+    std::vector<cv::Mat> xy(2);
+    //Seperate a mask given multiple channels cv::Mat_<cv::Point_<float>> 
+    cv::split(error_visualizer2, xy);
+    //Another apporach through pointers -> 
+    /*
+    for (int r = 0; r < points.rows; ++r) {
+        const cv::Vec2f* rowPtr = points.ptr<cv::Vec2f>(r);
+            for (int c = 0; c < points.cols; ++c) {
+                float x = rowPtr[c][0];
+                float y = rowPtr[c][1];
+        }
+    }
+    */
+    cv::Mat visual_mask = ((xy[0] != 0) | (xy[1] != 0));
+    cv::Mat xNorm, yNorm;
+    cv::normalize(xy[0], xNorm, 0, 255, cv::NORM_MINMAX);
+    cv::normalize(xy[1], yNorm, 0, 255, cv::NORM_MINMAX);
+    xNorm.convertTo(xNorm, CV_8U);
+    yNorm.convertTo(yNorm, CV_8U);
+
+    cv::Mat xcolor, ycolor;
+    cv::applyColorMap(xNorm, xcolor, cv::COLORMAP_TURBO);
+    cv::applyColorMap(yNorm, ycolor, cv::COLORMAP_TURBO);
+
+    xcolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
+    ycolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
+
+    cv::imshow("Error x direction", xcolor);
+    cv::imshow("Error y direction", ycolor);
+
     cv::waitKey(0);
 
 
@@ -302,20 +420,22 @@ ImageProcessing::generateCalibrationPoints(
     std::vector<cv::Point3f> objectPoints;
 
     // Define spacing across image (camera pixels)
-    float stepX = static_cast<float>(unwrapX.cols) / (gridX + 1);
-    float stepY = static_cast<float>(unwrapX.rows) / (gridY + 1);
+    float stepX = static_cast<float>(unwrapX.cols) / (gridX);  //+1
+    float stepY = static_cast<float>(unwrapX.rows) / (gridY);  //+1
 
     //Debug Copy
     cv::Mat debug = unwrapX.clone();
 
-    for (int gy = 1; gy <= gridY; ++gy) {
+    for (int gy = 0; gy <= gridY; ++gy) {
+        //if (stepY == 1) --gy;
         int dy = static_cast<int>(gy * stepY);
         if (dy < 0 || dy >= unwrapX.rows)
             continue;
 
         const float* row_ptr_X = unwrapX.ptr<float>(dy);
         const float* row_ptr_Y = unwrapY.ptr<float>(dy);
-        for (int gx = 1; gx <= gridX; ++gx) {
+        for (int gx = 0; gx <= gridX; ++gx) {
+            //if (stepX == 1) --gx;
             int px = static_cast<int>(gx * stepX);
             //int py = static_cast<int>(gx * stepY);
 
@@ -331,12 +451,13 @@ ImageProcessing::generateCalibrationPoints(
             //float phiY = unwrapY.at<float>(py, px);
             // Get the phase value in each pictures for the same pixel if valid. 
             float phiX = (*(row_ptr_X + px));
-            float phiY = (*(row_ptr_Y + dy));
+            float phiY = (*(row_ptr_Y + px));
 
             // Maximum possible phase values
             float max_phase_value_u = (static_cast<float>(runtime_flags.disp.width) / pixelsPer2pi) * CV_2PI;
             float max_phase_value_v = (static_cast<float>(runtime_flags.disp.height) / pixelsPer2pi) * CV_2PI;
-            //Check if phase value is in logical range. 
+
+            //Check if phase value is in logical range. These boarder need to be less strict
             if (phiX > max_phase_value_u || phiY > max_phase_value_v) { throw std::runtime_error ("The phase is not within allowed bounds. "); }
 
             // Convert unwrapped phase  screen coordinates in subpixel (float, float) values. 
@@ -358,7 +479,7 @@ ImageProcessing::generateCalibrationPoints(
             //cv::drawMarker(debug, cv::Point(px,dy), cv::Scalar(0));
         } 
     }
-    //normalizeAndDisplay(debug);
+    normalizeAndDisplay(debug);
     return { imagePoints, objectPoints };
 }
 
