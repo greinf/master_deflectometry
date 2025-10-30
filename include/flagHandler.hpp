@@ -7,6 +7,27 @@
 //If not defined, getting problms witch std::max/ std::min
 #define NOMINMAX
 #include <windows.h>
+#include <mutex>
+
+struct GrayValueCalib {
+public:
+	int stepwidth{};
+	int pictures_per_value{};
+
+	static GrayValueCalib& instance() {
+		static GrayValueCalib gray_val_data;
+		return gray_val_data;
+	}
+	
+	// Small explenation why return by reference: If we call GrayValueCalib a= GrayValueCalib b-> a already exists. Both objects 
+	// are passed to the copy constructor. Therefor return by reference to avoid creating a copy of the object. Since Object a, already exists. 
+	GrayValueCalib& operator=(const GrayValueCalib&) = delete; 
+	GrayValueCalib& operator=(GrayValueCalib&&) = delete;
+	GrayValueCalib(const GrayValueCalib&) = delete;
+	GrayValueCalib(GrayValueCalib&&) = delete;
+private:
+	GrayValueCalib() = default;
+};
 
 
 struct DisplayInformation {
@@ -55,7 +76,7 @@ private:
 			return;
 		}
 		// Be carefull second window position is just hardcoded!!
-		posx = 1910; //dm.dmPosition.x;
+		posx = 1920; //dm.dmPosition.x;
 		posy = dm.dmPosition.y; //normally 0
 		width = dm.dmPelsWidth;
 		height = dm.dmPelsHeight;
@@ -206,8 +227,11 @@ public:
 	int pixel_y;
 	// DispalyInformation 
 	DisplayInformation& disp = DisplayInformation::instance();
+	GrayValueCalib& calib = GrayValueCalib::instance();
 
-
+	std::mutex save_mutex;
+	std::mutex pattern_mutex;
+	std::condition_variable cv;
 
 
 private:

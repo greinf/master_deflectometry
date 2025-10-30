@@ -179,16 +179,69 @@ void ImageProcessing::shiftStartPhasetoZero(const cv::Mat& mask, cv::Mat& img, f
     }
 }
 
-void ImageProcessing::gray_value_calib(const std::vector<cv::Mat>& vec) {
-    //create mask
+/*
+//Just a small example code to do generic programming with iterators
+template <class InputIt>
+typename std::iterator_traits<InputIt>::difference_type
+distance(InputIt first, InputIt last) {
+    using category = typename std::iterator_traits<InputIt>::iterator_category;
+
+    if constexpr (std::is_same_v<category, std::random_access_iterator_tag>)
+        return last - first;     // fast O(1)
+    else {
+        typename std::iterator_traits<InputIt>::difference_type n = 0;
+        for (; first != last; ++first) ++n;   // slow O(n)
+        return n;
+    }
+}
+*/
+
+//typename std::iterator_traits<iterator>::iterator_category 
+// I first had the above as datatype. but the return type is of type std::iterator_traits<...>::iterator_category
+template<typename iterator>
+iterator advance_return(iterator start, int n) {
+    return start + n;
+}
+
+//does copy the iterator, Therefore the original does not get changed. 
+template<typename iterator>
+constexpr iterator advance_return1(iterator start, typename std::iterator_traits<iterator>::difference_type n) {
+    // This line does not work. STL templates mostly do not allow excplicit templeta args becasue it leads to ambigous function deduction.
+    // std::advance<iterator, typename std::iterator_traits<iterator>::difference_type>(start, n);
+    std::advance(start, n);
+    return start;
+}
+
+
+void ImageProcessing::gray_value_calib(std::vector<cv::Mat>& vec) {
+    // Create first mean values if needed. 
+    assert(!vec.empty() && "If the vector is empty there must be error in acquisition. \n");
+    std::vector<cv::Mat> mean_vec{};
+    if (runtime_flags.calib.pictures_per_value > 1) {
+        std::vector<cv::Mat>::const_iterator begin_mean = vec.cbegin();
+        std::vector<cv::Mat>::const_iterator end_mean = advance_return1(begin_mean, runtime_flags.calib.pictures_per_value);
+        mean_vec.push_back(mean(std::vector<cv::Mat>(begin_mean, end_mean)));
+        for (std::size_t i = 0; i < (std::numeric_limits<uchar>::max() / runtime_flags.calib.stepwidth); ++i) {
+            begin_mean = advance_return1(begin_mean, runtime_flags.calib.pictures_per_value);
+            end_mean = advance_return1(end_mean, runtime_flags.calib.pictures_per_value);
+            mean_vec.push_back(mean(std::vector<cv::Mat>(begin_mean, end_mean)));
+        }
+    }
+    else { mean_vec = std::move(vec); }
+    
     // Subtrakt the first image (black) from the brightest (white) the difference is hopefully a usable mask;
-    cv::Mat mask = vec.back() - vec.front();
-    cv::Mat mask_8u;
-    cv::normalize(mask, mask_8u, 255, 0, CV_8U);
-    normalizeAndDisplay(mask_8u);
-    minmaxloc mask_info{ get_minmaxloc(mask_8u) };
-    cv::threshold(mask_8u, mask_8u, mask_info.maxval * 0.5, 255, cv::THRESH_BINARY);
-    normalizeAndDisplay(mask_8u);
+    cv::Mat mask = mean_vec.back() - mean_vec.front();
+    minmaxloc mask_info{ get_minmaxloc(mask) };
+    cv::threshold(mask, mask, mask_info.maxval * 0.5, 255, cv::THRESH_BINARY);
+    normalizeAndDisplay(mask);
+
+    std::vector<cv::Scalar_<double>> mean_values;
+
+    for (const auto& mean_img : mean_vec) {
+        mean_values.push_back(cv::mean(mean_img, mask));
+    }
+
+    m_mean_grayValues = std::move(mean_values);
 }
 
 
@@ -233,7 +286,6 @@ auto ImageProcessing::forEachPixel(func, Mats&&... mats) {
     case CV_64F: return forEachPixelImpl<CV_64F>(func, std::forward<Mats>(mats)...);
     default:
         throw std::runtime_error("Unsupported depth.");
-
     }
 }
 
@@ -254,7 +306,7 @@ cv::Mat ImageProcessing::forEachPixelImpl(const Func& func, Mats&&... mats) {
 }
 
 
-void ImageProcessing::calc_reproject_error() {
+void ImageProcessing::calc_reproject_error(bool visualizing) {
     assert(runtime_flags.disp.wavelength && "Parameters of the phase pattern are not available. Call generatePattern() before \n");
     m_mask = { createMask() };
     cv::Mat unwrap1_masked, unwrap2_masked;
@@ -329,63 +381,12 @@ void ImageProcessing::calc_reproject_error() {
     double sumSq = 0.0;
     double maxErr = 0.0;
 
-    // Visualization
-    // mainly to see error of the camera calibartion (verzeichnung)
-    cv::Mat error_visualizer1;
-    cv::cvtColor(m_mask.clone(), error_visualizer1, cv::COLOR_GRAY2BGR);
-    for (std::size_t i=0; i < calibrationPoints.first.size(); ++i) {
-        cv::arrowedLine(error_visualizer1, projected[i], calibrationPoints.first[i], cv::Scalar(255,0,0), 2);
-    }
-    cv::imshow("Error mask", error_visualizer1);
-    cv::waitKey(0);
-
-    // mainly to see the error of the grayvalue calibration (periodic errors)
-    cv::Mat_<cv::Point_<float>> error_visualizer2(m_mask.size(), cv::Point_<float>(0,0));
-    for (std::size_t i = 0; i < calibrationPoints.first.size(); ++i) {
-        cv::Point pt(cvRound(calibrationPoints.first[i].x), cvRound(calibrationPoints.first[i].y));
-        if (pt.inside(cv::Rect(0, 0, error_visualizer2.cols, error_visualizer2.rows)))
-            error_visualizer2.at<cv::Point2f>(pt) = calibrationPoints.first[i] - projected[i];
-    }
-
-    std::vector<cv::Mat> xy(2);
-    //Seperate a mask given multiple channels cv::Mat_<cv::Point_<float>> 
-    cv::split(error_visualizer2, xy);
-    //Another apporach through pointers -> 
-    /*
-    for (int r = 0; r < points.rows; ++r) {
-        const cv::Vec2f* rowPtr = points.ptr<cv::Vec2f>(r);
-            for (int c = 0; c < points.cols; ++c) {
-                float x = rowPtr[c][0];
-                float y = rowPtr[c][1];
-        }
-    }
-    */
-    cv::Mat visual_mask = ((xy[0] != 0) | (xy[1] != 0));
-    cv::Mat xNorm, yNorm;
-    cv::normalize(xy[0], xNorm, 0, 255, cv::NORM_MINMAX);
-    cv::normalize(xy[1], yNorm, 0, 255, cv::NORM_MINMAX);
-    xNorm.convertTo(xNorm, CV_8U);
-    yNorm.convertTo(yNorm, CV_8U);
-
-    cv::Mat xcolor, ycolor;
-    cv::applyColorMap(xNorm, xcolor, cv::COLORMAP_TURBO);
-    cv::applyColorMap(yNorm, ycolor, cv::COLORMAP_TURBO);
-
-    xcolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
-    ycolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
-
-    cv::imshow("Error x direction", xcolor);
-    cv::imshow("Error y direction", ycolor);
-
-    cv::waitKey(0);
-
 
     for (size_t i = 0; i < calibrationPoints.first.size(); ++i) {
         double e = cv::norm(calibrationPoints.first[i] - projected[i]); // pixels
         sumSq += e * e;
         maxErr = std::max(maxErr, e);
     }
-
 
     double rms = std::sqrt(sumSq / calibrationPoints.first.size());
 
@@ -399,6 +400,69 @@ void ImageProcessing::calc_reproject_error() {
     // Distance camera↔screen plane (norm of t)
     std::cout << "Camera distance ≈ " << cv::norm(tvec) << " mm\n";
 
+    if (visualizing) {
+        // Visualization
+        // mainly to see error of the camera calibartion (verzeichnung). We try to draw a line that points in the direction of the error. 
+        cv::Mat error_visualizer1;
+        cv::cvtColor(m_mask.clone(), error_visualizer1, cv::COLOR_GRAY2BGR);
+        for (std::size_t i = 0; i < calibrationPoints.first.size(); ++i) {
+            cv::arrowedLine(error_visualizer1, projected[i], calibrationPoints.first[i], cv::Scalar(255, 0, 0), 2);
+        }
+        cv::imshow("Error mask", error_visualizer1);
+        m_reprojection_error_img.push_back(error_visualizer1);
+
+        // mainly to see the error of the grayvalue calibration (periodic errors)
+        cv::Mat_<cv::Point_<float>> error_visualizer2(m_mask.size(), cv::Point_<float>(0, 0));
+        for (std::size_t i = 0; i < calibrationPoints.first.size(); ++i) {
+            cv::Point pt(cvRound(calibrationPoints.first[i].x), cvRound(calibrationPoints.first[i].y));
+            if (pt.inside(cv::Rect(0, 0, error_visualizer2.cols, error_visualizer2.rows)))
+                error_visualizer2.at<cv::Point2f>(pt) = calibrationPoints.first[i] - projected[i];
+        }
+
+        std::vector<cv::Mat> xy(2);
+        //Seperate a mask given multiple channels cv::Mat_<cv::Point_<float>> 
+        cv::split(error_visualizer2, xy);
+        //Another apporach through pointers -> 
+        /*
+        for (int r = 0; r < points.rows; ++r) {
+            const cv::Vec2f* rowPtr = points.ptr<cv::Vec2f>(r);
+                for (int c = 0; c < points.cols; ++c) {
+                    float x = rowPtr[c][0];
+                    float y = rowPtr[c][1];
+            }
+        }
+        */
+
+        minmaxloc x_direc{ get_minmaxloc(xy[0]) };
+        minmaxloc y_direc{ get_minmaxloc(xy[1]) };
+        double x_range = x_direc.maxval - x_direc.minval;
+        double y_range = y_direc.maxval - y_direc.minval;
+        int x_max, y_max;
+        (x_range > y_range) ? (x_max = 255, y_max = static_cast<int>(255 * (y_range/x_range))) : 
+            (x_max = static_cast<int>(255 * (x_range/y_range)), y_max = 255);
+        //In this code both images are just normalized to their given range. Therefore the color map gives no information a
+        cv::Mat visual_mask = ((xy[0] != 0) | (xy[1] != 0));
+        cv::Mat xNorm, yNorm;
+        // First normalization, than conversion to the needed Datatype !!!!
+        cv::normalize(xy[0], xNorm, 0, x_max, cv::NORM_MINMAX);
+        cv::normalize(xy[1], yNorm, 0, y_max, cv::NORM_MINMAX);
+        xNorm.convertTo(xNorm, CV_8U);
+        yNorm.convertTo(yNorm, CV_8U);
+
+        cv::Mat xcolor, ycolor;
+        cv::applyColorMap(xNorm, xcolor, cv::COLORMAP_TURBO);
+        cv::applyColorMap(yNorm, ycolor, cv::COLORMAP_TURBO);
+        //Set to zero, if the mask is not true. So just extra to set all elements that are masked to zero. 
+        xcolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
+        ycolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
+
+        m_reprojection_error_img.push_back(xcolor);
+        m_reprojection_error_img.push_back(ycolor);
+        cv::imshow("Error x direction", xcolor);
+        cv::imshow("Error y direction", ycolor);
+
+        cv::waitKey(0);   
+    }
 }
 
 std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>>
@@ -795,7 +859,7 @@ void ImageProcessing::unwrapped_phase() {
     */
 }
 
-cv::Mat ImageProcessing::mean(std::vector<cv::Mat> vec) {
+cv::Mat ImageProcessing::mean(std::vector<cv::Mat>& vec) {
     for (size_t i = 1; i < vec.size(); ++i) {
         if (vec[i].size() != vec[0].size() || vec[i].type() != vec[0].type()) {
             std::cerr << "All pictures must be same kind and type. \n";

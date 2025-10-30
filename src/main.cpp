@@ -16,19 +16,27 @@ int main()
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
 
     Deflectometry meassure{};
-    
+    std::string response_curve{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-30/Responsce50perFull.csv" };
+    meassure.grayValueCalib();
+    meassure.saveResponseCurve(response_curve);
+
+
+
+
+    /*
+    // This code can be used for calculating the backpropagation error. 
+    //path to stored images
     std::filesystem::path file("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-23/2025-10-24CompleteData.xml");
     if (!std::filesystem::exists(file.parent_path())) {
         std::cerr << "Wrong addres used \n";
         return 0;
     }
-    
-
-    //meassure.grayValueCalib();
-
     meassure.load_frames(file.string());
     meassure.load_calib();
-    meassure.calc_reproject_error();
+    // Path to the location where the image get stored. 
+    std::filesystem::path file_img("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-29");
+    meassure.calc_reproject_error(true, true, file_img.string());
+    */
 
     //meassure.save_frames(file.string());
 
@@ -63,9 +71,5 @@ int main()
     
 
 	runCameraCalibration(vector, true, settings_files.string());
-    */
-
-    /*
-    
     */
 }

@@ -25,7 +25,7 @@ class ImageProcessing {
 public:
 	ImageProcessing();
 
-	void gray_value_calib(const std::vector<cv::Mat>&);
+	void gray_value_calib(std::vector<cv::Mat>&);
 
 	void wrapped_phase();
 
@@ -37,17 +37,22 @@ public:
 
 	void goldsteinUnwrap();
 
+	// This function saves uncompressed images to a .xml file. This allows for storing of floating point values. 
 	void saveImages(std::string& path);
 
 	void load_frames(const std::string& path);
 
 	void load_calib(std::string path);
 
-	void calc_reproject_error();
+	void calc_reproject_error(bool visualizing);
 
 	std::array<cv::Mat, (std::size_t) 2> m_baseIntensity;
 	std::array<cv::Mat, (std::size_t) 2> m_contrast;
 	std::array<cv::Mat, (std::size_t) 2> m_phase;
+
+	std::vector<cv::Scalar_<double>>& get_mean_values() {
+		return m_mean_grayValues;
+	}
 
 	//void convertToFloat(std::vector);
 	~ImageProcessing();
@@ -74,6 +79,7 @@ public:
 		}
 	};
 
+	[[maybe_unused]] std::vector<cv::Mat> m_reprojection_error_img;
 private:	
 	// If number_of_frames_per_pattern > 0. Here mean values get stored. 
 	// Starting point for Image Processing steps. 
@@ -82,15 +88,19 @@ private:
 	std::vector<cv::Mat> m_raw_phase{};
 	
 	cv::Mat m_mask;
+	
 	std::array<cv::Mat, (std::size_t)2> m_unwrapped_phase{};
 	std::array<cv::Mat, (std::size_t)2> m_wrapped_phase{};
-	cv::Mat mean(std::vector<cv::Mat>);
+	cv::Mat mean(std::vector<cv::Mat>&);
 
 	std::array<cv::Mat, (std::size_t)2> m_s1{};
 	std::array<cv::Mat, (std::size_t)2> m_s2{};
 	std::array<cv::Mat, (std::size_t)2> m_s3{};
 	
 	std::string path{ "C:\\Users\\grein\\Desktop\\Master\\Project\\deflectometrie\\out" };
+
+	std::vector<cv::Scalar_<double>> m_mean_grayValues;
+	// Initializiation of empty cv::Mats in the right datatype. This is necessary for the calculation of the wrapped phase. 
 	void create();
 	void create(std::vector<cv::Mat>& vec);
 
@@ -102,6 +112,8 @@ private:
 	static cv::Mat forEachPixelImpl(const Func& func, Mats&&... mats);
 
 	cv::Mat applyMask(const cv::Mat&, const cv::Mat&, float shift = 0.0f);
+
+	//Loads images ín png or jpeg format, from the given path.
 	cv::Mat load_images(std::string path_to_image);
 	
 	// Just have some fun with std::reference_wrapper. Extremly good c++ documentation code for implementation of generic std::reference_wrapper. 

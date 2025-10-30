@@ -52,6 +52,20 @@ public:
 		catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
 	}
 
+	void start1() {
+		//one instaces of the AcquisitionWorker class is allowed to have only one start() function running
+		std::lock_guard<std::mutex> acquisition_block(m_acquisition_block);
+
+		if (!m_image_handler) { //&& m_acquire_command_handler
+			std::runtime_error e("Image_Handler is Nullpointer. \n"); //or Command_Handler are
+		}
+		try {
+			runtime_flags.set_true_acquisition_flag();
+			m_readout_thread = std::thread([this] { run_readout1(); });
+			if (m_readout_thread.joinable()) m_readout_thread.join();
+		}
+		catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
+	}
 	
 	void assignImageHandler(void(*funct_ptr)(const cv::Mat&)) {
 		m_image_handler = funct_ptr;
@@ -119,7 +133,7 @@ private:
 					cv::Mat rotated = rotImage180(view);
 					m_image_handler(rotated);
 					if (runtime_flags.get_imSave_flag()) {
-						std::this_thread::sleep_for(std::chrono::milliseconds(200));
+						std::this_thread::sleep_for(std::chrono::milliseconds(100));
 						m_frames.push_back(rotated.clone());
 						runtime_flags.set_false_imSave_flag();
 						runtime_flags.set_true_save_process_finished();
@@ -127,6 +141,42 @@ private:
 					//if (runtime_flags.get_acquisition_flag()) return;
 					m_datastream_A->QueueBuffer(buffer);
 					
+				}
+			}
+			catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }
+		}
+	}
+
+	void run_readout1() {
+		int n_pics{ 0 };
+		while (runtime_flags.get_acquisition_flag()) {
+			try {
+				//std::cout << "Visualize ";
+				const auto buffer = m_datastream_A->WaitForFinishedBuffer(5000); //could use peak::core::Timeout::INFINITE_TIMEOUT
+
+				if (buffer) {
+					// Be carefull!!! view does NOT own the data. It is read directly from the buffer through 
+					// the void pointer, pointing to the first element of the Buffer. 
+					// Even more dangerous -> Void pointer used. At this point openCV does not know 
+					// if the image is Mono8 Mono10 or Mono12. 
+					cv::Mat view(buffer->Height(), buffer->Width(), CV_8UC1, (void*)buffer->BasePtr(), buffer->Width());
+					//Callback called
+					cv::cvtColor(view, view, cv::COLOR_BayerRG2GRAY); //Camera is BayerBG
+					cv::Mat rotated = rotImage180(view);
+					m_image_handler(rotated);
+					if (runtime_flags.get_imSave_flag()) {
+						std::unique_lock<std::mutex> lk_save(runtime_flags.save_mutex);
+						runtime_flags.set_false_imSave_flag();
+						//so the save function waits 
+						std::cout << "AcquisitionWorker image " << n_pics++ << "\n";
+						m_frames.push_back(rotated.clone());
+						lk_save.unlock();
+
+						runtime_flags.cv.notify_one();
+					}
+					//if (runtime_flags.get_acquisition_flag()) return;
+					m_datastream_A->QueueBuffer(buffer);
+
 				}
 			}
 			catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }

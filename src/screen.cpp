@@ -3,6 +3,8 @@
 #include "enums.hpp"
 #include "flagHandler.hpp"
 #include "imageHandler.hpp"
+#include <condition_variable>
+#include <mutex>
 /*
 Screen::Screen(std::int32_t pixel_x, std::int32_t pixel_y, std::int32_t pixel_pitch, float numberPeriods):
 	m_pixel_x{pixel_x}, m_pixel_y{pixel_y}, m_pixel_pitch{pixel_pitch}, m_numberPeriods { numberPeriods },
@@ -24,28 +26,35 @@ void Screen::getfromFlag_H(int n_shifts) {
 
 
 void Screen::gray_value_calib() {
+	// Sets flags
 	runtime_flags.set_finished_fringe_Iteration_false();
-	const std::vector<int> gray_val{ 0, 32, 64, 96, 128, 160, 192, 224, 255 };
-	for (size_t counter = 0; counter < gray_val.size(); ++counter) {
-		// Display new gray pattern
-		cv::Mat gray_image(runtime_flags.disp.posy, runtime_flags.disp.posx, CV_8UC1, cv::Scalar(gray_val[counter]));
+	runtime_flags.set_stop_fringe_projection_flag_false();
+	// Allocate memory for array
+	cv::Mat gray_image(runtime_flags.disp.height, runtime_flags.disp.width, CV_8UC1);
+	assert(runtime_flags.calib.stepwidth && "Stepwidth is not defined \n");
+	for (size_t counter = 0; counter < 256; counter += runtime_flags.calib.stepwidth ) {
+		//std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
+		//in theory this runtime_flags should not be necessary
+		gray_image.setTo(cv::Scalar(static_cast<int>(counter)));
 		imgHandler.imshow_Pattern(gray_image);
-
-		// Wait for the next pattern trigger
-		while (!runtime_flags.get_next_fringe_pattern_flag()) {
-			if (runtime_flags.get_stop_fringe_projection_flag()) {
-				runtime_flags.set_stop_fringe_projection_flag_false();
-				std::cout << "Gray value projection interrupted\n";
-				return;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		
+		if (runtime_flags.get_stop_fringe_projection_flag()) {
+			runtime_flags.set_stop_fringe_projection_flag_false();
+			std::cout << "Gray value projection interrupted\n";
+			lk_pattern.unlock();
+			runtime_flags.cv.notify_all();
+			return;
 		}
-
+		//unlocks the std::mutex and notify the controller automatic thread. 
+		lk_pattern.unlock();
+		runtime_flags.cv.notify_one();
+		std::cout << "Pattern Screen function " << counter << "\n";
 		// Reset flag and continue
-		runtime_flags.set_next_fringe_pattern_flag_false();
 	}
 	std::cout << "Reached last gray value\n";
 	runtime_flags.set_finished_fringe_Iteration_true();
+	return;
 }
 
 bool Screen::prepareShiftParameters() {

@@ -9,6 +9,7 @@
 #include <thread>
 #include <opencv2/opencv.hpp>
 
+
 //Forward Decleration Enums + Class
 enum class AcquisitionMode;
 enum class Shift_mode;
@@ -39,13 +40,15 @@ public:
 	 // If floating point images are given to this function, cv::imwrite will try to save them which leads to data loss. 
 	 void save_frames(std::vector<cv::Mat>& frames, const std::string& path);
 
-	 void calc_reproject_error();
+	 void calc_reproject_error(bool visualizing = true, bool saving = false, const std::string& path = "");
 
 	 void load_frames(const std::string& path);
 	 void generatePattern();
 	 void load_calib(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-23/2025_10-23_Camera_calib.xml");
 
 	 void grayValueCalib(int camera = 0);
+
+	 void saveResponseCurve(const std::string& filename);
 
 private:
 	std::shared_ptr<Screen> m_screen{nullptr};
@@ -62,8 +65,7 @@ private:
 	// Controller thread for automatic acquisaition. Default argument is ammount of pictures taken per 
 	// Meassurment. Information about ammount of shift_steps is saved in flagHandler.hpp.
 	void controller_automatic();
-
-	
+	void controller_automatic_gray(std::unique_lock<std::mutex>&& lk_pattern, std::unique_lock<std::mutex>&& lk_save);
 	
 };
 

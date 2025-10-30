@@ -8,6 +8,7 @@
 #include "flagHandler.hpp"
 #include "imgProcessing.hpp"
 #include "camera_calib.hpp"
+#include <fstream>
 
 #include <filesystem>
 #include <utility>
@@ -128,8 +129,20 @@ void showRawImage(const cv::Mat& mat) {
 	imgHandler.imshow_Camera(mat);
 }
 
+// This method has the first a stable workflow. Less use of the flag handler and uses std::unique_lock() + std::coniditional()
 void Deflectometry::grayValueCalib(int camera){
-	
+	std::cout << "Press any key and ENTER to start measurement if camera sees full fringe pattern\n";
+	char u{ '\0' };
+	std::cin.ignore(1000, '\n');
+	while (!u) {
+		std::cin.get(u);
+		if (!std::cin) {
+			std::cin.clear();
+			std::cin.ignore(1000, '\n');
+		}
+	}
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	std::cout << "Starting automatic meassurement now! \n";
 	assert(m_screen && m_acquisition_worker && runtime_flags.get_camera_running_flag());
 	//After setUpAcuqisition Datastream is available
 	m_acquisition_worker->setUpAcquisition(camera);
@@ -139,15 +152,28 @@ void Deflectometry::grayValueCalib(int camera){
 	m_acquisition_worker->assignImageHandler(showRawImage);
 	runtime_flags.set_next_fringe_pattern_flag_false(); //First set "next image flag" to false
 
-	// Lauch	
+	// Set flags for acquisation
+	runtime_flags.calib.pictures_per_value = 50;
+	runtime_flags.calib.stepwidth = 1;
+
+	//Locking the std::mutex objects before starting the threads. 
+	//Than transfering the ownership to the controller. It is imprtant that these do not leave the current thread.  
+	std::unique_lock<std::mutex> lk_save(runtime_flags.save_mutex);
+	std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
+
+	// Lauch
+	// ownership of the std::mutex is moved lk_save and lk_patter do not contain anything 
 	std::thread img_handler_thread(&ImageHandler::run, &imgHandler, 2);
-	std::thread controller(&Deflectometry::controller_userInput, this);
-	std::thread camera_thread(&AcquisitionWorker::start, m_acquisition_worker.get());
 	std::thread gray_value_thread(&Screen::gray_value_calib, m_screen.get());
+	std::thread camera_thread(&AcquisitionWorker::start1, m_acquisition_worker.get());
+	// Because stay in the same thread -> we move locked objects to controller, But same Thread!!!
+	controller_automatic_gray(std::move(lk_pattern),std::move(lk_save));
 	if (gray_value_thread.joinable()) gray_value_thread.join();
-	if (controller.joinable()) controller.join();
 	if (camera_thread.joinable()) camera_thread.join();
 	if (img_handler_thread.joinable()) img_handler_thread.join();
+
+	// Show Acquisition allows to go through the acuqirded pictures if necessary 
+	//show_acquistion();
 
 	std::vector<cv::Mat> gray_val_calibration_frames(std::move(m_acquisition_worker->m_frames)); //Moves the frames from acquisitionworker to local variable calibratoin_frames
 	std::cout << "Number of calibration frames taken: " << gray_val_calibration_frames.size() << '\n' <<
@@ -156,10 +182,23 @@ void Deflectometry::grayValueCalib(int camera){
 	m_img_processing->gray_value_calib(gray_val_calibration_frames);
 }
 
+void Deflectometry::saveResponseCurve(const std::string& filename) {
+	const std::vector<cv::Scalar_<double>>& vec(m_img_processing->get_mean_values());
+	std::ofstream file(filename);
+	for (size_t i = 0; i < vec.size(); ++i) {
+		file << i << "," << vec[i][0] << "\n"; // use values[i][0] for intensity (since cv::Scalar has 4 components)
+	}
+}
 
-void Deflectometry::calc_reproject_error() {
+
+
+void Deflectometry::calc_reproject_error(bool visualizing, bool saving, const std::string& path) {
+	//Be carefull here hardcoded the shift Mode.
 	m_screen->generate_phaseShift(Shift_mode::four_phase_shift);
-	m_img_processing->calc_reproject_error();
+	m_img_processing->calc_reproject_error(visualizing);
+	std::vector<cv::Mat> reprojection_error(std::move(m_img_processing->m_reprojection_error_img));
+	if(saving) save_frames(reprojection_error, path);
+	
 }
 
 // Constructor Deflectometry() takes no argument. Automatically creates Camera class with ids::peak library. Acuqistionworker inherits from that. 
@@ -230,7 +269,7 @@ void Deflectometry::save_frames(std::vector<cv::Mat>& frames, const std::string&
 	check_create_dir(std::move(p));
 
 	for (const auto& frame : frames) {
-		std::string file_path = path + "frame_" + std::to_string(counter) + ".png";
+		std::string file_path = path + "/frame_" + std::to_string(counter) + ".png";
 		cv::imwrite(file_path, frame);
 		++counter;
 	}
@@ -265,6 +304,39 @@ void Deflectometry::camera_calibration(int camera) {
 		runCameraCalibration(calibration_frames, true, p.string());
 	}
 }
+
+void Deflectometry::controller_automatic_gray(std::unique_lock<std::mutex>&& lk_pattern, std::unique_lock<std::mutex>&& lk_save) {
+	// When this function is started the mutex object are already locked. 
+	// The are just unlocked for the needed operation (saving & next image)
+	// Check for user if Setup is correct
+	assert(runtime_flags.calib.pictures_per_value &&
+		runtime_flags.calib.stepwidth && "For controlling the flags must be set \n");
+	
+	for (int j = 0; j <= std::numeric_limits<uchar>::max(); j += runtime_flags.calib.stepwidth) { //ammount of gray value steps
+		// unlock the lk_pattern mutex and waits for notification from the screen_class. 
+		// when notified taking ownership over lk_pattern and lock it again. 
+		runtime_flags.cv.wait(lk_pattern);
+		std::this_thread::sleep_for(std::chrono::milliseconds(400));
+		std::cout << "Pattern controller " << j<< "\n";
+		for (int i = 0; i < runtime_flags.calib.pictures_per_value; ++i) {
+			std::cout << "Controller image " << i << '\n';
+			// The flag for saving is set. 
+			runtime_flags.set_true_imSave_flag();
+			// The mutes is unlocked, while blocking this thread.
+			runtime_flags.cv.wait(lk_save);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
+		}
+	
+	if (runtime_flags.get_finished_fringe_Iteration()) {
+		runtime_flags.set_false_acquisition_flag();
+		runtime_flags.set_stop_fringe_projection_flag_true();
+		imgHandler.stop();
+		std::cout << "happy day \n";
+		return;
+	}
+}
+
 
 void Deflectometry::controller_automatic() {
 	//Check for user if Setup is correct
