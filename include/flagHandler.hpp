@@ -30,6 +30,41 @@ private:
 };
 
 
+struct PhaseShiftMeassure {
+public:
+	int n_pics_per_Phase{};
+	int n_shifts{};
+	static PhaseShiftMeassure& instance() {
+		static PhaseShiftMeassure phase_shift;
+		return phase_shift;
+	}
+	PhaseShiftMeassure& operator=(const PhaseShiftMeassure&) = delete;
+	PhaseShiftMeassure& operator=(PhaseShiftMeassure&&) = delete;
+	PhaseShiftMeassure(const PhaseShiftMeassure&) = delete;
+	PhaseShiftMeassure(PhaseShiftMeassure&&) = delete;
+private:
+	PhaseShiftMeassure() = default;
+
+};
+
+struct CameraData {
+public:
+	int pixel_x{};
+	int pixel_y{};
+	double exposure_time{};
+	double frame_rate{};
+	static CameraData& instance() {
+		static CameraData data;
+		return data;
+	}
+	CameraData(const CameraData&) = delete;
+	CameraData(CameraData&&) = delete;
+	CameraData& operator=(CameraData&) = delete;
+	CameraData& operator=(CameraData&&) = delete;
+private:
+	CameraData() = default;
+};
+
 struct DisplayInformation {
 public:
 	int posx{}, posy{};
@@ -228,6 +263,8 @@ public:
 	// DispalyInformation 
 	DisplayInformation& disp = DisplayInformation::instance();
 	GrayValueCalib& calib = GrayValueCalib::instance();
+	PhaseShiftMeassure& phase_shift = PhaseShiftMeassure::instance();
+	CameraData& camera_data = CameraData::instance();
 
 	std::mutex save_mutex;
 	std::mutex pattern_mutex;

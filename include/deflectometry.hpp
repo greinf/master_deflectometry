@@ -25,7 +25,8 @@ public:
 
 	 void start_meassurement(Shift_mode, DisplayMode, int);
 	 void show_acquistion();
-	 void phase_unwrap();
+	 
+	 void phase_unwrap(bool save, const std::string& path);
 
 	 void camera_calibration(int camera);
 	 
@@ -64,7 +65,7 @@ private:
 	
 	// Controller thread for automatic acquisaition. Default argument is ammount of pictures taken per 
 	// Meassurment. Information about ammount of shift_steps is saved in flagHandler.hpp.
-	void controller_automatic();
+	void controller_automatic(std::unique_lock<std::mutex>&& lk_pattern, std::unique_lock<std::mutex>&& lk_save);
 	void controller_automatic_gray(std::unique_lock<std::mutex>&& lk_pattern, std::unique_lock<std::mutex>&& lk_save);
 	
 };

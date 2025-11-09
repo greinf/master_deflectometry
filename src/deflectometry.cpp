@@ -22,10 +22,10 @@
 #define CHECK_TYPE(expr, type) ((void)((type*)0 == &(expr))))
 
 /*
-* 
-* Very cool demonstratoin of perfect forwarding. 
-* Differences between compile time values and runtime values must be understood. 
-* 
+ 
+// Very cool demonstratoin of perfect forwarding. 
+// Differences between compile time values and runtime values must be understood. 
+
 #include <iostream>
 #include <string>
 #include <utility>   // for std::forward
@@ -124,6 +124,14 @@ decltype(auto) apply(F&& f, Tuple&& t)
 
 cv::Mat rotImage180(const cv::Mat&);
 
+void showRawMaxValred(const cv::Mat& mat) {
+	cv::Mat color;
+	cv::Mat mask(mat > 250);
+	cv::cvtColor(mat, color, cv::COLOR_GRAY2BGR);
+	color.setTo(cv::Scalar(0, 0, 255), mask);
+	imgHandler.imshow_Camera(color);
+}
+
 //if image should be saved, assign here a handler function that can save the image. 
 void showRawImage(const cv::Mat& mat) {
 	imgHandler.imshow_Camera(mat);
@@ -151,7 +159,7 @@ void Deflectometry::grayValueCalib(int camera){
 	// All image dispalying is running via the image handler class
 	m_acquisition_worker->assignImageHandler(showRawImage);
 	runtime_flags.set_next_fringe_pattern_flag_false(); //First set "next image flag" to false
-
+	runtime_flags.set_stop_fringe_projection_flag_false(); //Set stop fringe projection flag to false
 	// Set flags for acquisation
 	runtime_flags.calib.pictures_per_value = 50;
 	runtime_flags.calib.stepwidth = 1;
@@ -194,10 +202,13 @@ void Deflectometry::saveResponseCurve(const std::string& filename) {
 
 void Deflectometry::calc_reproject_error(bool visualizing, bool saving, const std::string& path) {
 	//Be carefull here hardcoded the shift Mode.
-	m_screen->generate_phaseShift(Shift_mode::four_phase_shift);
+	//m_screen->generate_phaseShift(Shift_mode::four_phase_shift);
 	m_img_processing->calc_reproject_error(visualizing);
-	std::vector<cv::Mat> reprojection_error(std::move(m_img_processing->m_reprojection_error_img));
-	if(saving) save_frames(reprojection_error, path);
+	//std::vector<cv::Mat> reprojection_error(std::move(m_img_processing->m_reprojection_error_img));
+	if (saving) {
+		m_img_processing->saveImages(path);
+		m_img_processing->saveImages_png(path);
+	}
 	
 }
 
@@ -209,17 +220,24 @@ void Deflectometry::calc_reproject_error(bool visualizing, bool saving, const st
 Deflectometry::Deflectometry() {
 	m_screen = std::make_shared<Screen>(10); //Use constructor that works with flag file 
 	m_acquisition_worker = std::make_shared<AcquisitionWorker>(0); 
-	m_img_processing = std::make_shared<ImageProcessing>();
+	m_img_processing = std::make_shared<ImageProcessing>(float (5));
 }
 
-void Deflectometry::phase_unwrap() {
+// Takes the frames from acquisitionworker and moves it into imageprocessing
+void Deflectometry::phase_unwrap(bool save, const std::string& path) {
 	m_img_processing->assginFrames(std::move(m_acquisition_worker->m_frames));
 	// Calculates the wrapped phase. Pictures are stored in m_acquisition_worker.
 	// Wrapped phase, Base Intensity, and Contrast are stored in m_img_processing as members. 
 	m_img_processing->wrapped_phase();
 	//m_img_processing->goldsteinUnwrap();
+	
 	m_img_processing->unwrapped_phase();
-
+	
+	if (save) {
+		m_img_processing->saveImages(path);
+		m_img_processing->saveImages_png(path);
+	}
+	
 }
 
 //Just a small helper function that the shift parameters are available for later processing.
@@ -237,6 +255,7 @@ void Deflectometry::show_acquistion() {
 		cv::imshow("Raw Phase", frame);
 		cv::waitKey(0);
 	}
+	cv::destroyWindow("Raw Phase");
 }
 
 //Returns true if path exists, false if created new directory
@@ -316,7 +335,7 @@ void Deflectometry::controller_automatic_gray(std::unique_lock<std::mutex>&& lk_
 		// unlock the lk_pattern mutex and waits for notification from the screen_class. 
 		// when notified taking ownership over lk_pattern and lock it again. 
 		runtime_flags.cv.wait(lk_pattern);
-		std::this_thread::sleep_for(std::chrono::milliseconds(400));
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		std::cout << "Pattern controller " << j<< "\n";
 		for (int i = 0; i < runtime_flags.calib.pictures_per_value; ++i) {
 			std::cout << "Controller image " << i << '\n';
@@ -337,39 +356,24 @@ void Deflectometry::controller_automatic_gray(std::unique_lock<std::mutex>&& lk_
 	}
 }
 
-
-void Deflectometry::controller_automatic() {
-	//Check for user if Setup is correct
-	std::cout << "Press any key and ENTER to start measurement if camera sees full fringe pattern\n";
-	char u{ '\0' };
-	std::cin.ignore(1000, '\n');
-	while (!u) {
-		std::cin.get(u);
-		if (!std::cin) {
-			std::cin.clear();
-			std::cin.ignore(1000, '\n');
-		}
-	}
-	runtime_flags.set_number_of_pictures_per_pattern(5);
+void Deflectometry::controller_automatic(std::unique_lock<std::mutex>&& lk_save, std::unique_lock<std::mutex>&& lk_pattern) {
 	
-	std::this_thread::sleep_for(std::chrono::seconds(2));
-	std::cout << "Starting automatic meassurement now! \n";
-	for (int i = 0; i < runtime_flags.get_number_of_shifts()*2; ++i) { //times two for vertikal and horizontal
-		for (int j = 0; j < runtime_flags.get_number_of_pictures_per_pattern(); ++j) {
+	//runtime_flags.set_number_of_pictures_per_pattern(5);
+	assert(runtime_flags.phase_shift.n_pics_per_Phase &&
+		runtime_flags.phase_shift.n_shifts && "For controlling the flags must be set \n");
+	int img_counter{};
+	for (int i = 0; i < runtime_flags.phase_shift.n_shifts * 2; ++i) { //times two for vertikal and horizontal
+		std::cout << "reach? ";
+		runtime_flags.cv.wait(lk_pattern);
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		for (int j = 0; j < runtime_flags.phase_shift.n_pics_per_Phase; ++j) {
 			//Savety first: save_processed finished to false;
-			runtime_flags.set_false_save_process_finished();
-			while (!runtime_flags.get_next_fringe_process_finished_flag()) {
-				std::cout << "Wait for next fringe pattern \n";
-				std::this_thread::sleep_for(std::chrono::milliseconds(200));
-			}
+			std::cout << "Controller image " << img_counter++ << '\n';
 			runtime_flags.set_true_imSave_flag();
-			while (!runtime_flags.get_save_processed_finished_flag()) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(200));
-				std::cout << "Wait for save Process to finish \n";
-			}
+			runtime_flags.cv.wait(lk_save);
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 		}
-		runtime_flags.next_fringe_process_finished_false();
-		runtime_flags.set_next_fringe_pattern_flag_true();
+		
 	}
 	std::cout << "Finished :D \n";
 	if (runtime_flags.get_finished_fringe_Iteration()) {
@@ -425,54 +429,69 @@ void Deflectometry::load_calib(std::string path) {
 	m_img_processing->load_calib(path);
 }
 
+
 void Deflectometry::start_meassurement(Shift_mode shift_mode, DisplayMode disp_mode, int camera) {
 	
-	// m_screen & m_acquisition_worker must not be nullptr. Also camera running must be set. 
+	std::cout << "Press any key and ENTER to start measurement if camera sees full fringe pattern\n";
+	char u{ '\0' };
+	std::cin.ignore(1000, '\n');
+	while (!u) {
+		std::cin.get(u);
+		if (!std::cin) {
+			std::cin.clear();
+			std::cin.ignore(1000, '\n');
+		}
+	}
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	std::cout << "Starting automatic meassurement now! \n";
 	assert(m_screen && m_acquisition_worker && runtime_flags.get_camera_running_flag());
 	//After setUpAcuqisition Datastream is available
 	m_acquisition_worker->setUpAcquisition(camera);
 	m_acquisition_worker->getDatastream(camera);
-
-	// All image dispalying is running via the image handler class
-	m_acquisition_worker->assignImageHandler(showRawImage);
+	//Special ImageHandler that marks MaxValues
+	m_acquisition_worker->assignImageHandler(showRawMaxValred);
 	//Shift mode is neede to generate the Pattern
 	m_screen->generate_phaseShift(shift_mode);
 	
 	runtime_flags.set_next_fringe_pattern_flag_false(); //First set "next image flag" to false
 	runtime_flags.set_stop_fringe_projection_flag_false(); //Set stop fringe projection flag to false
-	
+	runtime_flags.phase_shift.n_pics_per_Phase = 5;
+
+	//Locking the std::mutex objects before starting the threads. 
+	//Than transfering the ownership to the controller. It is imprtant that these do not leave the current thread.  
+	std::unique_lock<std::mutex> lk_save(runtime_flags.save_mutex);
+	std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
+
+	// Lauch
+	// ownership of the std::mutex is moved lk_save and lk_patter do not contain anything 
 	// Run the Imagehandler class
-	img_handler_thread = std::thread(&ImageHandler::run, &imgHandler, 2);
-	
-	// Lauch 
-	std::thread controller;
+	std::thread img_handler_thread(&ImageHandler::run, &imgHandler, 2);
+	std::thread fringe_pattern_thread(&Screen::displayPatterns_multi_thread, m_screen.get());
+	std::thread camera_thread(&AcquisitionWorker::start1, m_acquisition_worker.get());
+
+
 	if (disp_mode == DisplayMode::UserInput) {
-		controller = std::thread(&Deflectometry::controller_userInput, this);
+		controller_userInput();
 	}
 	if (disp_mode == DisplayMode::Automatic) {
-		controller = std::thread(&Deflectometry::controller_automatic, this);// some function for automatic handling !!! 
+		controller_automatic(std::move(lk_save), std::move(lk_pattern));
 	}
 
-	std::thread fringe_pattern_thread(&Screen::displayPatterns_multi_thread, m_screen.get()); 
-	
-	std::thread camera_thread(&AcquisitionWorker::start, m_acquisition_worker.get());
-	
-	// First thread to finish, should be Camera_thread. 
-	// runtime_flags.acquisition_flag -> first set to false
-	if (camera_thread.joinable()) camera_thread.join();
-
-	// Second thread to finish, should be fringe_pattern thread
-	// runtime_flags().stop_fringe_projection set to true;
 	if (fringe_pattern_thread.joinable()) fringe_pattern_thread.join();
-
-	// Third is ImageHandler img_handler->stop();
+	if (camera_thread.joinable()) camera_thread.join();
 	if (img_handler_thread.joinable()) img_handler_thread.join();
 
-	//Controller thread .join() call should block 
-	if (controller.joinable()) controller.join();
+	// Show Acquisition allows to go through the acuqirded pictures if necessary 
+	//show_acquistion();
+
+	/*
+	std::vector<cv::Mat> phase_shift(std::move(m_acquisition_worker->m_frames)); //Moves the frames from acquisitionworker to local variable calibratoin_frames
+	std::cout << "Number of calibration frames taken: " << phase_shift.size() << '\n' <<
+		" m_acuqisitionworker m_frames hopefully empty " << m_acquisition_worker->m_frames.size() << std::endl;
+
 	
 	std::cout << "Function *Start Meassurement* Exit \n";
-
+	*/
 	return;
 	
 }

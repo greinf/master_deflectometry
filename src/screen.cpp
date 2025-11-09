@@ -15,12 +15,14 @@ Screen::Screen(int n_shifts) {
 	getfromFlag_H(n_shifts);
 }
 
+// n_shifts has the information how many periods are within a the y axis. 
+// with this information the wavelength is decoded that is than constant for both shift directions
 void Screen::getfromFlag_H(int n_shifts) {
 	m_pixel_x = runtime_flags.disp.width;
 	m_pixel_y = runtime_flags.disp.height;
 	m_pixel_pitch = runtime_flags.disp.pixelptich_mm;
 	m_numberPeriods = n_shifts;
-	runtime_flags.set_number_of_shifts(n_shifts);
+	//runtime_flags.phase_shift.n_pics_per_Phase = n_shifts;
 	m_mode = Shift_mode::max_value;
 }
 
@@ -32,7 +34,7 @@ void Screen::gray_value_calib() {
 	// Allocate memory for array
 	cv::Mat gray_image(runtime_flags.disp.height, runtime_flags.disp.width, CV_8UC1);
 	assert(runtime_flags.calib.stepwidth && "Stepwidth is not defined \n");
-	for (size_t counter = 0; counter < 256; counter += runtime_flags.calib.stepwidth ) {
+	for (size_t counter = 0; counter <= std::numeric_limits<uchar>::max(); counter += runtime_flags.calib.stepwidth ) {
 		//std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
 		//in theory this runtime_flags should not be necessary
@@ -59,14 +61,15 @@ void Screen::gray_value_calib() {
 
 bool Screen::prepareShiftParameters() {
 	try {
-		runtime_flags.set_number_of_shifts(m_steps);
+		//runtime_flags.set_number_of_shifts(m_steps);
 		CV_Assert(m_pixel_x > 0 && m_pixel_y > 0);
 		CV_Assert(m_numberPeriods >= 1);
 		m_wavelength = static_cast<float>(m_pixel_y) / m_numberPeriods; //Number of periods is bound to the y-Axis here! 
+		m_shift_length = ((CV_2PI) / m_steps);
 
 		//runtime_flags
-		m_shift_length = ((CV_2PI) / m_steps);
 		runtime_flags.disp.wavelength = m_wavelength;
+		runtime_flags.phase_shift.n_shifts = m_steps;
 	}
 	catch (std::exception& e) {
 		std::cout << e.what() << " Parameter generation failed \n ";
@@ -99,7 +102,7 @@ bool Screen::generateSinusPatterns() {
 			std::cout << "You enterd " << m_steps << " steps. '\n";
 		}
 		*/
-
+		// be careful for this is used std::initializerlist()
 		for (bool horizontal : {true, false}) {
 
 			switch (horizontal) {
@@ -229,29 +232,31 @@ void Screen::displayPatterns_single_thread() {
 
 
 void Screen::displayPatterns_multi_thread() {
+	runtime_flags.set_finished_fringe_Iteration_false();
+	runtime_flags.set_stop_fringe_projection_flag_false();
+	assert(runtime_flags.phase_shift.n_pics_per_Phase && "n_pics is not defined \n");
+	int count{};
 	for (const auto& m_pattern : m_patterns) {
+		std::cout << "Fringe pattern: " << count++ << "\n";
+		std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
 		runtime_flags.next_fringe_process_finished_true();
-		while (true) {
-			//Fringe Pattern update 
-			runtime_flags.set_finished_fringe_Iteration_false();
-			imgHandler.imshow_Pattern(m_pattern);
-			if (runtime_flags.get_next_fringe_pattern_flag()) {
-				runtime_flags.set_next_fringe_pattern_flag_false();
-				break;  // show next image
-			}
-			if (&m_pattern == &m_patterns.back()) {
-				std::cout << "Reached Last fringe Pattern \n";
-				runtime_flags.set_finished_fringe_Iteration_true();
-				return;
-			}
-			//If stop_fringe_projection_flag is set -> early return
-			else if (runtime_flags.get_stop_fringe_projection_flag()) { 
-				runtime_flags.set_stop_fringe_projection_flag_false();
-				std::cout << "Fringe Pattern interrupt \n";
-				return;  // exit the function early
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		imgHandler.imshow_Pattern(m_pattern);
+
+		if (runtime_flags.get_stop_fringe_projection_flag()) {
+			runtime_flags.set_stop_fringe_projection_flag_false();
+			std::cout << "Gray value projection interrupted\n";
+			lk_pattern.unlock();
+			runtime_flags.cv.notify_all();
+			return;
 		}
+
+		lk_pattern.unlock();
+		runtime_flags.cv.notify_one();
+
 	}
+	std::cout << "Reaches last pattern \n";
+	runtime_flags.set_finished_fringe_Iteration_true();
+	return;
+	
 }
 

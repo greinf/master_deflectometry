@@ -31,6 +31,7 @@ public:
 	std::vector<std::shared_ptr<peak::core::Device>> m_device; //normally only one camera is used
 	std::vector<std::shared_ptr<peak::core::DataStream>> m_dataStream;
 	std::vector<std::shared_ptr<peak::core::NodeMap>> m_nodemapRemoteDevice;
+	bool adjustSettings(std::size_t i);
 
 private:
 	bool PrepareAcquisition(std::size_t i=0);

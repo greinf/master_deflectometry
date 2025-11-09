@@ -18,4 +18,16 @@ template<> struct CvDepthTraits<CV_32S> { using value_type = int; };
 template<> struct CvDepthTraits<CV_32F> { using value_type = float; };
 template<> struct CvDepthTraits<CV_64F> { using value_type = double; };
 
+
+
+template<typename T>
+struct is_vec_or_array : std::false_type {};
+
+template<typename T, typename alloc>
+struct is_vec_or_array<std::vector<T, alloc>> : std::true_type {};
+
+template<typename T, std::size_t N>
+struct is_vec_or_array<std::array<T, N>> : std::true_type {};
+
+
 #endif

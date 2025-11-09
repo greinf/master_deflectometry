@@ -83,6 +83,29 @@ Camera::Camera()
             //Camera running Flag is set here.
         }
         
+        std::shared_ptr<peak::core::nodes::FloatNode> exposure_time =
+            std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(m_nodemapRemoteDevice.at(0)->FindNode("ExposureTime"));
+        try {
+            runtime_flags.camera_data.exposure_time = exposure_time->Value();
+        }
+        catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl;}
+
+        std::cout << "wait";
+        //return true;
+        //Frame Rate
+        std::shared_ptr<peak::core::nodes::FloatNode> frame_rate =
+            std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(m_nodemapRemoteDevice.at(0)->FindNode("AcquisitionFrameRateConv"));
+        try {
+            runtime_flags.camera_data.frame_rate = frame_rate->Value();
+        }
+        catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }
+
+        int64_t w_max = m_nodemapRemoteDevice.at(0)->FindNode<peak::core::nodes::IntegerNode>("Width")->Maximum();
+        int64_t h_max = m_nodemapRemoteDevice.at(0)->FindNode<peak::core::nodes::IntegerNode>("Height")->Maximum();
+        // Set pixel Value for 
+        runtime_flags.camera_data.pixel_x = w_max;
+        runtime_flags.camera_data.pixel_y = h_max;
+
     }
     catch (const std::exception& e)
     {
@@ -104,6 +127,127 @@ Camera::~Camera() {
 void Camera::grayValueCalibration(std::shared_ptr<Screen> screen) {
 
 }
+
+
+/*
+//Signature
+
+template<class T, class U>
+std::shared_ptr<T> dynamic_pointer_cast(const std::shared_ptr<U>& r);
+
+It checks at runtime whether the object that r points to is (polymorphically) a T.
+-> If yes: returns a new shared_ptr<T> pointing to the same object (shares ownership, control block).
+-> If no: returns an empty shared_ptr<T> (equivalent to nullptr).
+
+*/
+
+bool Camera::adjustSettings(std::size_t i) {
+    // 
+    auto nm = m_nodemapRemoteDevice.at(i);
+    
+    std::cout << "\n=== Adjust Settings: Exposure/Gain Analysis ===\n";
+
+    
+    //Exposure Mode
+    std::shared_ptr<peak::core::nodes::EnumerationNode> exposure_mode = 
+        std::dynamic_pointer_cast<peak::core::nodes::EnumerationNode>(nm->FindNode("ExposureMode"));
+    
+    if (!exposure_mode) { std::cerr << "Unable to upcast pointer to enumerationMode! \n"; }
+    std::cout << "Esposure Modes: \n";
+    for (const auto entry : exposure_mode->AvailableEntries()) {
+        std::cout << entry->DisplayName() << '\n';
+    }
+    //This lines sets the Value of ExposureMode fix to timed. Even so it seems it is the only available entry
+    try {
+        exposure_mode->SetCurrentEntry("Timed");
+    }
+    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
+
+    //Exposure Time
+    std::shared_ptr<peak::core::nodes::FloatNode> exposure_time =
+        std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("ExposureTime"));
+    try {
+        exposure_time->SetValue(exposure_time->Minimum() * 7000);
+        std::cout << "Current exposure Time " << exposure_time->Value() << '\n';
+        runtime_flags.camera_data.exposure_time = exposure_time->Value();
+    }
+    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
+
+    std::cout << "wait";
+    //return true;
+    //Frame Rate
+    std::shared_ptr<peak::core::nodes::FloatNode> frame_rate = 
+        std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("AcquisitionFrameRateConv"));
+    try {
+        frame_rate->SetValue(frame_rate->Maximum()); //frame_rate->Maximum()
+        std::cout << "Current Frame Rate " << frame_rate->Value() << '\n';
+        runtime_flags.camera_data.frame_rate = frame_rate->Value();
+    }
+
+    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
+
+    return true;
+    // This is for debuggin -> search node for given category with name.find()
+    // To use it comment out -> return true above
+    // after this the nodes (base class) try to get downcased to their given derivatives
+    // this is possible because they´re shared_ptr and the class contais virtual functions
+    // and with that a virtual table where one can look if the given ptr really is the derivative
+    for (auto& node : nm->Nodes()) {
+        const std::string name = node->Name();
+
+        if (name.find("Exposure") != std::string::npos ||
+            name.find("Gain") != std::string::npos ||
+            name.find("Brightness") != std::string::npos ||
+            name.find("Frame") != std::string::npos )
+        {
+            std::cout << name;
+
+            try {
+                using namespace peak::core::nodes;
+
+
+                // Remember peak::core::NodeMap is a shared ptr. 
+                // Becasue every node is derived from the base class peak::core::node
+                // we can dynamic cast the give node to its derived form. std::dynamic_pointer_cast<>() return false
+                // if the downcast was not possible. 
+                if (auto n = std::dynamic_pointer_cast<IntegerNode>(node)) {
+                    std::cout << " [Integer]"
+                        << " value=" << n->Value()
+                        << " min=" << n->Minimum()
+                        << " max=" << n->Maximum();
+                }
+                else if (auto n = std::dynamic_pointer_cast<FloatNode>(node)) {
+                    std::cout << " [Float]"
+                        << " value=" << n->Value()
+                        << " min=" << n->Minimum()
+                        << " max=" << n->Maximum();
+                }
+                else if (auto n = std::dynamic_pointer_cast<EnumerationNode>(node)) {
+                    std::string current = n->CurrentEntry()
+                        ? n->CurrentEntry()->Name()
+                        : "<none>";
+                    std::cout << " [Enum] current=" << current;
+                }
+                else if (auto n = std::dynamic_pointer_cast<BooleanNode>(node)) {
+                    std::cout << " [Bool] value=" << std::boolalpha << n->Value();
+                }
+                else {
+                    std::cout << " [Unknown type]";
+                }
+            }
+            catch (const std::exception& e) {
+                std::cout << " [Access error: " << e.what() << "]";
+            }
+
+            std::cout << '\n';
+        }
+    }
+
+    std::cout << "==============================================\n";
+    return true;
+    
+}
+
 
 bool Camera::PrepareAcquisition(std::size_t i) {
     try {
@@ -144,6 +288,9 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
             std::cout << entry->Name() << std::endl;
         }
         */
+
+        /*
+        
         /*
         //available nodes
         for (auto& nodes : m_nodemapRemoteDevice.at(i)->Nodes()) {
@@ -152,10 +299,7 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
             }
         }
         */
-        /* ToDo!!!
-        Auto exposure / auto gain / auto white balance ? OFF.
-
-        PixelFormat ? keep BayerRG8 (or Mono8 if the camera supports truly monochrome output without ISP).
+        /* 
 
         Color transforms / sRGB / LUT ? if such nodes exist, disable or leave default (=off).
 
@@ -170,8 +314,8 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         
 
         // Set pixel Value for 
-        runtime_flags.pixel_x = w_max;
-        runtime_flags.pixel_y = h_max;
+        runtime_flags.camera_data.pixel_x = w_max;
+        runtime_flags.camera_data.pixel_y = h_max;
 
         // Check for maximum values
         // std::cout << "Maximum Width: " << w_max << '\n';
@@ -265,8 +409,12 @@ bool Camera::StartAcquisition(std::size_t i){
 //Return a worker class for controll over Image Acquisition.
 void Camera::setUpAcquisition(std::size_t i) {  
     //Create Buffer
+
+    if (!adjustSettings(i)) {
+        std::cerr << "Exposure is not set ! \n";
+    }
     if (!PrepareAcquisition(i)) {
-        std::runtime_error e("Prepare Acquisition Failed ");
+        std::cerr << "Prepare Acquisition failed ! \n";
     }
     if (!SetRoi(0, 0, 1280, 1024, i)) //Here input the needed ROI 
     {
