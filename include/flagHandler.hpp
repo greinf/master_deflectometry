@@ -1,4 +1,4 @@
-#ifndef FLAGHANDLER_H
+﻿#ifndef FLAGHANDLER_H
 #define FLAGHANDLER_H
 
 #include <atomic>
@@ -53,6 +53,7 @@ public:
 	int pixel_y{};
 	double exposure_time{};
 	double frame_rate{};
+	double gain{};
 	static CameraData& instance() {
 		static CameraData data;
 		return data;
@@ -65,6 +66,68 @@ private:
 	CameraData() = default;
 };
 
+
+struct DisplayInformation {
+public:
+	int posx{}, posy{};
+	int width{}, height{};
+
+	float width_mm{ 527.04f }, height_mm{ 296.46f }, diagonal_mm{ 605.0f };
+	float pixelptich_mm{ 0.2745f };
+
+	float wavelength{}; // given in number per 2π
+
+	DisplayInformation(const DisplayInformation&) = delete;
+	DisplayInformation& operator=(const DisplayInformation&) = delete;
+	DisplayInformation(DisplayInformation&&) = delete;
+	DisplayInformation& operator=(DisplayInformation&&) = delete;
+
+	static DisplayInformation& instance() {
+		static DisplayInformation single_instance;
+		return single_instance;
+	}
+
+private:
+	DisplayInformation() {
+		getDisplayInformation();
+	}
+
+	void getDisplayInformation() {
+		DISPLAY_DEVICE dd;
+		ZeroMemory(&dd, sizeof(dd));
+		dd.cb = sizeof(dd);
+
+		bool foundSecond = false;
+		for (DWORD i = 0; EnumDisplayDevices(nullptr, i, &dd, 0); ++i) {
+			if (dd.StateFlags & DISPLAY_DEVICE_ACTIVE) {
+				if (i == 1) { // assume 2nd display
+					foundSecond = true;
+					break;
+				}
+			}
+		}
+
+		DEVMODE dm;
+		ZeroMemory(&dm, sizeof(dm));
+		dm.dmSize = sizeof(dm);
+
+		if (foundSecond && EnumDisplaySettings(dd.DeviceName, ENUM_CURRENT_SETTINGS, &dm)) {
+			posx = dm.dmPosition.x;
+			posy = dm.dmPosition.y;
+			width = dm.dmPelsWidth;
+			height = dm.dmPelsHeight;
+			std::cout << "Second display found: " << width << "x" << height << " at (" << posx << "," << posy << ")\n";
+		}
+		else {
+			std::cerr << "No second display found. Using default values.\n";
+			posx = 0;
+			posy = 0;
+			width = 1920;
+			height = 1080;
+		}
+	}
+};
+/*
 struct DisplayInformation {
 public:
 	int posx{}, posy{};
@@ -90,24 +153,25 @@ public:
 		single_instance.getDispalyInformation();
 		return single_instance;
 	}
-
-
-
 private:
 	DisplayInformation() = default;
 	void getDispalyInformation() {
 		DISPLAY_DEVICE dd;
 		dd.cb = sizeof(dd);
-
-		if (!EnumDisplayDevices(nullptr, 1, &dd, 0)) {
-			std::cerr << "No second display found.\n";
-			return;
-		}
+		bool SecondDisplay{ false };
 
 		DEVMODE dm;
 		dm.dmSize = sizeof(dm);
 		if (!EnumDisplaySettings(dd.DeviceName, ENUM_CURRENT_SETTINGS, &dm)) {
 			std::cerr << "Could not get display settings.\n";
+			return;
+		}
+		else {
+			std::cerr << "No second display found.\n";
+			posx = 0;
+			posy = 0;
+			width = 1920;
+			height = 1080;
 			return;
 		}
 		// Be carefull second window position is just hardcoded!!
@@ -117,7 +181,7 @@ private:
 		height = dm.dmPelsHeight;
 	}
 };
-
+*/
 
 struct Flags {
 public:

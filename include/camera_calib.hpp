@@ -278,7 +278,7 @@ bool runCalibrationAndSave(Settings& s, Size imageSize, Mat& cameraMatrix, Mat& 
 
 
 //******************** Running Calibration *************************
-bool runCameraCalibration(vector<Mat>& frames,
+array<vector<Mat>, 2> runCameraCalibration(vector<Mat>& frames,
     bool rigid_calibration,
     std::string& settingsPath,
     float distanceOverride = -1.0f,
@@ -308,6 +308,8 @@ bool runCameraCalibration(vector<Mat>& frames,
 
     */
     //! [file_read]
+    //! 
+    array<vector<Mat>, 2> frames_chessboard_pts{};
     Settings s;
     //const string inputSettingsFile = parser.get<string>(0);
 	const string inputSettingsFile = settingsPath;
@@ -316,7 +318,7 @@ bool runCameraCalibration(vector<Mat>& frames,
     {
         cout << "Could not open the configuration file: \"" << inputSettingsFile << "\"" << endl;
         //parser.printMessage();
-        return -1;
+        return frames_chessboard_pts;
     }
 	fs["Settings"] >> s;   //FileStorage class returns node associated with string "Settings"
     /*fs["settings"] -> cv::FileNode
@@ -332,6 +334,9 @@ bool runCameraCalibration(vector<Mat>& frames,
         x.read(node);
     }
     */
+    
+
+
     s.nrFrames = frames.size();
     fs.release();                                         // close Settings file
     //! [file_read]
@@ -339,7 +344,7 @@ bool runCameraCalibration(vector<Mat>& frames,
     if (!s.goodInput)
     {
         cout << "Invalid input detected. Application stopping. " << endl;
-        return -1;
+        return frames_chessboard_pts;
     }
 
     //int winSize = parser.get<int>("winSize");
@@ -423,6 +428,7 @@ bool runCameraCalibration(vector<Mat>& frames,
         Mat view;
         bool blinkOutput = false;
 
+        // nextvecString just load in the frames given through the function call!!!
         view = s.nextvecString(frames);
 
         //-----  If no more image, or got enough, then stop calibration and show result -------------
@@ -508,30 +514,32 @@ bool runCameraCalibration(vector<Mat>& frames,
                 drawChessboardCorners(view, cv::Size(s.boardSize.width - 1, s.boardSize.height - 1), Mat(pointBuf), found);
             else
 				drawChessboardCorners(view, s.boardSize, Mat(pointBuf), found); // Draws the detected corners on the image
+
+            frames_chessboard_pts[0].push_back(view);
         }
         //! [pattern_found]
         //----------------------------- Output Text ------------------------------------------------
-        //! [output_text]
-        string msg = (mode == CAPTURING) ? "100/100" :
-            mode == CALIBRATED ? "Calibrated" : "Press 'g' to start";
-        int baseLine = 0;
+  //      //! [output_text]
+  //      string msg = (mode == CAPTURING) ? "100/100" :
+  //          mode == CALIBRATED ? "Calibrated" : "Press 'g' to start";
+  //      int baseLine = 0;
 
-		// Does necessary Steps to write text on image
-        Size textSize = getTextSize(msg, 1, 1, 1, &baseLine);
-        Point textOrigin(view.cols - 2 * textSize.width - 10, view.rows - 2 * baseLine - 10);
+		//// Does necessary Steps to write text on image
+  //      Size textSize = getTextSize(msg, 1, 1, 1, &baseLine);
+  //      Point textOrigin(view.cols - 2 * textSize.width - 10, view.rows - 2 * baseLine - 10);
 
-        if (mode == CAPTURING)
-        {
-            if (s.showUndistorted)
-                msg = cv::format("%d/%d Undist", (int)imagePoints.size(), s.nrFrames);
-            else
-                msg = cv::format("%d/%d", (int)imagePoints.size(), s.nrFrames);
-        }
+  //      if (mode == CAPTURING)
+  //      {
+  //          if (s.showUndistorted)
+  //              msg = cv::format("%d/%d Undist", (int)imagePoints.size(), s.nrFrames);
+  //          else
+  //              msg = cv::format("%d/%d", (int)imagePoints.size(), s.nrFrames);
+  //      }
 
-        putText(view, msg, textOrigin, 1, 1, mode == CALIBRATED ? GREEN : RED);
+  //      putText(view, msg, textOrigin, 1, 1, mode == CALIBRATED ? GREEN : RED);
 
-        if (blinkOutput)
-            bitwise_not(view, view);
+  //      if (blinkOutput)
+  //          bitwise_not(view, view);
         //! [output_text]
         //------------------------- Video capture  output  undistorted ------------------------------
         //! [output_undistorted]
@@ -556,24 +564,25 @@ bool runCameraCalibration(vector<Mat>& frames,
         imshow("Image View", view);
         char key = (char)waitKey(s.inputCapture.isOpened() ? 50 : s.delay);
 
-        if (key == ESC_KEY)
-            break;
+        //if (key == ESC_KEY)
+        //    break;
 
-        if (key == 'u' && mode == CALIBRATED)
-            s.showUndistorted = !s.showUndistorted;
+        //if (key == 'u' && mode == CALIBRATED)
+        //    s.showUndistorted = !s.showUndistorted;
 
-        if (s.inputCapture.isOpened() && key == 'g')
-        {
-            mode = CAPTURING;
-            imagePoints.clear();
-        }
-        //! [await_input]
+        //if (s.inputCapture.isOpened() && key == 'g')
+        //{
+        //    mode = CAPTURING;
+        //    imagePoints.clear();
+        //}
+        ////! [await_input]
     }
 
     // -----------------------Show the undistorted image for the image list ------------------------
     //! [show_results]
     if (s.inputType == Settings::IMAGE_LIST && s.showUndistorted && !cameraMatrix.empty())
     {
+        vector<Mat> undistorted;
         Mat view, rview, map1, map2;
 
         if (s.useFisheye)
@@ -598,6 +607,8 @@ bool runCameraCalibration(vector<Mat>& frames,
             if (view.empty())
                 continue;
             remap(view, rview, map1, map2, INTER_LINEAR);
+            
+            frames_chessboard_pts[1].push_back(rview);
             imshow("Image View", rview);
             char c = (char)waitKey();
             if (c == ESC_KEY || c == 'q' || c == 'Q')
@@ -606,7 +617,7 @@ bool runCameraCalibration(vector<Mat>& frames,
     }
     //! [show_results]
 
-    return 0;
+    return frames_chessboard_pts;
 }
 
 //! [compute_errors]

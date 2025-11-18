@@ -137,6 +137,38 @@ void showRawImage(const cv::Mat& mat) {
 	imgHandler.imshow_Camera(mat);
 }
 
+void Deflectometry::gray_value_apply(){
+	m_screen->load_gray_calib_data(std::move(m_LUT));
+}
+
+void Deflectometry::load_gray_value_calib(const std::string& path) {
+	std::vector<std::pair<double, double>> data;
+	std::ifstream file(path);
+
+	if (!file.is_open()) {
+		std::cerr << "Error: Could not open file " << path << std::endl;
+		return;
+	}
+
+	std::string line;
+	while (std::getline(file, line)) {
+		if (line.empty()) continue; // skip blank lines
+
+		std::istringstream iss(line);
+		std::string token;
+		double val1, val2;
+
+		if (!std::getline(iss, token, ',')) continue;
+		val1 = std::stod(token);
+
+		if (!std::getline(iss, token, ',')) continue;
+		val2 = std::stod(token);
+
+		data.emplace_back(val1, val2);
+	}
+	m_LUT = std::move(data);
+}
+
 // This method has the first a stable workflow. Less use of the flag handler and uses std::unique_lock() + std::coniditional()
 void Deflectometry::grayValueCalib(int camera){
 	std::cout << "Press any key and ENTER to start measurement if camera sees full fringe pattern\n";
@@ -157,11 +189,11 @@ void Deflectometry::grayValueCalib(int camera){
 	m_acquisition_worker->getDatastream(camera);
 
 	// All image dispalying is running via the image handler class
-	m_acquisition_worker->assignImageHandler(showRawImage);
+	m_acquisition_worker->assignImageHandler(showRawMaxValred);
 	runtime_flags.set_next_fringe_pattern_flag_false(); //First set "next image flag" to false
 	runtime_flags.set_stop_fringe_projection_flag_false(); //Set stop fringe projection flag to false
 	// Set flags for acquisation
-	runtime_flags.calib.pictures_per_value = 50;
+	runtime_flags.calib.pictures_per_value = 1;
 	runtime_flags.calib.stepwidth = 1;
 
 	//Locking the std::mutex objects before starting the threads. 
@@ -192,10 +224,22 @@ void Deflectometry::grayValueCalib(int camera){
 
 void Deflectometry::saveResponseCurve(const std::string& filename) {
 	const std::vector<cv::Scalar_<double>>& vec(m_img_processing->get_mean_values());
-	std::ofstream file(filename);
+	//Check if dire exists.
+	std::filesystem::path gray_path (filename);
+	if (!std::filesystem::exists(gray_path.parent_path())) {
+		std::cout << "Directory does not exist. Try to create directory! \n";
+		if (!std::filesystem::create_directory(gray_path.parent_path())) {
+			std::cout << "Failed. Return to caller. Curve not saved! \n";
+		}
+	}
+	
+	std::ofstream file;
+	file.open(filename);
 	for (size_t i = 0; i < vec.size(); ++i) {
 		file << i << "," << vec[i][0] << "\n"; // use values[i][0] for intensity (since cv::Scalar has 4 components)
 	}
+	file.close();
+	std::cout << "Save finished \n";
 }
 
 
@@ -208,11 +252,11 @@ void Deflectometry::calc_reproject_error(bool visualizing, bool saving, const st
 	if (saving) {
 		m_img_processing->saveImages(path);
 		m_img_processing->saveImages_png(path);
+		m_img_processing->save_Reprodata(path);
 	}
-	
 }
 
-// Constructor Deflectometry() takes no argument. Automatically creates Camera class with ids::peak library. Acuqistionworker inherits from that. 
+// Constructor Deflectometry() takes no argument. Automatically c<reates Camera class with ids::peak library. Acuqistionworker inherits from that. 
 // If multiple cameras are used these can be choosen by the input Argument of Acquisitionworker. 
 // 
 // For each camera, a new Acuistionworker instance must be created with the according index. 
@@ -220,7 +264,7 @@ void Deflectometry::calc_reproject_error(bool visualizing, bool saving, const st
 Deflectometry::Deflectometry() {
 	m_screen = std::make_shared<Screen>(10); //Use constructor that works with flag file 
 	m_acquisition_worker = std::make_shared<AcquisitionWorker>(0); 
-	m_img_processing = std::make_shared<ImageProcessing>(float (5));
+	m_img_processing = std::make_shared<ImageProcessing>(double (5));
 }
 
 // Takes the frames from acquisitionworker and moves it into imageprocessing
@@ -232,12 +276,230 @@ void Deflectometry::phase_unwrap(bool save, const std::string& path) {
 	//m_img_processing->goldsteinUnwrap();
 	
 	m_img_processing->unwrapped_phase();
+
+
 	
 	if (save) {
 		m_img_processing->saveImages(path);
 		m_img_processing->saveImages_png(path);
 	}
 	
+}
+
+auto showVectornormalized = [](const std::vector<cv::Mat>& picture) {
+	for (std::size_t count = 0; count < picture.size(); ++count) {
+		cv::Mat norm;
+		//std::cout << picture.size();
+		cv::normalize(picture[count], norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::imshow("Normalized", norm);
+		cv::waitKey(0);
+	}
+	};
+
+auto showArraynormalized = [](const std::array<cv::Mat, 2>& picture) {
+	for (std::size_t count = 0; count < picture.size(); ++count) {
+		cv::Mat norm;
+		//std::cout << picture.size();
+		cv::normalize(picture[count], norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::imshow("Normalized", norm);
+		cv::waitKey(0);
+	}
+	};
+
+void Deflectometry::TestOptimal() {
+	m_screen->generate_optimalPhase();
+	// generate Phase and Frames for optimal camera pictures
+	m_optimalFrames = std::move(m_screen->m_optimal_pattern);
+	m_optimalPhase = std::move(m_screen->m_optimal_phase);
+
+	//Create Wrapped GroundTruth
+	std::vector<cv::Mat> groundTruth;
+	groundTruth.reserve(m_optimalPhase.size());
+	for (const auto& m : m_optimalPhase) {
+		cv::Mat out(m.rows, m.cols, CV_64F);
+
+		for (int r = 0; r < m.rows; ++r) {
+			for (int c = 0; c < m.cols; ++c) {
+				
+				double a = m.at<double>(r, c);
+
+				double wrapped = std::fmod(a, CV_2PI);
+				if (wrapped > CV_PI) wrapped -= CV_2PI;
+				out.at<double>(r, c) = wrapped;
+			}
+		}
+
+		groundTruth.push_back(out);
+	}
+
+	// The optimal camera picture through the wrapped algorithm 
+	m_img_processing->assginFrames(std::move(m_optimalFrames));
+	runtime_flags.phase_shift.n_pics_per_Phase = 1;
+	m_img_processing->wrapped_phase();
+
+	
+	// error vectors holds, subtrakt the wrapped optimal camera pictutre from the ground truth mod 2pi
+	std::vector<cv::Mat> error;
+	cv::Mat subtract1;
+	cv::Mat subtract2;
+	cv::subtract(groundTruth[0], m_img_processing->m_wrapped_phase[0], subtract1);
+	cv::subtract(groundTruth[1], m_img_processing->m_wrapped_phase[1], subtract2);
+	error.push_back(subtract1);
+	error.push_back(subtract2);
+
+	//The optimal camera pictrue through the manual unwrap
+	m_img_processing->manual_phaseUnwrap();
+	
+
+	// The "real Phase modulu 2pi 
+	
+	cv::Mat groundtruth_norm;
+	//save the frist vector
+	// cv::normalize(groundTruth[0], groundtruth_norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+	// cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/Groundtruth.png", groundtruth_norm);
+
+	showVectornormalized(m_optimalFrames);
+
+	// Data Ground Truth Phase
+	double min3, max3;
+	cv::minMaxLoc(m_optimalPhase[0], &min3, &max3);
+	std::cout << "Raw Ground Truth PHase \n" << "Minimal value: " << min3 <<
+		"\nMaxvalue: " << max3 << '\n';
+	showVectornormalized(m_optimalPhase);
+
+	// Data ground Truth wrapped Phase
+	double min2, max2;
+	cv::minMaxLoc(groundTruth[0], &min2, &max2);
+	std::cout << "Ground Truth Wrapped Phase \n" << "Minimal value: " << min2 <<
+		"\nMaxvalue: " << max2 << '\n';
+	std::cout << "Element at ground Truth Wrapped  0,0 y.x " << groundTruth.at(0).at<double>(0, 0) << '\n';
+	std::cout << "Element at ground Truth Wrapped  0,10y,x  " << groundTruth.at(0).at<double>(0, 10) << '\n';
+	std::cout << "Element at ground Truth Wrapped  0,100y,x  " << groundTruth.at(0).at<double>(0, 100) << '\n';
+	std::cout << "Element at ground Truth Wrapped  0,500y,x  " << groundTruth.at(0).at<double>(0, 500) << '\n';
+	showVectornormalized(groundTruth);
+	
+
+	cv::Mat error_uwrap1;
+	cv::Mat error_unwrap2;
+
+	cv::subtract(m_img_processing->m_unwrapped_phase[0], m_optimalPhase[0], error_uwrap1);
+	cv::subtract(m_img_processing->m_unwrapped_phase[1], m_optimalPhase[1], error_unwrap2);
+	
+
+	/*std::cout << "Wrapped Phase1 0,0 " << m_img_processing->m_wrapped_phase.at(0).at<double>(0, 0) << '\n';
+	std::cout << "Warpped Phase2 0,0 " << m_img_processing->m_wrapped_phase.at(1).at<double>(0, 0) << '\n';*/
+
+
+	// Calculated Wrapped
+	double min4, max4;
+	cv::minMaxLoc(m_img_processing->m_wrapped_phase[0], &min4, &max4);
+	std::cout << "Calculated Wrapped Phase \n" << "Minimal value: " << min4 <<
+		"\nMaxvalue: " << max4 << '\n';
+	std::cout << "Element at calculated Wrapped 0,0 y,x " << m_img_processing->m_wrapped_phase.at(0).at<double>(0, 0) << '\n';
+	std::cout << "Element at calculated Wrapped 0,10 y,x " << m_img_processing->m_wrapped_phase.at(0).at<double>(0, 10) << '\n';
+	std::cout << "Element at calculated Wrapped 0,100 y,x " << m_img_processing->m_wrapped_phase.at(0).at<double>(0, 100) << '\n';
+	std::cout << "Element at calculated Wrapped 0,500 y,x " << m_img_processing->m_wrapped_phase.at(0).at<double>(0, 500) << '\n';
+	showArraynormalized(m_img_processing->m_wrapped_phase);
+
+
+	// Error Ground Truth - Caluclated Wrapped
+	double min5, max5;
+	cv::minMaxLoc(error[0], &min5, &max5);
+	std::cout << "Ground Truth wrapped - Calculated Wrapped Phase \n" << "Minimal value: " << min5 <<
+		"\nMaxvalue: " << max5 << '\n';
+
+	showVectornormalized(error);
+
+	// Unwrapped Phase
+	double min9{ 0 }, max9{ 0 };
+	cv::minMaxLoc(m_img_processing->m_unwrapped_phase[0], &min9, &max9);
+	std::cout << "UNWRAPPED Phase \n" << "Minimal value: " << min9 <<
+		"\nMaxvalue: " << max9 << '\n';
+	std::cout << "Element unwraped Phase  0,0 y.x " << m_img_processing->m_unwrapped_phase.at(0).at<double>(0, 0) << '\n';
+	std::cout << "Element unwraped Phase   0,10y,x  " << m_img_processing->m_unwrapped_phase.at(0).at<double>(0, 10) << '\n';
+	std::cout << "Element unwraped Phase   0,100y,x  " << m_img_processing->m_unwrapped_phase.at(0).at<double>(0, 100) << '\n';
+	std::cout << "Element unwraped Phase   0,500y,x  " << m_img_processing->m_unwrapped_phase.at(0).at<double>(0, 500) << '\n';
+
+	std::cout << "Element Ground Truth Phase  0,0 y.x " << m_optimalPhase.at(0).at<double>(0, 0) << '\n';
+	std::cout << "Element Ground Truth Phase   0,10y,x  " << m_optimalPhase.at(0).at<double>(0, 10) << '\n';
+	std::cout << "Element Ground Truth Phase   0,100y,x  " << m_optimalPhase.at(0).at<double>(0, 100) << '\n';
+	std::cout << "Element Ground Truth Phase   0,500y,x  " << m_optimalPhase.at(0).at<double>(0, 500) << '\n';
+
+	showArraynormalized(m_img_processing->m_unwrapped_phase);
+	
+	cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/unwrapHorizontal.png", m_img_processing->m_unwrapped_phase[0]);
+	cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/unwrapVertial.png", m_img_processing->m_unwrapped_phase[1]);
+
+
+	// Ground Truth phase - Phase unwrap 
+	double min8{ 0 }, max8{ 0 };
+	cv::minMaxLoc(error_uwrap1, &min8, &max8);
+	std::cout << "Error UNWRAPPED Phase \n" << "Minimal value: " << min8 <<
+		"\nMaxvalue: " << max8 << '\n';
+	cv::normalize(error_uwrap1, error_uwrap1, 0, 255, cv::NORM_MINMAX, CV_8U);
+	
+	cv::imshow("error", error_uwrap1);
+	cv::waitKey(0);
+	
+	
+	
+	
+	// calculate again the modulu 2pi from the solution
+	std::vector<cv::Mat> finished_error;
+	for (const auto& m : error) {
+		cv::Mat out(m.rows, m.cols, CV_64F);
+
+		for (int r = 0; r < m.rows; ++r) {
+			for (int c = 0; c < m.cols; ++c) {
+
+				double a = m.at<double>(r, c);
+
+				double wrapped = std::fmod(a, CV_2PI);
+
+				out.at<double>(r, c) = wrapped;
+			}
+		}
+
+		finished_error.push_back(out);
+	}
+
+
+	double min, max;
+	cv::minMaxLoc(finished_error[0], &min, &max);
+
+	std::cout << "Minimal value " << min << " Max value " << max << '\n';
+
+	cv::Mat normalized_error = cv::Mat(error[0].rows, error[0].cols, CV_8U, cv::Scalar(0) );
+	for (int row = 0; row < error[0].rows; ++row) {
+		
+		for (int column = 0; column < error[0].cols; column++)
+			normalized_error.at<double>(row, column) = ((error[0].at<double>(row, column) - min) * 255 / (max - min));
+	}
+	
+
+	normalized_error.convertTo(normalized_error, CV_8U);
+
+	cv::imshow("Hopefully normalized", normalized_error);
+
+	double min1, max1;
+	cv::minMaxLoc(normalized_error, &min1, &max1);
+
+	std::cout << "Minimal value " << min1 << " Max value " << max1 << '\n';
+
+	//showVectornormalized(m_optimalFrames);
+	showVectornormalized(m_optimalPhase);
+
+	
+	// show the images that 
+	showVectornormalized(finished_error);
+
+	cv::Mat error1 = finished_error[0];
+	cv::Mat error2 = finished_error[1];
+	cv::Mat error8u1, error8u2;
+	cv::normalize(error1, error8u1, 0, 255, cv::NORM_MINMAX, CV_8U);
+	cv::normalize(error2, error8u2, 0, 255, cv::NORM_MINMAX, CV_8U);
+	cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/errorHorizontal.png", error8u1);
+	cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/errorVertical.png", error8u2);
 }
 
 //Just a small helper function that the shift parameters are available for later processing.
@@ -274,6 +536,10 @@ void Deflectometry::load_frames(const std::string& path) {
 	m_img_processing->load_frames(path);
 }
 
+void Deflectometry::manual_phaseUnwrap() {
+	m_img_processing->manual_phaseUnwrap();
+}
+
 void Deflectometry::save_frames(std::vector<cv::Mat>& frames, const std::string& path) {
 	int counter = 0;
 	std::filesystem::path p(path);
@@ -294,7 +560,7 @@ void Deflectometry::save_frames(std::vector<cv::Mat>& frames, const std::string&
 	}
 }
 
-void Deflectometry::camera_calibration(int camera) {
+void Deflectometry::camera_calibration(int camera, std::string image_path) {
 	assert(m_screen && m_acquisition_worker && runtime_flags.get_camera_running_flag());
 	//After setUpAcuqisition Datastream is available
 	m_acquisition_worker->setUpAcquisition(camera);
@@ -317,11 +583,38 @@ void Deflectometry::camera_calibration(int camera) {
 	std::cout << "Number of calibration frames taken: " << calibration_frames.size() << '\n' <<
 		" m_acuqisitionworker m_frames hopefully empty " << m_acquisition_worker -> m_frames.size() << std::endl;
 
-	std::string settings_path("C:\\Users\\grein\\Desktop\\Master\\Project\\deflectometrie\\data\\in_VID5.xml");
+	std::string settings_path("C:/Users/grein/Desktop/Master/Project/deflectometrie/data/in_VID5.xml");
 	std::filesystem::path p(settings_path);
-	if (std::filesystem::exists(p)) {
-		runCameraCalibration(calibration_frames, true, p.string());
+	
+	//first = pics with chessboard corners, second = undistored pics with chessboard corners. 
+	std::array<std::vector<cv::Mat>,2> calibration_pics;
+	if (std::filesystem::exists(p.parent_path())) {
+		calibration_pics = runCameraCalibration(calibration_frames, true, p.string());
 	}
+	else std::cout << "Path or data did not exists or somehting like that \n";
+
+	check_create_dir(image_path);
+	for (std::size_t i = 0; i < calibration_pics.size(); ++i) {
+		switch (i) {
+		case(0): {
+			std::filesystem::path img_path1(image_path + "/chessboardCorners/");
+			std::filesystem::create_directory(img_path1);
+			for (std::size_t y = 0; y < calibration_pics[0].size(); ++y) {
+				std::string str = img_path1.string().append(std::to_string(y) + ".jpg");
+				cv::imwrite(str, calibration_pics[0][y]);
+			}
+		}
+		case(1): {
+			std::filesystem::path img_path2(image_path + "/chessboardCornersUndistorted/");
+			std::filesystem::create_directory(img_path2);
+			for (std::size_t y = 0; y < calibration_pics[1].size(); ++y) {
+				std::string str = img_path2.string().append(std::to_string(y) + ".jpg");
+				cv::imwrite(str, calibration_pics[1][y]);
+			}
+		}
+		}
+	}
+
 }
 
 void Deflectometry::controller_automatic_gray(std::unique_lock<std::mutex>&& lk_pattern, std::unique_lock<std::mutex>&& lk_save) {
@@ -430,6 +723,103 @@ void Deflectometry::load_calib(std::string path) {
 }
 
 
+// build function E(a,b)= sum 0...N-1 (y_i -(a*x_i+b^))^2
+// optamisation challenge for a and b ...
+// dE/da = sum 2(y_i+a*x_i-b)(-x_i)
+// sum(x_i*y_i) - a*sum(x_i^2) -b*sum(x_i) = 0
+// dE/db = sum2(y_i - a*x_i -b)(-1)
+// sum(y_i) - a * sum(x_i) - b*N = 0
+// = build LGS aA + b*B = C a*B+b*N = D
+// A = sum(x_i)^2 B= sum(x_i) c = sum(x_i*y_i) D= sum (y_i)
+std::pair<double, double> Deflectometry::fitLine1D(const std::vector<double>& y) {
+	const int N = static_cast<int>(y.size());
+	double sumx = 0.0, sumy = 0.0, sumxx = 0.0, sumxy = 0.0;
+
+	for (int i = 0; i < N; ++i) {
+		double x = static_cast<double>(i);
+		double v = y[i];
+		sumx += x;
+		sumy += v;
+		sumxx += x * x;
+		sumxy += x * v;
+	}
+
+
+	double denom = N * sumxx - sumx * sumx;
+	double a = (N * sumxy - sumx * sumy) / denom;
+	double b = (sumy - a * sumx) / N;
+
+
+	return { a, b };
+}
+
+void Deflectometry::saveSliceToCSV(const std::string& filename,
+	const std::vector<double>& unwrap, 
+	const std::pair<double, double>& unwrapFit,// regressions a,b unwrap
+	const std::vector<double>& repro, 
+	const std::pair<double, double>& reproFit)//regression a,b repro
+{
+	std::ofstream file(filename);
+	if (!file.is_open()) {
+		std::cerr << "Could not open CSV file: " << filename << "\n";
+		return;
+	}
+
+	file << "index,unwrap,unwrap_fit,unwrap_residual,repro,repro_fit,repro_residual\n";
+
+	int N = std::min((int)unwrap.size(), (int)repro.size());
+	for (int i = 0; i < N; ++i) {
+
+		double unwrap_fit = unwrapFit.first * i + unwrapFit.second;
+		double unwrap_residual = unwrap[i] - unwrap_fit;
+
+		double repro_fit = reproFit.first * i + reproFit.second;
+		double repro_residual = repro[i] - repro_fit;
+
+		file << i << ","
+			<< unwrap[i] << ","
+			<< unwrap_fit << ","
+			<< unwrap_residual << ","
+			<< repro[i] << ","
+			<< repro_fit << ","
+			<< repro_residual << "\n";
+
+	}
+
+	file.close();
+	std::cout << "CSV saved to " << filename << "\n";
+}
+
+
+void Deflectometry::extract_Column(std::string path) {
+	int cols{ (m_img_processing->m_unwrapped_phase[0].cols / 2) };
+	
+	std::vector<double> repro_column = m_img_processing->extract_Column_reprojection(cols);
+	std::vector<double> unwrap_column = m_img_processing->extract_Column_unwrap(cols);
+	
+	auto fit_unwrap = fitLine1D(unwrap_column);
+	auto fit_repro = fitLine1D(repro_column);
+
+	saveSliceToCSV(path,
+		unwrap_column, fit_unwrap,
+		repro_column, fit_repro);
+}
+
+
+void Deflectometry::extract_Line(std::string path) {
+	int rows{ (m_img_processing->m_unwrapped_phase[0].rows / 2) };
+	std::vector<double> repro_row = m_img_processing->extract_Row_reprojection(rows);
+	std::vector<double> unwrap_row = m_img_processing->extract_Row_unwrap(rows);
+
+	auto fit_unwrap = fitLine1D(unwrap_row);
+	auto fit_repro = fitLine1D(unwrap_row);
+
+	saveSliceToCSV(path,
+		unwrap_row, fit_unwrap,
+		repro_row, fit_repro);
+
+}
+
 void Deflectometry::start_meassurement(Shift_mode shift_mode, DisplayMode disp_mode, int camera) {
 	
 	std::cout << "Press any key and ENTER to start measurement if camera sees full fringe pattern\n";
@@ -455,7 +845,7 @@ void Deflectometry::start_meassurement(Shift_mode shift_mode, DisplayMode disp_m
 	
 	runtime_flags.set_next_fringe_pattern_flag_false(); //First set "next image flag" to false
 	runtime_flags.set_stop_fringe_projection_flag_false(); //Set stop fringe projection flag to false
-	runtime_flags.phase_shift.n_pics_per_Phase = 5;
+	runtime_flags.phase_shift.n_pics_per_Phase = 100;
 
 	//Locking the std::mutex objects before starting the threads. 
 	//Than transfering the ownership to the controller. It is imprtant that these do not leave the current thread.  

@@ -163,30 +163,42 @@ bool Camera::adjustSettings(std::size_t i) {
     }
     catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
 
-    //Exposure Time
-    std::shared_ptr<peak::core::nodes::FloatNode> exposure_time =
-        std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("ExposureTime"));
-    try {
-        exposure_time->SetValue(exposure_time->Minimum() * 7000);
-        std::cout << "Current exposure Time " << exposure_time->Value() << '\n';
-        runtime_flags.camera_data.exposure_time = exposure_time->Value();
-    }
-    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
-
-    std::cout << "wait";
-    //return true;
     //Frame Rate
-    std::shared_ptr<peak::core::nodes::FloatNode> frame_rate = 
+    std::shared_ptr<peak::core::nodes::FloatNode> frame_rate =
         std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("AcquisitionFrameRateConv"));
     try {
-        frame_rate->SetValue(frame_rate->Maximum()); //frame_rate->Maximum()
+        frame_rate->SetValue(4); // frame_rate-> * Minimum() frame_rate->Maximum() * (1.0 / 2    4.0
         std::cout << "Current Frame Rate " << frame_rate->Value() << '\n';
         runtime_flags.camera_data.frame_rate = frame_rate->Value();
     }
 
     catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
 
+    //Exposure Time
+    std::shared_ptr<peak::core::nodes::FloatNode> exposure_time =
+        std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("ExposureTime"));
+    try {
+        exposure_time->SetValue(exposure_time->Maximum()); //  Currentyl set to max value. exposure_time->Minimum() * 7000
+        std::cout << "Current exposure Time " << exposure_time->Value() << '\n';
+        runtime_flags.camera_data.exposure_time = exposure_time->Value();
+    }
+    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
+    
+    std::shared_ptr<peak::core::nodes::FloatNode> gain =
+        std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("Gain"));
+    try {
+        gain->SetValue(gain->Minimum());
+        std::cout << "Gain value is set to " << gain->Value() << '\n';
+        runtime_flags.camera_data.gain = gain->Value();
+        //std::cout << "Gain Value set to " << gain->Value() << " \nHas maximum value " << gain->Maximum() <<
+        //    "\nHas minimal value of " << gain->Minimum();
+    }
+    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
+
+    std::cout << "wait";
+
     return true;
+    
     // This is for debuggin -> search node for given category with name.find()
     // To use it comment out -> return true above
     // after this the nodes (base class) try to get downcased to their given derivatives
@@ -195,10 +207,11 @@ bool Camera::adjustSettings(std::size_t i) {
     for (auto& node : nm->Nodes()) {
         const std::string name = node->Name();
 
-        if (name.find("Exposure") != std::string::npos ||
+        if (//name.find("Exposure") != std::string::npos ||
             name.find("Gain") != std::string::npos ||
-            name.find("Brightness") != std::string::npos ||
-            name.find("Frame") != std::string::npos )
+            name.find("Brightness") != std::string::npos
+            //name.find("Frame") != std::string::npos )
+            )
         {
             std::cout << name;
 

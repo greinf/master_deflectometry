@@ -28,7 +28,9 @@ public:
 	 
 	 void phase_unwrap(bool save, const std::string& path);
 
-	 void camera_calibration(int camera);
+	 void TestOptimal();
+	 
+	 void camera_calibration(int camera, std::string image_path);
 	 
 	 // Access Image Processing class, there all imgaes of the PhaseUnwrap are stored. 
 	 // A .xml file is created at the given address, where the image data can be accesed. The
@@ -45,11 +47,23 @@ public:
 
 	 void load_frames(const std::string& path);
 	 void generatePattern();
-	 void load_calib(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-10-23/2025_10-23_Camera_calib.xml");
+	 void load_calib(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_camera_calib.xml");
 
 	 void grayValueCalib(int camera = 0);
 
 	 void saveResponseCurve(const std::string& filename);
+	 void load_gray_value_calib(const std::string& path);
+
+	 void gray_value_apply();
+
+	 void extract_Column(std::string path);
+
+	 void extract_Line(std::string path);
+
+	 std::pair<double, double> fitLine1D(const std::vector<double>& y);
+	 
+	 void manual_phaseUnwrap();
+
 
 private:
 	std::shared_ptr<Screen> m_screen{nullptr};
@@ -57,11 +71,21 @@ private:
 	std::shared_ptr<ImageProcessing> m_img_processing{ nullptr };
 	std::thread img_handler_thread;
 
+	std::vector<std::pair<double, double>> m_LUT;
+
 	// Contoller_thread that is used to oversee the acquisition of camera frames
 	// druing the meassurment. This is done by UserInput.
 	void controller_userInput();
 
+	std::vector<cv::Mat> m_optimalFrames;
+	std::vector<cv::Mat> m_optimalPhase;
 
+
+	void saveSliceToCSV(const std::string& filename,
+		const std::vector<double>& unwrap,
+		const std::pair<double, double>& unwrapFit,// regressions a,b unwrap
+		const std::vector<double>& repro,
+		const std::pair<double, double>& reproFit);
 	
 	// Controller thread for automatic acquisaition. Default argument is ammount of pictures taken per 
 	// Meassurment. Information about ammount of shift_steps is saved in flagHandler.hpp.

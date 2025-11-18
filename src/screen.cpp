@@ -5,6 +5,7 @@
 #include "imageHandler.hpp"
 #include <condition_variable>
 #include <mutex>
+#include <algorithm>
 /*
 Screen::Screen(std::int32_t pixel_x, std::int32_t pixel_y, std::int32_t pixel_pitch, float numberPeriods):
 	m_pixel_x{pixel_x}, m_pixel_y{pixel_y}, m_pixel_pitch{pixel_pitch}, m_numberPeriods { numberPeriods },
@@ -37,8 +38,12 @@ void Screen::gray_value_calib() {
 	for (size_t counter = 0; counter <= std::numeric_limits<uchar>::max(); counter += runtime_flags.calib.stepwidth ) {
 		//std::this_thread::sleep_for(std::chrono::milliseconds(500));
 		std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
-		//in theory this runtime_flags should not be necessary
-		gray_image.setTo(cv::Scalar(static_cast<int>(counter)));
+
+		// linearisatoin of gray value if m_LUT got value
+		if (m_LUT.has_value()) {
+			gray_image.setTo(linear_gray(static_cast<double>(counter)));
+		}
+		else { gray_image.setTo(cv::Scalar(static_cast<int>(counter))); }
 		imgHandler.imshow_Pattern(gray_image);
 		
 		if (runtime_flags.get_stop_fringe_projection_flag()) {
@@ -58,6 +63,8 @@ void Screen::gray_value_calib() {
 	runtime_flags.set_finished_fringe_Iteration_true();
 	return;
 }
+
+
 
 bool Screen::prepareShiftParameters() {
 	try {
@@ -83,25 +90,9 @@ bool Screen::generateSinusPatterns() {
 	try {
 		double two_pi_overlambda{ CV_2PI / m_wavelength };
 		int axisLen{};
-		/*
-		if (m_mode == Shift_mode::four_phase_shift) {
-			m_steps = 4;
-		}
+		
 
-		if (m_mode == Shift_mode::user_defined) {
-			std::cout << "Input the needed ammount of phase steps during meassurment (4 < N < 12): \n";
-			bool valid_input{ true };
-			m_steps = 0;
-			while (!(m_steps > 4 && m_steps < 13)) {
-				std::cin >> m_steps;
-				if (!std::cin) {
-					std::cin.clear();
-					std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-				}
-			}
-			std::cout << "You enterd " << m_steps << " steps. '\n";
-		}
-		*/
+		bool LUT{ m_LUT.has_value() };
 		// be careful for this is used std::initializerlist()
 		for (bool horizontal : {true, false}) {
 
@@ -117,43 +108,101 @@ bool Screen::generateSinusPatterns() {
 				break;
 			}
 			}
-			cv::Mat line(axisLen, 1, CV_32F); // column vector for convenience *** Constructor Mat (int rows, int cols, int type)
-
+			cv::Mat img_phase;
+			cv::Mat line(axisLen, 1, CV_64F); // column vector for convenience *** Constructor Mat (int rows, int cols, int type)
+			cv::Mat phase(axisLen, 1, CV_64F); 
 			for (int k = 0; k < m_steps; ++k) {
 				const double phaseShift = 2.0 * CV_PI * (static_cast<double>(k) / m_steps);
 
 				// sin( 2π * i / λ + φ_k )
 				for (int i = 0; i < axisLen; ++i) {
-					float s = std::sin(two_pi_overlambda * static_cast<double>(i) + phaseShift);
-					line.at<float>(i, 0) = static_cast<float>(s);
+					double s = (std::cos(two_pi_overlambda * static_cast<double>(i) - phaseShift) + 1 ) * static_cast<double>(m_amp);
+					
+					if (LUT) {
+						s = linear_gray(s);
+					}
+					line.at<double>(i, 0) = static_cast<double>(s);
+					phase.at<double>(i, 0) = (two_pi_overlambda * static_cast<double>(i) - phaseShift); // 
 				}
 
-				// Map [-1, +1] -> [mean-amp, mean+amp]
-				cv::Mat lineScaled;
-				lineScaled = line * static_cast<float>(m_amp);
-				lineScaled = lineScaled + static_cast<float>(m_mean);
+				
+				std::cout << "Phase Shift " << phaseShift << '\n';
+				std::cout << "Elment cos 0,0 " << line.at<double>(0, 0) << '\n';
 
+				// Map [-1, +1] -> [mean-amp, mean+amp]
+				cv::Mat lineScaled = line;
+				
 				// Build the 2D image by repeating along the constant axis
 				cv::Mat img;
 				if (horizontal) {
 					// horizontal stripes -> vary along rows (Y). Repeat the column across width.
 					cv::Mat row; cv::transpose(lineScaled, row);  // 1 x H
+					cv::Mat row_phase; cv::transpose(phase, row_phase); // transpose to 1xH
 					img = cv::repeat(row, m_pixel_y, 1); // 1xH -> 1xW repeated
+					img_phase = cv::repeat(row_phase, m_pixel_y, 1);
 				}
 				else {
 					// vertical stripes -> vary along columns (X). Repeat the column across width.
 					img = cv::repeat(lineScaled, 1, m_pixel_x); // Hx1 -> HxW
+					img_phase = cv::repeat(phase, 1, m_pixel_x);
 				}
 
+				// Frames for the optimal phase and 
+				
+				m_optimal_pattern.push_back(img);
+				if (k == 0) {
+					m_optimal_phase.push_back(img_phase);
+				}
 				// Convert to 8-bit for display/projection
 				cv::Mat img8;
 				img.convertTo(img8, CV_8U);
+				//cv::normalize(img, img8, 0, 255, cv::NORM_MINMAX, CV_8U);
 				m_patterns.push_back(std::move(img8));
 			}
+			
 		}
 		return true;
 	}
 	catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; return false; }
+}
+
+double Screen::linear_gray(double s) {
+	std::vector<std::pair<double, double>> data = m_LUT.value();
+
+	std::sort(data.begin(), data.end(),
+		[](const auto& a, const auto& b) {
+			return a.second < b.second;
+		});
+
+	// std::prev iterate -1 
+	double range = std::prev(data.end())->second - data.begin()->second;
+	double range_safety = range - (range * 0.1);
+	double scale_factor{range_safety / 255.0};
+	double search_val = s * scale_factor + (range * 0.05);
+	//std::cout << " scale_factor " << scale_factor << '\n';
+	auto it = std::min_element(
+		data.begin(), data.end(),
+		[search_val](const auto& lhs, const auto& rhs) {
+			return std::abs(lhs.second - search_val) < std::abs(rhs.second - search_val);
+		}
+	);
+
+	return it->first;
+}
+
+void Screen::generate_optimalPhase() {
+	//Assume four Shift
+	m_steps = 4;
+	m_pixel_x = runtime_flags.camera_data.pixel_x;
+	m_pixel_y = runtime_flags.camera_data.pixel_y;
+	m_numberPeriods = 8;
+
+	if (!prepareShiftParameters()) {
+		std::cout << "Parameter generation failed. \n";
+	}
+	if (!generateSinusPatterns()) {
+		std::cout << "Sinsu generation failed. \n";
+	}
 }
 
 void Screen::generate_phaseShift(Shift_mode mode) {
@@ -168,7 +217,7 @@ void Screen::generate_phaseShift(Shift_mode mode) {
 		}
 	}
 	else if (mode == Shift_mode::user_defined) {
-		std::cout << "Enter an integer for the ammount of shifts (4 < x <= 12) \n";
+		std::cout << "Enter an integer for the ammount of shifts (4 < x <= 100) \n";
 		m_steps = 0;
 		do {
 			std::cin >> m_steps;
@@ -179,7 +228,7 @@ void Screen::generate_phaseShift(Shift_mode mode) {
 				continue;
 			}
 			std::cout << m_steps << '\n';
-		} while ((m_steps < 5) || (m_steps > 11));
+		} while ((m_steps < 5) || (m_steps > 101));
 		if (!prepareShiftParameters()) {
 			std::cout << "Parameter generation failed. \n";
 		}

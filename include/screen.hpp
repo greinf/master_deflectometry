@@ -14,6 +14,7 @@
 #include <opencv2/phase_unwrapping.hpp>
 #include "enums.hpp"
 #include <array>
+#include <optional>
 
 class Camera;
 class AcquisitionWorker;
@@ -37,6 +38,10 @@ public:
 	void displayPatterns_single_thread();
 	void displayPatterns_multi_thread();
 	std::vector<cv::Mat> m_patterns{};
+
+
+	std::vector<cv::Mat> m_optimal_pattern{};
+	std::vector<cv::Mat> m_optimal_phase{};
 	void showImage(const cv::Mat&);
 
 	void stopDisplaying() {
@@ -44,24 +49,34 @@ public:
 	}
 	void gray_value_calib();
 
+	void load_gray_calib_data(std::vector<std::pair<double, double>>&& lut) {
+		m_LUT.emplace(lut);
+		std::cout << "Has Values";
+	}
+
+	void generate_optimalPhase();
+
 private:
 	Shift_mode m_mode;
 	int m_steps{};
 	bool prepareShiftParameters();
 	bool generateSinusPatterns();
 
+	double linear_gray(double);
+
 	std::atomic<bool> m_keepDisplaying{ true };
 	std::int32_t m_pixel_x{};
 	std::int32_t m_pixel_y{};
 	std::int32_t m_pixel_pitch{};
-	float m_amp{ 127.5 };
-	float m_mean{ 127.5 };
+	double m_amp{ 127.5 };
+	double m_mean{ 127.5 };
 	bool gray_val_calibrated{ false };
 	float m_wavelength{};
 	float m_numberPeriods{};
 	float m_shift_length{};
 	void getfromFlag_H(int n_shifts);
 
+	std::optional<std::vector<std::pair<double, double>>> m_LUT{};
 
 };
 

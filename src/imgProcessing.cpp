@@ -37,6 +37,14 @@
 //    }
 //};
 
+auto normalizeAndDisplay = [](const cv::Mat& img) -> void {
+    cv::Mat norm;
+    cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+    cv::imshow("Normalized", norm);
+    cv::waitKey(0);
+    //cv::destroyWindow("Normalized");
+    };
+
 
 //Debugging function to calculate gradient strength
 auto grad_strength = [](const cv::Mat& f) -> std::pair<cv::Mat, cv::Mat> {
@@ -56,6 +64,131 @@ ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(cv::Mat& mat) const {
     return helper;
 }
 
+void ImageProcessing::unwrap_row(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int row)
+{
+    double two_pi = CV_2PI;
+
+    double prev = 0;
+        
+    double k = 0;
+
+    int valid_counter{0};
+
+    for (int col = 0; col < wrapped.cols; ++col)
+    {
+        if (!mask.at<uchar>(row, col))
+            continue;
+        
+        double current = wrapped.at<double>(row, col);
+        //Bei dem 1. validen Wert macht eine differenzbildung noch keinen Sinn
+        if (!valid_counter) {
+            unwrapped.at<double>(row, col) = current;
+            prev = current;
+            valid_counter++;
+            continue;
+        }
+        double diff = current - prev;
+
+        if (diff > CV_PI)      k -= 1;
+        else if (diff < -CV_PI) k += 1;
+
+        unwrapped.at<double>(row, col) = current + k * two_pi;
+
+        prev = current;
+        valid_counter++;
+    }
+}
+
+void ImageProcessing::unwrap_column(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int col)
+{
+    const double two_pi = CV_2PI;
+
+    double prev = 0.0;
+    double k = 0.0;
+    int valid_counter = 0;
+
+    for (int row = 0; row < wrapped.rows; ++row)
+    {
+        if (!mask.at<uchar>(row, col))
+            continue;
+
+        double current = wrapped.at<double>(row, col);
+
+        // erster gültiger Pixel in der Spalte
+        if (!valid_counter)
+        {
+            unwrapped.at<double>(row, col) = current;
+            prev = current;      
+            valid_counter++;
+            continue;
+        }
+
+        double diff = current - prev;
+
+        // wrap detection
+        if (diff > CV_PI)
+            k -= 1;
+        else if (diff < -CV_PI)
+            k += 1;
+
+        double unwrapped_val = current + k * two_pi;
+
+        unwrapped.at<double>(row, col) = unwrapped_val;
+
+        prev = current;
+
+        valid_counter++;
+    }
+}
+
+
+
+void ImageProcessing::manual_phaseUnwrap() {
+    CV_Assert(!m_wrapped_phase.empty());
+    //m_mask = createMask();
+
+    m_mask = cv::Mat(m_wrapped_phase[0].rows, m_wrapped_phase[0].cols, CV_8U, cv::Scalar(255));
+    
+    for (std::size_t count = 0; count < m_wrapped_phase.size(); count++) {
+        
+        cv::Mat wrapped64;
+        m_wrapped_phase[count].convertTo(wrapped64, CV_64F);
+
+        // Initialize output
+        m_unwrapped_phase[count] = cv::Mat::zeros(wrapped64.size(), CV_64F);
+
+        if (count == 0)
+        {
+            // horizontal unwrap
+            for (int row = 0; row < wrapped64.rows; ++row)
+                unwrap_row(wrapped64, m_unwrapped_phase[count], m_mask, row);
+        }
+        else if (count == 1)
+        {
+            // vertical unwrap
+            for (int col = 0; col < wrapped64.cols; ++col)
+                unwrap_column(wrapped64, m_unwrapped_phase[count], m_mask, col);
+        }
+
+    }
+    //normalizeAndDisplay(m_mask);
+    //normalizeAndDisplay(m_unwrapped_phase[0]);
+    //normalizeAndDisplay(m_unwrapped_phase[1]);
+   
+    cv::Mat unwrapchar0, unwrapchar1;
+    cv::normalize(m_unwrapped_phase[0], unwrapchar0, 0, 255, cv::NORM_MINMAX);
+    cv::normalize(m_unwrapped_phase[1], unwrapchar1, 0, 255, cv::NORM_MINMAX);
+
+    unwrapchar0.setTo(cv::Scalar(0), ~m_mask);
+    unwrapchar1.setTo(cv::Scalar(0), ~m_mask);
+
+    //normalizeAndDisplay(unwrapchar0);
+    //normalizeAndDisplay(unwrapchar1);
+
+    cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/Unwrap1.png", unwrapchar0);
+    cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/Unwrap2.png", unwrapchar1);
+}
+
 
 //Calculates Mask from both the contrast pictures. 
 cv::Mat ImageProcessing::createMask() {
@@ -67,7 +200,7 @@ cv::Mat ImageProcessing::createMask() {
     minmaxloc data{ get_minmaxloc(sum_contrast) };
     //std::cout << data;
     // Threshold
-    cv::threshold(sum_contrast, mask, 0.5 * data.maxval, 1, cv::THRESH_BINARY);
+    cv::threshold(sum_contrast, mask, 0.2 * data.maxval, 1, cv::THRESH_BINARY);
     //normalizeAndDisplay(mask);
     // Create Structuring Element for opening&closing
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
@@ -79,7 +212,7 @@ cv::Mat ImageProcessing::createMask() {
     //cv::normalize(sum_contrast, sum_contrast_n, 0, 255, cv::NORM_MINMAX, CV_32F);
     cv::Mat mask_8u;
     cv::normalize(mask, mask_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
-
+    //normalizeAndDisplay(mask_8u);
     return mask_8u;
 
 
@@ -140,66 +273,100 @@ cv::Mat ImageProcessing::createMask() {
 
 
 
-auto normalizeAndDisplay = [](const cv::Mat& img) -> void {
-    cv::Mat norm;
-    cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::imshow("Normalized", norm);
-    cv::waitKey(0);
-    cv::destroyWindow("Normalized");
-    };
 
-// Function that takes two images. If Mask image is != the original value is saved. Else it is 0.
-// This function can be templated
+// Function that takes two images. If Mask image is != 0 the original value is saved. Else it is 0.
 // When the double value is != 0 all values that not masked are shifted about this value. 
-// Also in this case the masked values are set to -1!!!!!
 cv::Mat ImageProcessing::applyMask(const cv::Mat& mask, const cv::Mat& img, float shift) {
     assert(mask.size() == img.size() && "Mask and image must be of the same size \n");
-    assert(img.type() == CV_32FC1 && "Expected float image");
+    assert((img.type() == CV_32FC1 || img.type() == CV_64F) && "Expected float image");
 
-    cv::Mat result = cv::Mat::zeros(img.size(), CV_32FC1);
+    cv::Mat result;
 
-    for (int row = 0; row < img.rows; ++row) {
-        const float* pImg = img.ptr<float>(row);
-        const float* pMask = mask.ptr<float>(row);
-        float* pRes = result.ptr<float>(row);
-        if (!shift) {
-            //int this line no shifiting is applied -> all masked values sare set to zero
-            for (int col = 0; col < img.cols; ++col) {
-                pRes[col] = (pMask[col] != 0.0f) ? pImg[col] : 0.0f;
+    switch (static_cast<int>(current_type)) {
+    case 1: { // float_t
+        result = cv::Mat::zeros(img.size(), CV_32FC1);
+        for (int row = 0; row < img.rows; ++row) {
+            const float* pImg = img.ptr<float>(row);
+            const uchar* pMask = mask.ptr<uchar>(row);
+            float* pRes = result.ptr<float>(row);
+            if (!shift) {
+                for (int col = 0; col < img.cols; ++col)
+                    pRes[col] = (pMask[col] != 0.0f) ? pImg[col] : 0.0f;
+            }
+            else {
+                for (int col = 0; col < img.cols; ++col)
+                    pRes[col] = (pMask[col] != 0.0f) ? (pImg[col] + shift) : 0.0f;
             }
         }
-        else {
-            // here the double value != 0, masked pixels are set to -1 and for valid pixel the shift is applied. 
-            for (int col = 0; col < img.cols; ++col) {
-                *(pRes + col) = (*(pMask + col) != 0.0f) ? (*(pImg + col)+shift) : -1.0f;
+        break;
+    }
+    case 2: { // double_t
+        result = cv::Mat::zeros(img.size(), CV_64FC1);
+        for (int row = 0; row < img.rows; ++row) {
+            const double* pImg = img.ptr<double>(row);
+            const uchar* pMask = mask.ptr<uchar>(row);
+            double* pRes = result.ptr<double>(row);
+            if (!shift) {
+                for (int col = 0; col < img.cols; ++col)
+                    pRes[col] = (pMask[col] != 0.0) ? pImg[col] : 0.0;
+            }
+            else {
+                for (int col = 0; col < img.cols; ++col)
+                    pRes[col] = (pMask[col] != 0.0) ? (pImg[col] + shift) : 0.0;
             }
         }
+        break;
+    }
+    default:
+        throw std::runtime_error("Unknown current_type in applyMask()");
     }
 
+    //normalizeAndDisplay(result);
     return result;
 }
 
-// Shifts all valids pixel about the shift value. IMG(x,y) + shift_value. 
-// Just sets all not valid pixels to -1000
+// Shifts all valid pixels by the given shift value (IMG(x,y) -= shift_value).
+// Sets all invalid (masked-out) pixels to -10.0 (float) or -10.0 (double).
 void ImageProcessing::shiftStartPhasetoZero(const cv::Mat& mask, cv::Mat& img, float shift_value) {
     assert(mask.size() == img.size());
-    assert(img.type() == CV_32FC1 && "Expected float image");
+    assert((img.type() == CV_32FC1 || img.type() == CV_64FC1) && "Expected float or double image");
 
-    for (int row = 0; row < img.rows; ++row) {
-        float* pImg = img.ptr<float>(row);
-        const float* pMask = mask.ptr<float>(row);
-        for (int cols = 0; cols < img.cols; ++cols) {
-            if (!*(pMask + cols)) {
-                *(pImg + cols) = -10.0f;
-                continue;
-            }
-            else if (*(pMask + cols)) {
-                *(pImg + cols) -= shift_value;
+    switch (static_cast<int>(current_type)) {
+    case 1: { // float_t
+        for (int row = 0; row < img.rows; ++row) {
+            float* pImg = img.ptr<float>(row);
+            const uchar* pMask = mask.ptr<uchar>(row);
 
+            for (int col = 0; col < img.cols; ++col) {
+                if (pMask[col] == 0.0f)
+                    pImg[col] = -10.0f;
+                else
+                    pImg[col] -= shift_value;
             }
         }
+        break;
+    }
+
+    case 2: { // double_t
+        for (int row = 0; row < img.rows; ++row) {
+            double* pImg = img.ptr<double>(row);
+            const uchar* pMask = mask.ptr<uchar>(row);
+
+            for (int col = 0; col < img.cols; ++col) {
+                if (pMask[col] == 0.0)
+                    pImg[col] = -10.0;
+                else
+                    pImg[col] -= static_cast<double>(shift_value);
+            }
+        }
+        break;
+    }
+
+    default:
+        throw std::runtime_error("Unknown current_type in shiftStartPhasetoZero()");
     }
 }
+
 
 //
 ////Just a small example code to do generic programming with iterators
@@ -241,12 +408,15 @@ void ImageProcessing::gray_value_calib(std::vector<cv::Mat>& vec) {
     std::vector<cv::Mat> mean_vec{};
     if (runtime_flags.calib.pictures_per_value > 1) {
         std::vector<cv::Mat>::const_iterator begin_mean = vec.cbegin();
-        std::vector<cv::Mat>::const_iterator end_mean = advance_return1(begin_mean, runtime_flags.calib.pictures_per_value);
-        mean_vec.push_back(mean(std::vector<cv::Mat>(begin_mean, end_mean)));
+        
+        std::vector<cv::Mat>::const_iterator end_guard = vec.end();
+
         for (std::size_t i = 0; i < (std::numeric_limits<uchar>::max() / runtime_flags.calib.stepwidth); ++i) {
-            begin_mean = advance_return1(begin_mean, runtime_flags.calib.pictures_per_value);
-            end_mean = advance_return1(end_mean, runtime_flags.calib.pictures_per_value);
+            std::vector<cv::Mat>::const_iterator end_mean = advance_return1(begin_mean, runtime_flags.calib.pictures_per_value);
+            CV_Assert(end_mean <= end_guard && "Iterator dereference element out of bounds");
+            
             mean_vec.push_back(mean(std::vector<cv::Mat>(begin_mean, end_mean)));
+            begin_mean = end_mean;
         }
     }
     else { mean_vec = std::move(vec); }
@@ -328,7 +498,7 @@ cv::Mat ImageProcessing::forEachPixelImpl(const Func& func, Mats&&... mats) {
 }
 */
 
-//
+
 ////Try to write first allcoator
 //template <typename T, std::size_t Alignment = 32>
 //struct AlignedAllocator {
@@ -348,13 +518,17 @@ cv::Mat ImageProcessing::forEachPixelImpl(const Func& func, Mats&&... mats) {
 //        free(p);
 //    }
 //};
-//
+
+template <typename T>
+using decay_all_t = typename std::remove_cv<typename std::remove_reference<typename std::remove_pointer<T>::type>::type>::type;
+
 
 void ImageProcessing::calc_reproject_error(bool visualizing) {
     assert(runtime_flags.disp.wavelength && "Parameters of the phase pattern are not available. Call generatePattern() before \n");
     
-    m_mask = { createMask() };
+    //m_mask = { createMask() };
     cv::Mat unwrap1_masked, unwrap2_masked;
+    
     unwrap1_masked = applyMask(m_mask, m_unwrapped_phase[0]);
     unwrap2_masked = applyMask(m_mask, m_unwrapped_phase[1]);
     minmaxloc masked_unwrap1{ get_minmaxloc(unwrap1_masked) };
@@ -362,288 +536,138 @@ void ImageProcessing::calc_reproject_error(bool visualizing) {
     std::cout << "Horizontal unwrap " << masked_unwrap1 << '\n' <<
         "Vertical unwrap " << masked_unwrap2 << '\n';
 
-    /*
-    //Debugging
-    
-    normalizeAndDisplay(m_mask);
-    normalizeAndDisplay(m_unwrapped_phase[0]);
-    normalizeAndDisplay(m_unwrapped_phase[1]);
-    normalizeAndDisplay(unwrap1_masked);
-    normalizeAndDisplay(unwrap2_masked);
-    */
-
     //Not valid pixels at -10 
     shiftStartPhasetoZero(m_mask, unwrap1_masked, masked_unwrap1.minval);
     shiftStartPhasetoZero(m_mask, unwrap2_masked, masked_unwrap2.minval);
 
-    /*
-    minmaxloc shifted1{ get_minmaxloc(unwrap1_masked) };
-    minmaxloc shifted2{ get_minmaxloc(unwrap2_masked) };
-    std::cout << "Horizontal unwrap " << shifted1 << '\n' <<
-        "Vertical unwrap " << shifted2 << '\n';
+    switch (static_cast<int>(current_type)) {
+    case(1): {
+        //auto calibPoints1 = generateCalibrationPoints<float>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength);
+        auto caliPoints = generateCalibrationPoints<float>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength,
+            runtime_flags.camera_data.pixel_x, runtime_flags.camera_data.pixel_y);
+        cv::Mat rvec, tvec;
+        bool ok = cv::solvePnP(caliPoints.objectPoints, caliPoints.imagePoints,
+                m_calib_data.cameraMatrix, m_calib_data.distCoeffs, rvec, tvec,
+                false, 
+                cv::SOLVEPNP_ITERATIVE);   
+        if (!ok) throw std::runtime_error("solvePnP failed.");
+        std::cout << "Translation vec " << cv::norm(tvec) << '\n';
+        
 
-    normalizeAndDisplay(unwrap1_masked);
-    normalizeAndDisplay(unwrap2_masked);
-    */
+        auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
+            m_calib_data.distCoeffs, rvec, tvec);
 
-    /*
-    cv::cvtColor(m_unwrapped_phase[0], unwrap_rgb, cv::COLOR_GRAY2RGB);
-    cv::drawMarker(unwrap_rgb, unwrap1.maxloc, cv::Scalar(255, 0, 0));
-    cv::drawMarker(unwrap_rgb, unwrap1.minloc, cv::Scalar(0, 255, 0));
-    
-    std::pair<cv::Mat, cv::Mat> gradients_horizontal = grad_strength(m_unwrapped_phase[0]);
-    std::pair<cv::Mat, cv::Mat> gradients_vertical = grad_strength(m_unwrapped_phase[1]);
-    cv::imshow("Gradient horizontal ", gradients_horizontal.first);
-    */
-    
-    // is set to the maximum value
-    std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>> calibrationPoints =
-        generateCalibrationPoints(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength,
-            runtime_flags.disp.width, runtime_flags.disp.height);
-
-    //std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>> calibrationPoints =
-    //    generateCalibrationPoints(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength);
-    
-    CV_Assert(!calibrationPoints.first.empty() && calibrationPoints.first.size() == calibrationPoints.second.size());
-    CV_Assert(!m_calib_data.cameraMatrix.empty() && !m_calib_data.distCoeffs.empty());
-
-    cv::Mat rvec, tvec;
-
-    /*Calculates Matrix that transforms points from display coordinate system into the camera coordinate system
-    X_camera = R*X_Dispaly + t   */
-    bool ok = cv::solvePnP(calibrationPoints.second, calibrationPoints.first,
-        m_calib_data.cameraMatrix, m_calib_data.distCoeffs, rvec, tvec,
-        false, 
-        cv::SOLVEPNP_ITERATIVE);
-         
-    if (!ok) throw std::runtime_error("solvePnP failed.");
-
-    cv::Mat R;
-    cv::Rodrigues(rvec, R);
-
-    std::cout << "R =\n" << R << "\n";
-    std::cout << "t = " << tvec.t() << " (same units as your objectPoints, here mm)\n";
-
-    // Distance camera↔screen plane (norm of t)
-    std::cout << "Camera distance ≈ " << cv::norm(tvec) << " mm\n";
-
-    // ************** Project on screen for displaypixel error *******************////
-    
-    std::vector<cv::Vec<double, 3>> projected_world;
-    
-    std::cout << "CV types \n" << "CV_32F: " << CV_32F << '\n' <<
-        "CV_8U: " << CV_8U << '\n' <<
-        "CV_64F: " << CV_64F << '\n';
-
-    std::cout << "Calibratoin Points " << "float \n" <<
-        "Rotation Vector " << rvec.type() << '\n' <<
-        "translation Vector " << tvec.type() << '\n' <<
-        "camera Matrix " << m_calib_data.cameraMatrix.type() << '\n' <<
-        "dist coeff " << m_calib_data.distCoeffs.type() << '\n';
-    //project2to3d(sumSq, maxErr, calibrationPoints, m_calib_data.cameraMatrix, m_calib_data.distCoeffs, R, tvec );
-
-
-    //normalizeAndDisplay(unwrap1_masked);
-
-    // ****** Projects point on the camera sensor, the other direction is needed ****** //
-    std::vector<cv::Point2f> projected;
-    // This function takes the object points. 
-    cv::projectPoints(calibrationPoints.second, rvec, tvec, 
-        m_calib_data.cameraMatrix, m_calib_data.distCoeffs, projected);
-    double sumSq = 0.0;
-    double maxErr = 0.0;
-
-    for (size_t i = 0; i < calibrationPoints.first.size(); ++i) {
-        double e = cv::norm(calibrationPoints.first[i] - projected[i]); // pixels
-        sumSq += e * e;
-        maxErr = std::max(maxErr, e);
+        std::cout << "Caluculated the float path \n";
+        // Stored as std::variants< ... <float>, ... <double>>
+        m_calib_points = caliPoints;
+        m_repro_error = repro2to3error;
+        break;
     }
+    case(2): {
+        //std::cout << "float " << CV_32F << "\n" << "double" << CV_64F << '\n' <<
+        //    "unwrap1_masked: " << unwrap1_masked.type() << '\n' <<
+        //    "unwrap2_masked: " << unwrap2_masked.type() << '\n';
+        //auto calibPoints1 = generateCalibrationPoints<double>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength);
+        auto caliPoints = generateCalibrationPoints<double>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength,
+            runtime_flags.camera_data.pixel_x, runtime_flags.camera_data.pixel_y);
+        cv::Mat rvec, tvec;
+        // get types
+        auto* ptr1 = caliPoints.imagePoints.data();
+        using type1 = decay_all_t<decltype(ptr1)>;
+        //typeid() return a std::typeinfo object. This has method .name()
+        std::cerr << "Type of image Points after decay " << typeid(type1).name() << '\n';
 
-    double rms = std::sqrt(sumSq / calibrationPoints.first.size());
+        auto* ptr2 = caliPoints.objectPoints.data();
+        using type2 = decay_all_t<decltype(ptr2)>;
+        std::cerr << "Type of object points after decay " << typeid(type2).name() << '\n';
+        std::cout << "Size obejct points " << caliPoints.objectPoints.size() << '\n' <<
+            "size image point " << caliPoints.imagePoints.size() << '\n';
 
-    std::cout << "Reprojection RMS: " << rms << " px,  max: " << maxErr << " px\n";
+        bool ok = cv::solvePnP(caliPoints.objectPoints, caliPoints.imagePoints,
+            m_calib_data.cameraMatrix, m_calib_data.distCoeffs, rvec, tvec,
+            false,
+            cv::SOLVEPNP_ITERATIVE);
+        if (!ok) throw std::runtime_error("solvePnP failed.");
+        std::cout << "Translation vec " << cv::norm(tvec) << '\n';
+        
+        auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
+            m_calib_data.distCoeffs, rvec, tvec);
 
-    // Creates rotation Matrix vom rvec
-    
-
-    
-    // Visualization
-    // *mainly to see error of the camera calibartion (verzeichnung). We try to draw a line that points in the direction of the error.*
-    cv::Mat error_visualizer1;
-    cv::cvtColor(m_mask.clone(), error_visualizer1, cv::COLOR_GRAY2BGR);
-    for (std::size_t i = 0; i < calibrationPoints.first.size(); ++i) {
-        cv::arrowedLine(error_visualizer1, projected[i], calibrationPoints.first[i], cv::Scalar(255, 0, 0), 2);
+        std::cout << "Caluculated the double path \n";
+        // Stored as std::variants< ... <float>, ... <double>>
+        m_calib_points = caliPoints;
+        m_repro_error = repro2to3error;
+        break;
     }
-    // Error projected over the mask
-    m_reprojection_error_img.push_back(error_visualizer1);
-
-    // *mainly to see the error of the grayvalue calibration (periodic errors)*
-    cv::Mat_<cv::Point_<float>> error_visualizer2(m_mask.size(), cv::Point_<float>(0, 0));
-    for (std::size_t i = 0; i < calibrationPoints.first.size(); ++i) {
-        cv::Point pt(cvRound(calibrationPoints.first[i].x), cvRound(calibrationPoints.first[i].y));
-        if (pt.inside(cv::Rect(0, 0, error_visualizer2.cols, error_visualizer2.rows)))
-            error_visualizer2.at<cv::Point2f>(pt) = calibrationPoints.first[i] - projected[i];
+    default:
+        throw std::runtime_error("Unknown current_type in shiftStartPhasetoZero()");
     }
-    std::vector<cv::Mat> xy(2);
-    //Seperate a mask given multiple channels cv::Mat_<cv::Point_<float>> 
-    cv::split(error_visualizer2, xy);
-    //Another apporach through pointers -> 
-    /*
-    for (int r = 0; r < points.rows; ++r) {
-        const cv::Vec2f* rowPtr = points.ptr<cv::Vec2f>(r);
-            for (int c = 0; c < points.cols; ++c) {
-                float x = rowPtr[c][0];
-                float y = rowPtr[c][1];
+}
+
+
+void ImageProcessing::save_Reprodata(const std::string& path) {
+    try {
+        //if (std::holds_alternative<ReprojectionError<double>>(m_repro_error)) {
+        //    auto& repro_error_typed{ std::get<ReprojectionError<double>>(&m_repro_error) };
+        //    repro_error_typed -> 
+        //}
+
+        auto* ptr1 = std::get_if<ReprojectionError<double>>(&m_repro_error);
+        auto* ptr2 = std::get_if<ReprojectionError<float>>(&m_repro_error);
+        std::string final(path + "/ReprojectionError.xml");
+        std::filesystem::path final_path(final);
+        if (std::filesystem::exists(final_path)) {
+            std::cout << "File for reprojection Error does already exist \n" << "Possible override. Do you want to proceed? \n [Y/N]";
+            char c;
+            bool cond{ true };
+            do {
+                std::cin >> c;
+                if (!std::cin.fail()) {
+                    std::cin.clear();
+                    std::cin.ignore(100, '\n');
+                }
+                if (std::toupper(c) == 'N') {
+                    return;
+                }
+                if (std::toupper(c) == 'Y') {
+                    cond = false;
+                }
+            } while (cond);
+        }
+
+        if (ptr1) {
+            cv::FileStorage fs(final, cv::FileStorage::WRITE);
+            if (fs.isOpened()) {
+                fs.write(m_reprojection_error_string[0], ptr1->sqrt_Error_x);
+                fs.write(m_reprojection_error_string[1], ptr1->sqrt_Error_y);
+                fs.write(m_reprojection_error_string[2], ptr1->median_x);
+                fs.write(m_reprojection_error_string[3], ptr1->median_y);
+                fs.write(m_reprojection_error_string[4], ptr1->max_Error_x);
+                fs.write(m_reprojection_error_string[5], ptr1->max_Error_y);
+                //Here also save the median of the error.
+            }
+        }
+        else if (ptr2) {
+            cv::FileStorage fs(final, cv::FileStorage::WRITE);
+            if (fs.isOpened()) {
+                fs.write(m_reprojection_error_string[0], ptr2->sqrt_Error_x);
+                fs.write(m_reprojection_error_string[1], ptr2->sqrt_Error_y);
+                fs.write(m_reprojection_error_string[2], ptr2->median_x);
+                fs.write(m_reprojection_error_string[3], ptr2->median_y);
+                fs.write(m_reprojection_error_string[4], ptr2->max_Error_x);
+                fs.write(m_reprojection_error_string[5], ptr2->max_Error_y);
+                //Here also save the median of the error.
+            }
         }
     }
-    */
-
-    minmaxloc x_direc{ get_minmaxloc(xy[0]) };
-    minmaxloc y_direc{ get_minmaxloc(xy[1]) };
-    double x_range = x_direc.maxval - x_direc.minval;
-    double y_range = y_direc.maxval - y_direc.minval;
-    int x_max, y_max;
-    (x_range > y_range) ? (x_max = 255, y_max = static_cast<int>(255 * (y_range/x_range))) : 
-        (x_max = static_cast<int>(255 * (x_range/y_range)), y_max = 255);
-    //In this code both images are just normalized to their given range. Therefore the color map gives no information a
-    cv::Mat visual_mask = ((xy[0] != 0) | (xy[1] != 0));
-    cv::Mat xNorm, yNorm;
-    // First normalization, than conversion to the needed Datatype !!!!
-    cv::normalize(xy[0], xNorm, 0, x_max, cv::NORM_MINMAX);
-    cv::normalize(xy[1], yNorm, 0, y_max, cv::NORM_MINMAX);
-    xNorm.convertTo(xNorm, CV_8U);
-    yNorm.convertTo(yNorm, CV_8U);
-
-    cv::Mat xcolor, ycolor;
-    cv::applyColorMap(xNorm, xcolor, cv::COLORMAP_TURBO);
-    cv::applyColorMap(yNorm, ycolor, cv::COLORMAP_TURBO);
-    //Set to zero, if the mask is not true. So just extra to set all elements that are masked to zero. 
-    xcolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
-    ycolor.setTo(cv::Scalar(0, 0, 0), ~visual_mask);
-
-    m_reprojection_error_img.push_back(xcolor);
-    m_reprojection_error_img.push_back(ycolor);
-
-    cv::imshow("Error mask", error_visualizer1);
-    cv::imshow("Error x direction", xcolor);
-    cv::imshow("Error y direction", ycolor);
-    cv::waitKey(0);   
+    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }
 }
 
-template <typename Tpoints, typename Tmat>
-typename std::enable_if<
-    std::is_floating_point<Tpoints>::value&&
-    std::is_floating_point<Tmat>::value>::type
-    project2to3d(
-        double* sumSq,
-        double* maxErr,
-        const std::pair<std::vector<cv::Point_<Tpoints>>, std::vector<cv::Point3_<Tpoints>>>& calib_points,
-        std::vector<cv::Vec<Tpoints, 3>>& projected,
-        const cv::Mat_<Tmat>& cam_matrix,
-        const cv::Mat_<Tmat>& dist_Coeffs,
-        const cv::Mat_<Tmat>& rotation_in,
-        const cv::Mat_<Tmat>& translation_in)
-{
-    using WideT = std::conditional_t<
-        (sizeof(Tpoints) > sizeof(Tmat)), Tpoints, Tmat>;
-    cv::Mat_<WideT> camW, distW, rW, tW;
-    cam_matrix.convertTo(camW, cv::DataType<WideT>::type);
-    dist_Coeffs.convertTo(distW, cv::DataType<WideT>::type);
-    rotation_in.convertTo(rW, cv::DataType<WideT>::type);
-    translation_in.convertTo(tW, cv::DataType<WideT>::type);
-}
-
-
-
-
-std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>>
-ImageProcessing::generateCalibrationPoints(
-    const cv::Mat& unwrapX,
-    const cv::Mat& unwrapY,
-    float pixelsPer2pi,
-    int gridX,
-    int gridY,
-    float screenWidth_mm,
-    float screenHeight_mm,
-    float pixel_pitch)
-{
-    CV_Assert(unwrapX.size() == unwrapY.size());
-    CV_Assert(unwrapX.type() == CV_32FC1 && unwrapY.type() == CV_32FC1);
-    int screenPxWidth{ runtime_flags.disp.width };
-    int screenPxHeight{ runtime_flags.disp.height };
-    std::vector<cv::Point2f> imagePoints;
-    std::vector<cv::Point3f> objectPoints;
-
-    // Define spacing across image (camera pixels)
-    float stepX = static_cast<float>(unwrapX.cols) / (gridX);  //+1
-    float stepY = static_cast<float>(unwrapX.rows) / (gridY);  //+1
-
-    //Debug Copy
-    cv::Mat debug = unwrapX.clone();
-
-    for (int gy = 0; gy <= gridY; ++gy) {
-        //if (stepY == 1) --gy;
-        int dy = static_cast<int>(gy * stepY);
-        if (dy < 0 || dy >= unwrapX.rows)
-            continue;
-
-        const float* row_ptr_X = unwrapX.ptr<float>(dy);
-        const float* row_ptr_Y = unwrapY.ptr<float>(dy);
-        for (int gx = 0; gx <= gridX; ++gx) {
-            //if (stepX == 1) --gx;
-            int px = static_cast<int>(gx * stepX);
-            //int py = static_cast<int>(gx * stepY);
-
-            if ((*(row_ptr_X + px) == -10.0f) || (*(row_ptr_Y + px) == -10.0f)) continue; // Ye haa -> pointer arithmetic bitches 
-
-            if (px < 0 || dy < 0 || px >= unwrapX.cols || dy >= unwrapX.rows) {
-                std::cout << "Something must have went terribly wrong: GenerateCalibrationPoints() \n";
-                continue;
-            }
-
-            //Can be used to acces array element, but documentatoins says it is slow.
-            //float phiX = unwrapX.at<float>(py, px);
-            //float phiY = unwrapY.at<float>(py, px);
-            // Get the phase value in each pictures for the same pixel if valid. 
-            float phiX = (*(row_ptr_X + px));
-            float phiY = (*(row_ptr_Y + px));
-
-            // Maximum possible phase values
-            float max_phase_value_u = (static_cast<float>(runtime_flags.disp.width) / pixelsPer2pi) * CV_2PI;
-            float max_phase_value_v = (static_cast<float>(runtime_flags.disp.height) / pixelsPer2pi) * CV_2PI;
-
-            //Check if phase value is in logical range. These boarder need to be less strict
-            if (phiX > max_phase_value_u || phiY > max_phase_value_v) { throw std::runtime_error ("The phase is not within allowed bounds. "); }
-
-            // Convert unwrapped phase  screen coordinates in subpixel (float, float) values. 
-            // Be carefull -> the phase direction is: <- (left for horizontal) and î (upwards for vertical)
-            // The coordinate system should be in top left so we have to convert back.  
-            float u_s = (phiX / (2.0f * CV_PI)) * pixelsPer2pi;
-            float v_s = (phiY / (2.0f * CV_PI)) * pixelsPer2pi;
-
-            u_s = screenPxWidth - u_s;
-            v_s = screenPxHeight - v_s;
-
-            // Convert to millimetres using screen dimensions
-            float Xs = u_s * pixel_pitch;
-            float Ys = v_s * pixel_pitch;
-
-            // Store results
-            imagePoints.emplace_back(static_cast<float>(px), static_cast<float>(dy));
-            objectPoints.emplace_back(Xs, Ys, 0.0f);
-            //cv::drawMarker(debug, cv::Point(px,dy), cv::Scalar(0));
-        } 
-    }
-    //normalizeAndDisplay(debug);
-    return { imagePoints, objectPoints };
-}
 
 void ImageProcessing::load_calib(std::string path) {
     m_calib_data = getfromFile(path);
 }
 
-/*m_s1[0].empty() && (cv::norm(cv::sum(m_s1[0])) == 0.0) && m_s2[0].empty() && (cv::norm(cv::sum(m_s2[0])) == 0.0) && 
-            m_s3[0].empty() && (cv::norm(cv::sum(m_s3[0])) == 0.0) &&*/
 
 // carefull && binds tighter than ||
 void ImageProcessing::load_frames(const std::string& path) {
@@ -666,6 +690,8 @@ void ImageProcessing::load_frames(const std::string& path) {
                 fs[m_save_keys[6]] >> m_unwrapped_phase[0];
                 fs[m_save_keys[7]] >> m_unwrapped_phase[1];
             }
+            fs.release();
+            //normalizeAndDisplay(m_wrapped_phase[0]);
         }
         else { throw std::runtime_error("The image container already have data in it. This is not allowed. \n"); }
 
@@ -779,8 +805,6 @@ void ImageProcessing::saveImages_png(const std::string& path_s) {
 }
 
 
-
-
 void ImageProcessing::saveImages(const std::string& path) {
     std::filesystem::path complete(path);
     if (std::filesystem::exists(complete)) {
@@ -807,6 +831,52 @@ void ImageProcessing::saveImages(const std::string& path) {
         fs << "reprojectionErrorHorizontal" << m_reprojection_error.at(0);
         fs << "reprojectionErrorVertical" << m_reprojection_error.at(1);
     }
+}
+
+std::vector<double> ImageProcessing::extract_Row_reprojection(int row) {
+    const cv::Mat& repro = m_reprojection_error[0];
+    std::vector<double> row_repro;
+    row_repro.reserve(repro.cols);
+    for (int i = 0; i < repro.cols; ++i) {
+        if (!m_mask.at<uchar>(row, i)) continue;
+        row_repro.push_back(repro.at<double>(row, i));
+    }
+    return row_repro;
+}
+
+std::vector<double> ImageProcessing::extract_Row_unwrap(int row) {
+    const cv::Mat& repro = m_unwrapped_phase[0];
+    std::vector<double> row_unwrap;
+    row_unwrap.reserve(repro.cols);
+    for (int i = 0; i < repro.cols; ++i) {
+        if (!m_mask.at<uchar>(row, i)) continue;
+        row_unwrap.push_back(repro.at<double>(row, i));
+    }
+    return row_unwrap;
+}
+
+std::vector<double> ImageProcessing::extract_Column_reprojection(int x) {
+    const cv::Mat& repro = m_reprojection_error[1];
+    std::vector<double> col;
+    col.reserve(repro.rows);
+
+    for (int i = 0; i < repro.rows; ++i) {
+        if (!m_mask.at<uchar>(i, x)) continue;
+        col.push_back(repro.at<double>(i, x));
+    }
+    return col;
+}
+
+std::vector<double> ImageProcessing::extract_Column_unwrap(int x) {
+    const cv::Mat& unwrap = m_unwrapped_phase[1];
+    std::vector<double> col;
+    col.reserve(unwrap.rows);
+
+    for (int i = 0; i < unwrap.rows; ++i) {
+        if (!m_mask.at<uchar>(i, x)) continue;
+        col.push_back(unwrap.at<double>(i, x));
+    }
+    return col;
 }
 
 ImageProcessing::~ImageProcessing() {
@@ -853,7 +923,7 @@ void ImageProcessing::wrapped_phase() {
         }
         if ((static_cast<int>(current_type) == 2) &&
             frame.type() != CV_64F) {
-            frame.convertTo(frame, CV_64F, 1.0f / 255.0f);
+            frame.convertTo(frame, CV_64F, 1.0 / 255.0);
         }
     }
 
@@ -874,7 +944,7 @@ void ImageProcessing::wrapped_phase() {
 
         for (int i = 0; i < m_s1.at(static_cast<std::size_t>(0)).rows; ++i) {
             for (int j = 0; j < m_s1.at(static_cast<std::size_t>(0)).cols; ++j) {
-                m_wrapped_phase.at(0).at<float>(i, j) = std::atan2f(m_s1.at(0).at<float>(i, j), m_s2.at(0).at<float>(i, j));
+                m_wrapped_phase.at(0).at<float>(i, j) = std::atan2f(m_s1.at(0).at<float>(i, j), m_s2.at(0).at<float>(i, j)); 
                 m_wrapped_phase.at(1).at<float>(i, j) = std::atan2f(m_s1.at(1).at<float>(i, j), m_s2.at(1).at<float>(i, j));
                 m_contrast.at(0).at<float>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(0).at<float>(i, j), 2) + std::pow(m_s2.at(0).at<float>(i, j), 2))) / m_s3.at(0).at<float>(i, j);
                 m_contrast.at(1).at<float>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(1).at<float>(i, j), 2) + std::pow(m_s2.at(1).at<float>(i, j), 2))) / m_s3.at(1).at<float>(i, j);
@@ -896,8 +966,8 @@ void ImageProcessing::wrapped_phase() {
 
         for (int i = 0; i < m_s1.at(static_cast<std::size_t>(0)).rows; ++i) {
             for (int j = 0; j < m_s1.at(static_cast<std::size_t>(0)).cols; ++j) {
-                m_wrapped_phase.at(0).at<double>(i, j) = std::atan2f(m_s1.at(0).at<double>(i, j), m_s2.at(0).at<double>(i, j));
-                m_wrapped_phase.at(1).at<double>(i, j) = std::atan2f(m_s1.at(1).at<double>(i, j), m_s2.at(1).at<double>(i, j));
+                m_wrapped_phase.at(0).at<double>(i, j) = std::atan2(m_s1.at(0).at<double>(i, j), m_s2.at(0).at<double>(i, j)); // Be carefull atan2 is inverted
+                m_wrapped_phase.at(1).at<double>(i, j) = std::atan2(m_s1.at(1).at<double>(i, j), m_s2.at(1).at<double>(i, j));
                 m_contrast.at(0).at<double>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(0).at<double>(i, j), 2) + std::pow(m_s2.at(0).at<double>(i, j), 2))) / m_s3.at(0).at<double>(i, j);
                 m_contrast.at(1).at<double>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(1).at<double>(i, j), 2) + std::pow(m_s2.at(1).at<double>(i, j), 2))) / m_s3.at(1).at<double>(i, j);
             }
@@ -1009,18 +1079,40 @@ void ImageProcessing::unwrapped_phase() {
     params.nbrOfLargeBins = 10;
     cv::Ptr<cv::phase_unwrapping::HistogramPhaseUnwrapping> unwrapping = cv::phase_unwrapping::HistogramPhaseUnwrapping::create(params);
     m_mask = createMask();  // choose threshold as needed
-    normalizeAndDisplay(m_mask);
-    normalizeAndDisplay(m_wrapped_phase[0]);
-    
-	//cv::Mat mask2 = (m_contrast.at(1) > 0.2f);  // choose threshold as needed
-    cv::Mat unwrapped1;
-    unwrapping->unwrapPhaseMap(m_wrapped_phase.at(0), m_unwrapped_phase.at(0) , m_mask);
+    //normalizeAndDisplay(m_mask);
+    //normalizeAndDisplay(m_wrapped_phase[0]);
+    for (auto& m : m_wrapped_phase) {
+        std::cout << "cv::unwrapPhaseMap expects float images -> convert double to float for unwrap!\n";
+        m.convertTo(m, CV_32F);
+    }
+    std::cout << "mask size " << m_mask.size() << '\n' <<
+        "unwrap size " << m_wrapped_phase.at(0).size() << '\n';
+
+    if (m_mask.empty() || m_mask.type() != CV_8U) {
+        std::cerr << "Invalid mask — converting.\n";
+        if (!m_mask.empty())
+            m_mask.convertTo(m_mask, CV_8U, 255.0);
+        else
+            m_mask = cv::Mat::ones(m_wrapped_phase[0].size(), CV_8U);
+    }
+    for (auto& m : m_unwrapped_phase) {
+        if(m.type() == CV_64F)
+            m.convertTo(m, CV_32F);
+    }
+    minmaxloc mask_data{ get_minmaxloc(m_mask) };
+    cv::Mat unwrap_mask;
+    if (mask_data.minval == 0 && mask_data.maxval == 1) cv::Mat unwrap_mask = m_mask * 255;
+    else unwrap_mask = m_mask;
+    //cv::setBreakOnError(true);
+    //cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_VERBOSE);
+    CV_Assert(unwrap_mask.size() == m_wrapped_phase.at(0).size());
+    unwrapping->unwrapPhaseMap(m_wrapped_phase.at(0), m_unwrapped_phase.at(0) , unwrap_mask);
     //unwrapped1
     // vertical unwrap, rotated to horizontal orientation
     cv::Mat wrappedTransposed, maskTransposed, unwrappedTransposed;
     cv::transpose(m_wrapped_phase.at(1), wrappedTransposed);
     cv::transpose(m_contrast.at(1), maskTransposed);
-    maskTransposed = m_mask.t();
+    maskTransposed = unwrap_mask.t();
 
     // create the same params (same pixel_y/pixel_x, do NOT swap)
     params.height = runtime_flags.camera_data.pixel_x;
@@ -1039,18 +1131,26 @@ void ImageProcessing::unwrapped_phase() {
     m_unwrapped_phase.at(1) = unwrappedPhase2;
     cv::Mat unwrappedPhase1_8u, unwrappedPhase2_8u;
 
-    normalizeAndDisplay(m_unwrapped_phase[0]);
-    normalizeAndDisplay(m_unwrapped_phase[1]);
-    /*
-    std::filesystem::path outDir("C:\\Users\\grein\\Desktop\\Master\\Project\\deflectometrie\\out");
-    if (std::filesystem::exists(outDir) == false) {
-        std::filesystem::create_directory(outDir);
+
+    if (static_cast<int>(current_type) == 1) {
+        for (auto& m : m_unwrapped_phase) {
+            if (m.type() != CV_32F) m.convertTo(m, CV_32F);
+        }
+        for (auto& m : m_wrapped_phase) {
+            if (m.type() != CV_32F) m.convertTo(m, CV_32F);
+        }
     }
-    std::filesystem::path path1 = outDir / "unwrapped_phase1.png";
-    std::filesystem::path path2 = outDir / "unwrapped_phase2.png";
-    cv::imwrite(path1.string(), unwrappedPhase1_8u);
-    cv::imwrite(path2.string(), unwrappedPhase2_8u);
-    */
+    else if (static_cast<int>(current_type) == 2) {
+        for (auto& m : m_unwrapped_phase) {
+            if (m.type() != CV_64F) m.convertTo(m, CV_64F);
+        }
+        for (auto& m : m_wrapped_phase) {
+            if (m.type() != CV_64F) m.convertTo(m, CV_64F);
+        }
+    }
+
+    //normalizeAndDisplay(m_unwrapped_phase[0]);
+    //normalizeAndDisplay(m_unwrapped_phase[1]);
 }
 
 cv::Mat ImageProcessing::mean(std::vector<cv::Mat>& vec) {
