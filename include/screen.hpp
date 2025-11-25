@@ -1,29 +1,26 @@
 #ifndef SCREEN_H
 #define SCREEN_H
 
-#include <atomic>
 #include <iostream>
 #include <opencv2/highgui.hpp>
 #include <vector>
-#include <fstream>
-#include <opencv2/core.hpp>
-#include <opencv2/core/utility.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/calib3d.hpp>
-#include <opencv2/structured_light.hpp>
-#include <opencv2/phase_unwrapping.hpp>
+#include <memory>
+//#include <opencv2/imgproc.hpp>
+//#include <opencv2/calib3d.hpp>
+//#include <opencv2/structured_light.hpp>
+//#include <opencv2/phase_unwrapping.hpp>
 #include "enums.hpp"
 #include <array>
 #include <optional>
+#include "config/PhaseShiftConfig.hpp"
 
-class Camera;
-class AcquisitionWorker;
 
-class Screen {
+class ImageStore;
+
+class Pattern {
 public:
-	//Constructor (Width, Height, PixelPitch in micrometer, Number of periods 
-	//explicit Screen(std::int32_t screen_x = 1920, std::int32_t screen_y = 1080, std::int32_t pixel_pitch = 250, float m_numberperiods = (float)10);
-	explicit Screen(int n_shifts);
+	// Constructor Pattern class (y_pixel, x_pixel, std::shared_ptr<ImageStore>)
+	explicit Pattern(int y_pixel, int x_pixel, std::shared_ptr<ImageStore> m_img_store);
 
 	enum class shift_axis {
 		horizontal,
@@ -32,52 +29,62 @@ public:
 	};
 
 	//void grayValueCalibration();
-	void generate_phaseShift(Shift_mode);
+	void generate_phaseShift(Shift_mode, int n_periods_y = 10);
+
+	std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(int stepwidth);
+
 	
-	//Displays Generated Pattern Sequence. Next Picture after 2sec. 
-	void displayPatterns_single_thread();
-	void displayPatterns_multi_thread();
-	std::vector<cv::Mat> m_patterns{};
+	/*void displayPatterns_single_thread();
+	void displayPatterns_multi_thread();*/
 
+	/*void gray_value_calib();*/
 
-	std::vector<cv::Mat> m_optimal_pattern{};
-	std::vector<cv::Mat> m_optimal_phase{};
-	void showImage(const cv::Mat&);
-
-	void stopDisplaying() {
-		m_keepDisplaying.store(false);
-	}
-	void gray_value_calib();
+	void prepareLUT();
 
 	void load_gray_calib_data(std::vector<std::pair<double, double>>&& lut) {
-		m_LUT.emplace(lut);
-		std::cout << "Has Values";
+		m_LUT.emplace(std::move(lut));
+		prepareLUT();
 	}
 
 	void generate_optimalPhase();
 
+	std::vector<std::shared_ptr<defl::PhaseShiftConfig>> getPhaseConfig() { return m_cfg; }
+
 private:
-	Shift_mode m_mode;
+	// Config file to save the options used for the pattern
+	std::vector<std::shared_ptr<defl::PhaseShiftConfig>> m_cfg;
+
+	// file with the purpose of holding all images used in this pipeline
+	std::shared_ptr<ImageStore> m_img_store;
+
 	int m_steps{};
-	bool prepareShiftParameters();
-	bool generateSinusPatterns();
+	bool prepareShiftParameters(int n_periods_in_y, int m_steps);
+	std::vector<cv::Mat> generateSinusPatternFromPhase(const std::vector<cv::Mat>&, int steps,
+		double amplitude = 255, double mean_value = 127.5);
+
+	std::vector<cv::Mat> generatePhase(int pixel_x, int pixely, double wavelength);
+	cv::Mat generateRowPhase(int pixel_x, double wave_length);
+	cv::Mat generateColumnPhase(int pixel_y, double wave_length);
+
+	void logging();
 
 	double linear_gray(double);
 
-	std::atomic<bool> m_keepDisplaying{ true };
-	std::int32_t m_pixel_x{};
-	std::int32_t m_pixel_y{};
-	std::int32_t m_pixel_pitch{};
-	double m_amp{ 127.5 };
-	double m_mean{ 127.5 };
-	bool gray_val_calibrated{ false };
-	float m_wavelength{};
-	float m_numberPeriods{};
-	float m_shift_length{};
-	void getfromFlag_H(int n_shifts);
+	int m_pixel_x{};
+	int m_pixel_y{};
+	double m_mean_value;
+	double m_amplitude;
+	double m_wavelength{};
+	double m_numberPeriods{};
+	double m_shift_length{};
 
+
+	//Look Up Table
 	std::optional<std::vector<std::pair<double, double>>> m_LUT{};
-
+	std::vector<std::pair<double, double>> m_sortedLUT{};
+	bool m_lut_ready{ false };
+	double m_lut_scale_factor{};
+	double m_lut_offset{};
 };
 
 

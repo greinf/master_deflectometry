@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <opencv2/core/hal/interface.h>
+#include <opencv2/core/traits.hpp>
 
 
 //Allocator!!!! must be fixed 
@@ -64,22 +66,301 @@ ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(cv::Mat& mat) const {
     return helper;
 }
 
+std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_calibration_Points(
+    const std::vector<cv::Mat>& unwrapped,
+    const cv::Mat& mask,
+    const double wavelength,
+    const int gridX,
+    const int gridY,
+    const double pixe_pitch_mm,
+    const double screenWidth_mm,
+    const double screenHeight_mm) 
+{
+    CV_Assert(unwrapped.size() == 2);
+    CV_Assert(unwrapped[0].type() == CV_64F);
+    CV_Assert(unwrapped[0].size() == unwrapped[1].size());
+    CV_Assert(unwrapped[0].size() == mask.size());
+    CV_Assert(gridX >= 0 && gridY >= 0);
+    CV_Assert(screenWidth_mm > 0 && screenHeight_mm > 0);
+
+    std::vector<cv::Vec2d> imagePoints;
+    std::vector<cv::Vec3d> objectPoints;
+    std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> output;
+
+
+    cv::Size sz = unwrapped[0].size();
+    const double step_X = static_cast<double>(sz.width) / gridX;
+    const double step_Y = static_cast<double>(sz.height) / gridY;
+    //Debug image
+    cv::Mat debug(mask.clone());
+
+    cv::cvtColor(debug, debug, cv::COLOR_GRAY2BGR);
+
+    for (double rowd = 0; rowd < sz.height; rowd += step_Y) {
+        int row = std::min(int(rowd), sz.height - 1);
+        const double* x_ptr = unwrapped[0].ptr<double>(row);
+        const double* y_ptr = unwrapped[1].ptr<double>(row);
+        const uchar* mask_ptr = mask.ptr<uchar>(row);
+        for (double colsd = 0; colsd < sz.width; colsd += step_X) {
+            int cols = std::min(int(colsd), sz.width - 1);
+            if (mask_ptr[cols] == 0) continue;
+            if (row < 0 || cols < 0) throw std::runtime_error("Index out of bounds: index < 0");
+            if (row >= sz.height || cols >= sz.width) throw std::runtime_error("Index out of bounds : index > 0");
+
+            //double theoretical_limitX{ static_cast<double>(wavelength * sz.width) };
+            //double theoretical_limitY{ static_cast<double>(wavelength * sz.height) };
+
+            double phaseValX = x_ptr[cols];
+            double phaseValY = y_ptr[cols];
+
+            double X_pixel = (phaseValX / CV_2PI) * wavelength;
+            double Y_pixel = (phaseValY / CV_2PI) * wavelength;
+
+            double X_mm = X_pixel * pixe_pitch_mm;
+            double Y_mm = Y_pixel * pixe_pitch_mm;
+            imagePoints.emplace_back(cv::Vec2d(cols, row));
+            objectPoints.emplace_back(cv::Vec3d(X_mm, Y_mm, 0));
+            //std::cout << "ImagePoints: " << cv::Vec2d(cols, row) << '\n';
+            //std::cout << "ObjectPoints: " << cv::Vec3d(X_mm, Y_mm, 0) << '\n';
+            cv::drawMarker(debug, cv::Point(cols, row), cv::Scalar(0, 255, 0), cv::MARKER_CROSS);
+        }
+    }
+    output.first = imagePoints;
+    output.second = objectPoints;
+
+    cv::normalize(debug, debug, 0, 255, cv::NORM_MINMAX, CV_8SC3);
+    cv::imshow("debug", debug);
+    cv::waitKey(0);
+    return output;
+}
+
+cv::Mat ImageProcessing::do_reprojection_error(
+    const std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>>& caliPoints,
+    const cv::Mat& caliMatrix,
+    const cv::Mat& distCoeffs,
+    const cv::Mat& rvec,
+    const cv::Mat& tvec,
+    double* sqrtErr,
+    double* maxErr,
+    const cv::Mat& mask)
+{
+    CV_Assert(caliPoints.first.size() == caliPoints.second.size());
+    CV_Assert(caliMatrix.type() == CV_64F);
+    CV_Assert(rvec.type() == CV_64F);
+    CV_Assert(tvec.type() == CV_64F);
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(sqrtErr && maxErr);
+
+    // --- Extrinsics ---
+    cv::Mat R;
+    cv::Rodrigues(rvec, R);
+    cv::Mat R_inv = R.inv();
+
+    // --- Camera Matrix ---
+    cv::Mat Cam_inv{ caliMatrix.inv() };
+
+    // Camera center in world/display coords: C = -R^-1 t
+    cv::Mat C_mat = -R_inv * tvec;
+    cv::Vec3d C(
+        C_mat.at<double>(0),
+        C_mat.at<double>(1),
+        C_mat.at<double>(2));
+
+    // --- Prepare undistorted normalized image points ---
+    std::vector<cv::Point2d> img_pts;
+    img_pts.reserve(caliPoints.first.size());
+    for (const auto& v : caliPoints.first)
+        img_pts.emplace_back(v[0], v[1]);
+
+    std::vector<cv::Point2d> undist;
+    cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
+
+    // --- Error map (dx, dy) on display plane ---
+    cv::Mat error_map(mask.size(), CV_64FC2, cv::Scalar(0, 0));
+
+    double sumsq = 0.0;
+    *maxErr = 0.0;
+    std::size_t N = 0;
+
+    // Assume display plane at Z = 0 in world coordinates:
+    const double Z0 = 0.0;
+
+    for (std::size_t i = 0; i < caliPoints.first.size(); ++i)
+    {
+        // Rounding first of the undistorted Points -> acquivalent to the distorted Points
+        const cv::Vec2d& img = caliPoints.first[i];
+        const cv::Vec3d& obj = caliPoints.second[i];
+
+        int col = static_cast<int>(std::round(img[0]));
+        int row = static_cast<int>(std::round(img[1]));
+
+        // Check inside image
+        if (row < 0 || row >= mask.rows || col < 0 || col >= mask.cols)
+            continue;
+        if (mask.at<uchar>(row, col) == 0) {
+            std::cout << "Mask was 0 at this image Points \n";
+            continue;
+        }
+
+        // Direction in camera frame from undistorted normalized coordinates
+        cv::Vec3d d_cam(undist[i].x, undist[i].y, 1.0);
+
+        // Direction in world/display frame
+
+        cv::Mat direction_world = R_inv * Cam_inv * d_cam;
+        cv::Vec3d d_world(
+            direction_world.at<double>(0),
+            direction_world.at<double>(1),
+            direction_world.at<double>(2));
+
+        // Intersect with plane Z = Z0:
+        // C.z + λ d_world.z = Z0  -> λ = (Z0 - C.z) / d_world.z
+        double lambda = (Z0 - C[2]) / d_world[2];
+
+        cv::Vec3d X = C + lambda * d_world;  // intersection point on display
+
+        cv::Vec3d diff = X - obj;           // error on display plane
+
+        cv::Vec2d& err = error_map.at<cv::Vec2d>(row, col);
+        err = cv::Vec2d(diff[0], diff[1]);
+
+        double norm = std::sqrt(diff[0] * diff[0] + diff[1] * diff[1]);
+        sumsq += norm * norm;
+        *maxErr = std::max(*maxErr, norm);
+        ++N;
+    }
+
+    *sqrtErr = (N > 0) ? std::sqrt(sumsq / static_cast<double>(N)) : 0.0;
+
+    return error_map;
+}
+
+std::vector<cv::Mat> ImageProcessing::do_wrapped_Phase(const std::vector<cv::Mat>& vec,
+    int n_pics_perPhase,
+    int n_shifts)
+{
+    CV_Assert(!vec.empty());
+    CV_Assert(vec[0].channels() == 1);
+
+    // --- Build mean images ---
+
+    std::vector<cv::Mat> mean_vec;
+    mean_vec.reserve(vec.size());
+
+    if (n_pics_perPhase > 1) {
+        auto it = vec.begin();
+        while (it != vec.end()) {
+
+            auto it2 = it + n_pics_perPhase;
+            cv::Mat meanImg = mean(std::vector<cv::Mat>(it, it2));
+            meanImg.convertTo(meanImg, CV_64F);
+
+            mean_vec.push_back(meanImg);
+            it = it2;
+        }
+    }
+    else {
+        for (const auto& f : vec) {
+            cv::Mat tmp;
+            f.convertTo(tmp, CV_64F);
+            mean_vec.push_back(tmp);
+        }
+    }
+
+    // --- Allocate S1,S2,S3 ---
+
+    cv::Size size = mean_vec[0].size();
+
+    std::array<cv::Mat, 2> s1, s2, s3;
+    for (int p = 0; p < 2; ++p) {
+        s1[p] = cv::Mat::zeros(size, CV_64F);
+        s2[p] = cv::Mat::zeros(size, CV_64F);
+        s3[p] = cv::Mat::zeros(size, CV_64F);
+    }
+
+    // --- 3) Precompute sin/cos LUT ---
+    std::vector<double> sines(n_shifts), cosines(n_shifts);
+    for (int i = 0; i < n_shifts; ++i) {
+        double ph = double((CV_2PI * i) / n_shifts);
+        sines[i] = std::sin(ph);
+        cosines[i] = std::cos(ph);
+    }
+
+    // --- 4) Accumulate S1, S2, S3 ---
+    for (int i = 0; i < n_shifts; ++i) {
+
+        s1[0] += mean_vec[i] * sines[i];
+        s2[0] += mean_vec[i] * cosines[i];
+        s3[0] += mean_vec[i];
+
+        s1[1] += mean_vec[i + n_shifts] * sines[i];
+        s2[1] += mean_vec[i + n_shifts] * cosines[i];
+        s3[1] += mean_vec[i + n_shifts];
+    }
+
+    // --- 5) Compute wrapped phase and contrast---
+
+    std::vector<cv::Mat> wrapped(2), contrast(2), baseIntensity(2);
+    
+    for (int p = 0; p < 2; ++p) {
+
+        wrapped[p] = cv::Mat(size, CV_64F);
+        contrast[p] = cv::Mat(size, CV_64F);
+        baseIntensity[p] = s3[p] / n_shifts;
+        cv::Mat mag(size, CV_64F);
+
+        cv::parallel_for_(cv::Range(0, size.height),
+            [&](const cv::Range& r) {
+                for (int y = r.start; y < r.end; ++y) {
+
+                    const double* s1p = s1[p].ptr<double>(y);
+                    const double* s2p = s2[p].ptr<double>(y);
+                    const double* s3p = s3[p].ptr<double>(y);
+
+                    double* wp = wrapped[p].ptr<double>(y);
+                    double* cp = contrast[p].ptr<double>(y);
+                    double* mp = mag.ptr<double>(y);
+
+                    for (int x = 0; x < size.width; ++x) {
+
+                        double a = s1p[x];
+                        double b = s2p[x];
+                        double c = s3p[x];
+
+                        wp[x] = std::atan2(-a, b);
+                        mp[x] = std::sqrt(a * a + b * b);
+                        cp[x] = (2.0f * mp[x]) / c;
+                    }
+                }
+            });
+    }
+    std::vector<cv::Mat> return_container;
+    for (auto& m : wrapped) { return_container.push_back(std::move(m)); }
+    for (auto& m : contrast) { return_container.push_back(std::move(m)); }
+    for (auto& m : baseIntensity) { return_container.push_back(std::move(m)); }
+    return return_container;
+}
+
 void ImageProcessing::unwrap_row(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int row)
 {
     double two_pi = CV_2PI;
-
+    /*normalizeAndDisplay(wrapped);
+    normalizeAndDisplay(mask);*/
     double prev = 0;
         
     double k = 0;
 
     int valid_counter{0};
 
+    cv::Mat wrapped64;
+    wrapped.convertTo(wrapped64, CV_64F);
+
     for (int col = 0; col < wrapped.cols; ++col)
     {
         if (!mask.at<uchar>(row, col))
             continue;
         
-        double current = wrapped.at<double>(row, col);
+        double current = wrapped64.at<double>(row, col);
         //Bei dem 1. validen Wert macht eine differenzbildung noch keinen Sinn
         if (!valid_counter) {
             unwrapped.at<double>(row, col) = current;
@@ -141,134 +422,76 @@ void ImageProcessing::unwrap_column(const cv::Mat& wrapped, cv::Mat& unwrapped, 
     }
 }
 
+std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
+    const std::vector<cv::Mat>& wrapped,
+    const std::vector<cv::Mat>& contrast) 
+{
+    CV_Assert(!wrapped.empty() && !contrast.empty());
+    CV_Assert(wrapped[0].type() == contrast[0].type());
+    CV_Assert(wrapped[0].size() == contrast[0].size());
 
+    cv::Mat mask = createMask(contrast, 0.5);
 
-void ImageProcessing::manual_phaseUnwrap() {
-    CV_Assert(!m_wrapped_phase.empty());
-    //m_mask = createMask();
-
-    m_mask = cv::Mat(m_wrapped_phase[0].rows, m_wrapped_phase[0].cols, CV_8U, cv::Scalar(255));
+    std::vector<cv::Mat> unwrapped_phase(2);
+    for (auto& m : unwrapped_phase) { m = cv::Mat::zeros(wrapped[0].size(), CV_64F); }
     
-    for (std::size_t count = 0; count < m_wrapped_phase.size(); count++) {
-        
-        cv::Mat wrapped64;
-        m_wrapped_phase[count].convertTo(wrapped64, CV_64F);
-
-        // Initialize output
-        m_unwrapped_phase[count] = cv::Mat::zeros(wrapped64.size(), CV_64F);
+    for (std::size_t count = 0; count < wrapped.size(); count++) {
 
         if (count == 0)
         {
             // horizontal unwrap
-            for (int row = 0; row < wrapped64.rows; ++row)
-                unwrap_row(wrapped64, m_unwrapped_phase[count], m_mask, row);
+            for (int row = 0; row < wrapped[0].rows; ++row)
+                unwrap_row(wrapped[0], unwrapped_phase[count], mask, row);
         }
         else if (count == 1)
         {
             // vertical unwrap
-            for (int col = 0; col < wrapped64.cols; ++col)
-                unwrap_column(wrapped64, m_unwrapped_phase[count], m_mask, col);
+            for (int col = 0; col < wrapped[1].cols; ++col)
+                unwrap_column(wrapped[1], unwrapped_phase[count], mask, col);
         }
-
     }
-    //normalizeAndDisplay(m_mask);
-    //normalizeAndDisplay(m_unwrapped_phase[0]);
-    //normalizeAndDisplay(m_unwrapped_phase[1]);
    
-    cv::Mat unwrapchar0, unwrapchar1;
-    cv::normalize(m_unwrapped_phase[0], unwrapchar0, 0, 255, cv::NORM_MINMAX);
-    cv::normalize(m_unwrapped_phase[1], unwrapchar1, 0, 255, cv::NORM_MINMAX);
+    /*for (auto& img : unwrapped_phase) {
+        img.setTo(cv::Scalar(0), ~mask);
+    }*/
+    /*normalizeAndDisplay(wrapped[0]);
+    normalizeAndDisplay(wrapped[1]);
 
-    unwrapchar0.setTo(cv::Scalar(0), ~m_mask);
-    unwrapchar1.setTo(cv::Scalar(0), ~m_mask);
-
-    //normalizeAndDisplay(unwrapchar0);
-    //normalizeAndDisplay(unwrapchar1);
-
-    cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/Unwrap1.png", unwrapchar0);
-    cv::imwrite("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/Unwrap2.png", unwrapchar1);
+    normalizeAndDisplay(unwrapped_phase[0]);
+    normalizeAndDisplay(unwrapped_phase[1]);*/
+    
+    return unwrapped_phase;
 }
 
 
-//Calculates Mask from both the contrast pictures. 
-cv::Mat ImageProcessing::createMask() {
-    cv::Mat mask, sum_contrast_n;
-    assert((m_contrast[0].type() == CV_32F) || m_contrast[0].type() == CV_64F);
-    cv::Mat sum_contrast = (m_contrast[0] + m_contrast[1])/2;
+cv::Mat ImageProcessing::createMask(
+    const std::vector<cv::Mat>& vec,
+    double threshold) 
+{
+    cv::Mat maskbin, sum_contrast_n;
+    CV_Assert(m_contrast[0].type() == CV_64F);
+    CV_Assert(vec.size() == 2);
 
+    if (threshold == 0.0) {
+        return cv::Mat::ones(vec[0].size(), CV_8U);
+    }
+
+    cv::Mat sum_contrast = (vec[0] + vec[1])/2;
     // minMaxloc data for sum_contrast
-    minmaxloc data{ get_minmaxloc(sum_contrast) };
-    //std::cout << data;
+    cv::Mat mask_8u;
+    cv::normalize(sum_contrast, mask_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
+    minmaxloc data{ get_minmaxloc(mask_8u) };
     // Threshold
-    cv::threshold(sum_contrast, mask, 0.2 * data.maxval, 1, cv::THRESH_BINARY);
+
+    cv::threshold(mask_8u, maskbin, threshold * data.maxval, 1, cv::THRESH_BINARY);
     //normalizeAndDisplay(mask);
     // Create Structuring Element for opening&closing
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
-    cv::morphologyEx(mask, mask, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 2);
-    cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 2);
+    cv::morphologyEx(maskbin, maskbin, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 2);
+    cv::morphologyEx(maskbin, maskbin, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 2);
 
-    minmaxloc data1{ get_minmaxloc(mask) };
-    //std::cout << data1;
-    //cv::normalize(sum_contrast, sum_contrast_n, 0, 255, cv::NORM_MINMAX, CV_32F);
-    cv::Mat mask_8u;
-    cv::normalize(mask, mask_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
-    //normalizeAndDisplay(mask_8u);
-    return mask_8u;
-
-
-    // Debugging and somehting where i tried to use findcontours from opencv
-    /*
-    cv::imshow("sumcontrast ", sum_contrast);
-    cv::imshow("Treshholded", mask);
-    cv::waitKey(0);
-    */
-
-    /*
-    std::pair<cv::Mat, cv::Mat> gradient_horizontal{ grad_strength(m_contrast[0]) };
-    std::pair<cv::Mat, cv::Mat> gradient_vertical{ grad_strength(m_contrast[1]) };
-    
-    //Use gradient pictures
-    mask = (gradient_horizontal.first + gradient_horizontal.second)/2;
-    cv::Mat mask8u;
-    cv::normalize(mask, mask8u, 0, 255.0, cv::NORM_MINMAX, CV_8U);
-    minmaxloc value_information(get_minmaxloc(mask8u));
-    cv::imshow("NormalizedMask", mask8u);
-    cv::Mat canny, edges;
-    cv::waitKey(0);
-    cv::Canny(mask8u, canny, value_information.maxval*0.15, value_information.maxval*0.3 );
-    cv::imshow("Canny", canny);
-
-    cv::waitKey(0);
-    std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(canny, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-    int largest_index = 0;
-    double largest_area = 0.0;
-
-    for (size_t i = 0; i < contours.size(); ++i) {
-        double area = cv::contourArea(contours[i]);
-        if (area > largest_area) {
-            largest_area = area;
-            largest_index = i;
-        }
-    }
-
-    std::vector<cv::Point> approx;
-    cv::approxPolyDP(contours[largest_index], approx, 10, true);
-
-    cv::Mat mask_f = cv::Mat::zeros(canny.size(), CV_8UC1);
-    cv::drawContours(mask_f, std::vector<std::vector<cv::Point>>{approx}, -1, cv::Scalar(255), cv::FILLED);
-    cv::imshow("Hopefully Contour", mask_f);
-    cv::waitKey(0);
-    */
-    /*Debugging*/
-    /*
-    cv::imshow("fringeHorizontal_fx", gradient_horizontal.first);
-    cv::imshow("fringeHorizontal_fy", gradient_horizontal.second);
-    cv::imshow("fringevertical_fx", gradient_vertical.first);
-    cv::imshow("fringevertical_fy", gradient_vertical.second);
-    cv::waitKey();
-    */
+    //normalizeAndDisplay(maskbin);
+    return maskbin;
 }
 
 
@@ -402,38 +625,61 @@ constexpr iterator advance_return1(iterator start, typename std::iterator_traits
 }
 
 
-void ImageProcessing::gray_value_calib(std::vector<cv::Mat>& vec) {
+std::vector<std::pair<double,double>> 
+ImageProcessing::gray_value_calib(const std::vector<cv::Mat>& vec, int pics_per_val, int stepwidth) {
     // Create first mean values if needed. 
-    assert(!vec.empty() && "If the vector is empty there must be error in acquisition. \n");
+    CV_Assert(!vec.empty() && "If the vector is empty there must be error in acquisition. \n");
+    CV_Assert(vec[0].channels() == 1);
     std::vector<cv::Mat> mean_vec{};
-    if (runtime_flags.calib.pictures_per_value > 1) {
+    std::vector<std::pair<double, double>> LUT{};
+    // Build the mean value over pics_per_val
+    if (pics_per_val > 1) {
         std::vector<cv::Mat>::const_iterator begin_mean = vec.cbegin();
         
         std::vector<cv::Mat>::const_iterator end_guard = vec.end();
 
-        for (std::size_t i = 0; i < (std::numeric_limits<uchar>::max() / runtime_flags.calib.stepwidth); ++i) {
-            std::vector<cv::Mat>::const_iterator end_mean = advance_return1(begin_mean, runtime_flags.calib.pictures_per_value);
+        for (std::size_t i = 0; i < (std::numeric_limits<uchar>::max() / stepwidth); ++i) {
+            std::vector<cv::Mat>::const_iterator end_mean = advance_return1(begin_mean, pics_per_val);
             CV_Assert(end_mean <= end_guard && "Iterator dereference element out of bounds");
             
             mean_vec.push_back(mean(std::vector<cv::Mat>(begin_mean, end_mean)));
             begin_mean = end_mean;
         }
     }
-    else { mean_vec = std::move(vec); }
+    else {
+        for (const auto& f : vec)
+        {
+            cv::Mat tmp;
+            f.convertTo(tmp, CV_64F);
+            mean_vec.push_back(tmp);
+        }
+    }
     
+    CV_Assert(mean_vec.size() >= 2 && "Grayvalue calib requires min. 2 values");
+
     // Subtrakt the first image (black) from the brightest (white) the difference is hopefully a usable mask;
     cv::Mat mask = mean_vec.back() - mean_vec.front();
+    cv::normalize(mask, mask, 0, 255, cv::NORM_MINMAX, CV_8U);
     minmaxloc mask_info{ get_minmaxloc(mask) };
     cv::threshold(mask, mask, mask_info.maxval * 0.5, 255, cv::THRESH_BINARY);
     normalizeAndDisplay(mask);
 
     std::vector<cv::Scalar_<double>> mean_values;
 
+    for (std::size_t i = 0; i < mean_vec.size(); ++i) {
+        double GTgray_val = i * stepwidth;
+        double meassure_gray_val = cv::norm(cv::mean(mean_vec[i], mask));
+        LUT.push_back(std::pair<double, double>(GTgray_val, meassure_gray_val));
+    }
+
+
+    // --- This part old. Should be DELETED (save pictures within class) 
     for (const auto& mean_img : mean_vec) {
         mean_values.push_back(cv::mean(mean_img, mask));
     }
-
     m_mean_grayValues = std::move(mean_values);
+
+    return LUT;
 }
 
 
@@ -554,13 +800,13 @@ void ImageProcessing::calc_reproject_error(bool visualizing) {
         std::cout << "Translation vec " << cv::norm(tvec) << '\n';
         
 
-        auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
-            m_calib_data.distCoeffs, rvec, tvec);
+        //auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
+        //    m_calib_data.distCoeffs, rvec, tvec);
 
         std::cout << "Caluculated the float path \n";
         // Stored as std::variants< ... <float>, ... <double>>
         m_calib_points = caliPoints;
-        m_repro_error = repro2to3error;
+        //m_repro_error = repro2to3error;
         break;
     }
     case(2): {
@@ -590,13 +836,13 @@ void ImageProcessing::calc_reproject_error(bool visualizing) {
         if (!ok) throw std::runtime_error("solvePnP failed.");
         std::cout << "Translation vec " << cv::norm(tvec) << '\n';
         
-        auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
-            m_calib_data.distCoeffs, rvec, tvec);
+        //auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
+        //    m_calib_data.distCoeffs, rvec, tvec);
 
         std::cout << "Caluculated the double path \n";
         // Stored as std::variants< ... <float>, ... <double>>
         m_calib_points = caliPoints;
-        m_repro_error = repro2to3error;
+        //m_repro_error = repro2to3error;
         break;
     }
     default:
@@ -883,153 +1129,6 @@ ImageProcessing::~ImageProcessing() {
     --instance_counter;
 }
 
-void ImageProcessing::wrapped_phase() {
-    std::cout << "Vector size " << m_frames.size() << '\n';
-    // create(m_frames);
-	std::cout << "Datatype " << m_frames[0].type() << '\n';
-    
-    if (runtime_flags.phase_shift.n_pics_per_Phase <= 0) {
-        std::cerr << "Flag how many Picutres per Pattern are created must be set to specific value != 0 \n";
-        return;
-    }
-
-    if (runtime_flags.phase_shift.n_pics_per_Phase > 1) {
-        int n_expected_frames = runtime_flags.phase_shift.n_pics_per_Phase *
-            runtime_flags.phase_shift.n_shifts * 2;
-        std::cout << "Expected " << n_expected_frames << '\n' <<
-            "std::vector size " << m_frames.size() << '\n';
-
-        assert(n_expected_frames == m_frames.size() && "For valid Processing, number of expected Frames (calculated from flagHandler.hpp\
-			 flags) must match vector size \n");
-        std::vector<cv::Mat>::iterator begin = m_frames.begin();
-        
-        for (int i = 0; i < (runtime_flags.phase_shift.n_shifts *2); ++i) {
-            std::vector<cv::Mat>::iterator end = begin + runtime_flags.phase_shift.n_pics_per_Phase;
-            // Constructs a vector with the contents of the range [first, last). Each iterator in [first, last) is dereferenced exactly once.
-            m_raw_phase.push_back(mean(std::vector<cv::Mat>(begin, end)));
-            begin = end;
-        }
-    }
-
-    if (runtime_flags.phase_shift.n_pics_per_Phase == 1) {
-        m_raw_phase = m_frames;
-    }
-    
-    //current_type 1= float, 2 = double
-    for (auto& frame : m_raw_phase) {
-        if ((static_cast<int>(current_type) == 1) &&
-            frame.type() != CV_32F) {
-            frame.convertTo(frame, CV_32F, 1.0f / 255.0f);
-        }
-        if ((static_cast<int>(current_type) == 2) &&
-            frame.type() != CV_64F) {
-            frame.convertTo(frame, CV_64F, 1.0 / 255.0);
-        }
-    }
-
-    // different process for the datatypes. 
-    switch (static_cast<int>(current_type)) {
-    case(1):
-        for (int i = 0; i < runtime_flags.phase_shift.n_shifts; ++i) {
-            float phase = static_cast<float>((CV_2PI * i) / static_cast<float>(runtime_flags.phase_shift.n_shifts));
-            //m_s1.at(0) += m_raw_phase.at(i).forEach<float>([&](float& a, const int* position) -> void {
-            //    a = a * std::sin(phase); });
-            m_s1.at(0) += m_raw_phase.at(static_cast<std::size_t>(i)) * std::sin(phase);
-            m_s1.at(1) += m_raw_phase.at(static_cast<std::size_t>(i + runtime_flags.phase_shift.n_shifts)) * std::sin(phase);
-            m_s2.at(0) += m_raw_phase.at(static_cast<std::size_t>(i)) * std::cos(phase);
-            m_s2.at(1) += m_raw_phase.at(static_cast<std::size_t>(i + runtime_flags.phase_shift.n_shifts)) * std::cos(phase);
-            m_s3.at(0) += m_raw_phase.at(static_cast<std::size_t>(i));
-            m_s3.at(1) += m_raw_phase.at(static_cast<std::size_t>(i + runtime_flags.phase_shift.n_shifts));
-        }
-
-        for (int i = 0; i < m_s1.at(static_cast<std::size_t>(0)).rows; ++i) {
-            for (int j = 0; j < m_s1.at(static_cast<std::size_t>(0)).cols; ++j) {
-                m_wrapped_phase.at(0).at<float>(i, j) = std::atan2f(m_s1.at(0).at<float>(i, j), m_s2.at(0).at<float>(i, j)); 
-                m_wrapped_phase.at(1).at<float>(i, j) = std::atan2f(m_s1.at(1).at<float>(i, j), m_s2.at(1).at<float>(i, j));
-                m_contrast.at(0).at<float>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(0).at<float>(i, j), 2) + std::pow(m_s2.at(0).at<float>(i, j), 2))) / m_s3.at(0).at<float>(i, j);
-                m_contrast.at(1).at<float>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(1).at<float>(i, j), 2) + std::pow(m_s2.at(1).at<float>(i, j), 2))) / m_s3.at(1).at<float>(i, j);
-            }
-        }
-        break;
-    case(2):
-        for (int i = 0; i < runtime_flags.phase_shift.n_shifts; ++i) {
-            double phase = static_cast<double>((CV_2PI * i) / static_cast<double>(runtime_flags.phase_shift.n_shifts));
-            //m_s1.at(0) += m_raw_phase.at(i).forEach<float>([&](float& a, const int* position) -> void {
-            //    a = a * std::sin(phase); });
-            m_s1.at(0) += m_raw_phase.at(static_cast<std::size_t>(i)) * std::sin(phase);
-            m_s1.at(1) += m_raw_phase.at(static_cast<std::size_t>(i + runtime_flags.phase_shift.n_shifts)) * std::sin(phase);
-            m_s2.at(0) += m_raw_phase.at(static_cast<std::size_t>(i)) * std::cos(phase);
-            m_s2.at(1) += m_raw_phase.at(static_cast<std::size_t>(i + runtime_flags.phase_shift.n_shifts)) * std::cos(phase);
-            m_s3.at(0) += m_raw_phase.at(static_cast<std::size_t>(i));
-            m_s3.at(1) += m_raw_phase.at(static_cast<std::size_t>(i + runtime_flags.phase_shift.n_shifts));
-        }
-
-        for (int i = 0; i < m_s1.at(static_cast<std::size_t>(0)).rows; ++i) {
-            for (int j = 0; j < m_s1.at(static_cast<std::size_t>(0)).cols; ++j) {
-                m_wrapped_phase.at(0).at<double>(i, j) = std::atan2(m_s1.at(0).at<double>(i, j), m_s2.at(0).at<double>(i, j)); // Be carefull atan2 is inverted
-                m_wrapped_phase.at(1).at<double>(i, j) = std::atan2(m_s1.at(1).at<double>(i, j), m_s2.at(1).at<double>(i, j));
-                m_contrast.at(0).at<double>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(0).at<double>(i, j), 2) + std::pow(m_s2.at(0).at<double>(i, j), 2))) / m_s3.at(0).at<double>(i, j);
-                m_contrast.at(1).at<double>(i, j) = (2 * std::sqrt(std::pow(m_s1.at(1).at<double>(i, j), 2) + std::pow(m_s2.at(1).at<double>(i, j), 2))) / m_s3.at(1).at<double>(i, j);
-            }
-        }
-        break;
-    default: {
-        throw std::exception("Wrapped Phase datatype is wrong");
-        }
-    }
-
-    for (std::size_t i = 0; i < m_baseIntensity.size(); ++i) {
-        m_baseIntensity.at(i) = m_s3.at(i) / runtime_flags.phase_shift.n_shifts;
-        //Initialize already a array with the right datatype and size()
-    }
-    /*Debugging*/
-
-    /*normalizeAndDisplay(m_baseIntensity[0]);
-    normalizeAndDisplay(m_contrast[0]);
-    normalizeAndDisplay(m_wrapped_phase[0]);*/
-    
-    /*
-    minmaxloc wrapped1{ get_minmaxloc(m_wrapped_phase[0])};
-    minmaxloc wrapped2{ get_minmaxloc(m_wrapped_phase[1]) };
-    minmaxloc contrast1{ get_minmaxloc(m_contrast[0]) };
-    
-    std::cout << wrapped1 << wrapped2 << contrast1 << '\n';
-    */
-
-    /*
-    auto [Hx, Hy] = grad_strength(m_wrapped_phase[0]); // horizontal set
-    auto [Vx, Vy] = grad_strength(m_wrapped_phase[1]); // vertical set
-    std::cout << "Wrapped H: |dx|=" << Hx << " |dy|=" << Hy << "\n";
-    std::cout << "Wrapped V: |dx|=" << Vx << " |dy|=" << Vy << "\n";
-    */
-
-    /*
-    cv::imshow("Contrast", m_contrast.at(0));
-    cv::imshow("Base Intensity", m_baseIntensity.at(0));
-    cv::imshow("Phase", m_phase.at(0));
-
-    cv::Mat phaseVis, contrastVis;
-    cv::normalize(m_phase.at(0), phaseVis, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::normalize(m_contrast.at(0), contrastVis, 0, 255, cv::NORM_MINMAX, CV_8U);
-
-    cv::applyColorMap(phaseVis, phaseVis, cv::COLORMAP_JET);
-    cv::applyColorMap(contrastVis, contrastVis, cv::COLORMAP_JET);
-
-    cv::imshow("Phase (color)", phaseVis);
-    cv::imshow("Contrast (color)", contrastVis);
-    cv::waitKey(0);
-    */
-    /*Just to see results*/
-    /*
-    std::thread img(&ImageHandler::run, imgHandler, 3);
-    imgHandler.imshow_Camera(m_baseIntensity.at(0));
-    imgHandler.imshow_Pattern(m_phase.at(0));
-    imgHandler.imshow_Processed(m_contrast.at(0));
-    std::this_thread::sleep_for(std::chrono::seconds(10));
-    imgHandler.stop();
-    if (img.joinable()) img.join();
-    */
-}
 
 void ImageProcessing::goldsteinUnwrap() {
     cv::Mat unwrapped1;
@@ -1050,134 +1149,85 @@ void ImageProcessing::goldsteinUnwrap() {
 	cv::imshow("Goldstein Unwrapped Phase 2", m_unwrapped_phase.at(1));
     cv::waitKey(0);
 
-    /*
-    goldsteinUnwrapCV(m_phase.at(0), m_unwrapped_phase.at(0));
-	cv::imshow("Goldstein Unwrapped Phase", m_unwrapped_phase.at(0));
-	goldsteinUnwrapCV(m_phase.at(1), m_unwrapped_phase.at(1));
-	cv::imshow("Goldstein Unwrapped Phase 2", m_unwrapped_phase.at(1));
-	cv::waitKey(0);
-    
-    double phaseminVal, phasemaxVal, baseminVal, basemaxval, conminval, conmaxval;
-
-    cv::minMaxLoc(m_unwrapped_phase[0], &phaseminVal, &phasemaxVal);
-    cv::minMaxLoc(m_unwrapped_phase[1], &baseminVal, &basemaxval);
-
-    std::cout << "Phase1: " << phaseminVal << " … " << phasemaxVal << '\n'
-        << "Phase 2: " << baseminVal << " … " << basemaxval << '\n';
-        */
 }
 
 
-void ImageProcessing::unwrapped_phase() {
-    //std::cout << "Phase unwrapping \n";
-    cv::Mat unwrappedPhase1, unwrappedPhase2;
+std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
+    const std::vector<cv::Mat>& wrappedPhase,
+    const std::vector<cv::Mat>& contrast) 
+{
+    CV_Assert(wrappedPhase.size() == 2);
+    CV_Assert(contrast.size() == 2);
+    CV_Assert(wrappedPhase[0].size() == contrast[0].size());
+    CV_Assert(wrappedPhase[0].type() == CV_32F || wrappedPhase[0].type() == CV_64F);
+
+    
+    cv::Size sz = wrappedPhase[0].size();
+
+    cv::Mat wX, wY, cX, cY;
+    wrappedPhase[0].convertTo(wX, CV_32F);
+    wrappedPhase[1].convertTo(wY, CV_32F);
+
+    cv::Mat mask = { createMask(contrast, 0.5) };
+    //normalizeAndDisplay(wX);
+    std::vector<cv::Mat> unwrapped(2);
+    unwrapped[0] = cv::Mat(sz, CV_64F);
+    unwrapped[1] = cv::Mat(sz, CV_64F);
+    cv::Mat unwrapX;
     cv::phase_unwrapping::HistogramPhaseUnwrapping::Params params;
-    params.height = runtime_flags.camera_data.pixel_y;
-    params.width = runtime_flags.camera_data.pixel_x;
-    params.histThresh = CV_PI / 10; // you can tune this threshold
-    params.nbrOfSmallBins = 20;
-    params.nbrOfLargeBins = 10;
-    cv::Ptr<cv::phase_unwrapping::HistogramPhaseUnwrapping> unwrapping = cv::phase_unwrapping::HistogramPhaseUnwrapping::create(params);
-    m_mask = createMask();  // choose threshold as needed
-    //normalizeAndDisplay(m_mask);
-    //normalizeAndDisplay(m_wrapped_phase[0]);
-    for (auto& m : m_wrapped_phase) {
-        std::cout << "cv::unwrapPhaseMap expects float images -> convert double to float for unwrap!\n";
-        m.convertTo(m, CV_32F);
-    }
-    std::cout << "mask size " << m_mask.size() << '\n' <<
-        "unwrap size " << m_wrapped_phase.at(0).size() << '\n';
-
-    if (m_mask.empty() || m_mask.type() != CV_8U) {
-        std::cerr << "Invalid mask — converting.\n";
-        if (!m_mask.empty())
-            m_mask.convertTo(m_mask, CV_8U, 255.0);
-        else
-            m_mask = cv::Mat::ones(m_wrapped_phase[0].size(), CV_8U);
-    }
-    for (auto& m : m_unwrapped_phase) {
-        if(m.type() == CV_64F)
-            m.convertTo(m, CV_32F);
-    }
-    minmaxloc mask_data{ get_minmaxloc(m_mask) };
-    cv::Mat unwrap_mask;
-    if (mask_data.minval == 0 && mask_data.maxval == 1) cv::Mat unwrap_mask = m_mask * 255;
-    else unwrap_mask = m_mask;
-    //cv::setBreakOnError(true);
-    //cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_VERBOSE);
-    CV_Assert(unwrap_mask.size() == m_wrapped_phase.at(0).size());
-    unwrapping->unwrapPhaseMap(m_wrapped_phase.at(0), m_unwrapped_phase.at(0) , unwrap_mask);
-    //unwrapped1
-    // vertical unwrap, rotated to horizontal orientation
-    cv::Mat wrappedTransposed, maskTransposed, unwrappedTransposed;
-    cv::transpose(m_wrapped_phase.at(1), wrappedTransposed);
-    cv::transpose(m_contrast.at(1), maskTransposed);
-    maskTransposed = unwrap_mask.t();
-
-    // create the same params (same pixel_y/pixel_x, do NOT swap)
-    params.height = runtime_flags.camera_data.pixel_x;
-    params.width = runtime_flags.camera_data.pixel_y;
+    params.width = sz.width;
+    params.height = sz.height;
     params.histThresh = CV_PI / 10;
     params.nbrOfSmallBins = 20;
     params.nbrOfLargeBins = 10;
 
-    auto unwrapping1 = cv::phase_unwrapping::HistogramPhaseUnwrapping::create(params);
+    cv::Ptr<cv::phase_unwrapping::HistogramPhaseUnwrapping> unwrapXalgo =
+        cv::phase_unwrapping::HistogramPhaseUnwrapping::create(params);
 
-    // unwrap the *transposed* image
-    unwrapping1->unwrapPhaseMap(wrappedTransposed, unwrappedTransposed, maskTransposed);
+    unwrapXalgo->unwrapPhaseMap(wX, unwrapX, mask);
+    unwrapX.convertTo(unwrapped[0], CV_64F);
+    normalizeAndDisplay(unwrapX);
+    //normalizeAndDisplay(wY);
+    cv::phase_unwrapping::HistogramPhaseUnwrapping::Params paramsY;
+    paramsY.width = wrappedPhase[0].rows;
+    paramsY.height = wrappedPhase[0].cols;
+    paramsY.histThresh = CV_PI / 10;
+    paramsY.nbrOfSmallBins = 20;
+    paramsY.nbrOfLargeBins = 10;
 
-    // transpose back
-    cv::transpose(unwrappedTransposed, unwrappedPhase2);
-    m_unwrapped_phase.at(1) = unwrappedPhase2;
-    cv::Mat unwrappedPhase1_8u, unwrappedPhase2_8u;
+    cv::Ptr<cv::phase_unwrapping::HistogramPhaseUnwrapping> unwrapYalgo =
+        cv::phase_unwrapping::HistogramPhaseUnwrapping::create(paramsY);
+    cv::Mat unwrap_t;
+    cv::Mat wY_t = wY.t();
+    cv::Mat mask_t = mask.t();
+    unwrapYalgo->unwrapPhaseMap(wY_t, unwrap_t, mask_t);
 
-
-    if (static_cast<int>(current_type) == 1) {
-        for (auto& m : m_unwrapped_phase) {
-            if (m.type() != CV_32F) m.convertTo(m, CV_32F);
-        }
-        for (auto& m : m_wrapped_phase) {
-            if (m.type() != CV_32F) m.convertTo(m, CV_32F);
-        }
-    }
-    else if (static_cast<int>(current_type) == 2) {
-        for (auto& m : m_unwrapped_phase) {
-            if (m.type() != CV_64F) m.convertTo(m, CV_64F);
-        }
-        for (auto& m : m_wrapped_phase) {
-            if (m.type() != CV_64F) m.convertTo(m, CV_64F);
-        }
-    }
-
-    //normalizeAndDisplay(m_unwrapped_phase[0]);
-    //normalizeAndDisplay(m_unwrapped_phase[1]);
+    cv::Mat unwrap = unwrap_t.t();
+    unwrap.convertTo(unwrapped[1], CV_64F);
+    normalizeAndDisplay(unwrapped[1]);
+    return unwrapped;
 }
 
-cv::Mat ImageProcessing::mean(std::vector<cv::Mat>& vec) {
+// Converts every Img to CV64F. Take the man value of the vector and return a CV64F img. 
+cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
     for (size_t i = 1; i < vec.size(); ++i) {
         if (vec[i].size() != vec[0].size() || vec[i].type() != vec[0].type()) {
-            std::cerr << "All pictures must be same kind and type. \n";
             throw std::runtime_error ("All pictures must be same kind and type. \n");
         }
     }
     cv::Mat acc;
-    vec[0].convertTo(acc, CV_32FC1);
 
+    if(vec[0].type() != CV_64F) vec[0].convertTo(acc, CV_64FC1);
+    
     for (size_t i = 1; i < vec.size(); ++i) {
         cv::Mat temp;
-        vec[i].convertTo(temp, CV_32FC1);
+        vec[i].convertTo(temp, CV_64FC1);
         acc += temp;   // pixelweise Addition
     }
 
-    acc /= static_cast<float>(vec.size());  // pixelweise Division
+    acc /= static_cast<double>(vec.size());  // pixelweise Division
 
-    // Zurück zu 8 Bit
-    cv::Mat average;
-    acc.convertTo(average, CV_8UC1);
-    //Debugging
-	//cv::imshow("Mean Image", average);
-    //cv::waitKey();
-    return average;
+    return acc;
 }
 
 

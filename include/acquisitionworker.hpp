@@ -1,205 +1,107 @@
-#ifndef ACQUISITIONWORKER_H
-#define ACQUISITIONWORKER_H
-#include "camera.hpp"
-#include "flagHandler.hpp"
-#include "imageHandler.hpp"
-
+#pragma once
+#include <thread>
+#include <atomic>
 #include <mutex>
-inline cv::Mat rotImage180(const cv::Mat& mat);
+#include <opencv2/opencv.hpp>
+#include "camera.hpp"
+#include "imageStore.hpp"
+#include "ScreenDisplay.hpp"
+#include "runtime/AcquisitionController.hpp"
 
-
-class AcquisitionWorker: public Camera{
+class AcquisitionWorker {
 public:
-	explicit AcquisitionWorker(int i) : //try to acess the m_datastream and m_nodemapRemoteDevicec from m_camera
-		// integer let choose from different connected cameras. 
-		Camera(), //setup Camera Base Class
-		camera_n{ i }
-	{
-		if(runtime_flags.get_camera_running_flag())
-			m_nodemapRemoteDevice_A = m_nodemapRemoteDevice.at(camera_n);
-		
-		//set acquisitionflag to falls
-		runtime_flags.set_false_acquisition_flag();
-		if (!m_nodemapRemoteDevice_A) {
-			throw (std::runtime_error("RemoteDevice Object is Nullptr \n"));
-		}
-	}
+    AcquisitionWorker(std::shared_ptr<Camera> cam,
+        std::shared_ptr<ImageStore> store,
+        std::shared_ptr<defl::AcquisitionController> controller,
+        std::shared_ptr<ScreenDisplay> display = nullptr
+        )
+        : m_camera(cam)
+        , m_store(std::move(store))
+        , m_display(std::move(display))
+        , m_controller(std::move(controller))
+    {
+    }
 
-	~AcquisitionWorker() {
-		std::cout << "Acuisitionworker Obj Destroyed \n"; 
-		close();
-	}
+    ~AcquisitionWorker() {
+        stop();
+    }
 
-	enum class command {
-		stop,
-		save,
-		acquire,
-		max_value
-	};
+    void start() {
+        if (m_running.load()) return;
+        m_running.store(true);
+        m_thread = std::thread(&AcquisitionWorker::loop, this);
+    }
 
-	void start() {
-		//one instaces of the AcquisitionWorker class is allowed to have only one start() function running
-		std::lock_guard<std::mutex> acquisition_block(m_acquisition_block);
-		
-		if (!m_image_handler) { //&& m_acquire_command_handler
-			std::runtime_error e("Image_Handler is Nullpointer. \n"); //or Command_Handler are
-		}
-		try {
-			runtime_flags.set_true_acquisition_flag();
-			m_readout_thread = std::thread([this] { run_readout(); });
-			if (m_readout_thread.joinable()) m_readout_thread.join();
-		}
-		catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
-	}
+    void stop() {
+        m_running.store(false);
+        if (m_thread.joinable())
+            m_thread.join();
+    }
 
-	void start1() {
-		//one instaces of the AcquisitionWorker class is allowed to have only one start() function running
-		std::lock_guard<std::mutex> acquisition_block(m_acquisition_block);
+    // === NEW: REQUEST TO SAVE NEXT IMAGE(S) ===
+    void requestSave(int count = 1) {
+        m_pendingSaves.fetch_add(count, std::memory_order_relaxed);
+    }
 
-		if (!m_image_handler) { //&& m_acquire_command_handler
-			std::runtime_error e("Image_Handler is Nullpointer. \n"); //or Command_Handler are
-		}
-		try {
-			runtime_flags.set_true_acquisition_flag();
-			m_readout_thread = std::thread([this] { run_readout1(); });
-			if (m_readout_thread.joinable()) m_readout_thread.join();
-		}
-		catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
-	}
-	
-	void assignImageHandler(void(*funct_ptr)(const cv::Mat&)) {
-		m_image_handler = funct_ptr;
-	}
+    // === NEW: SAVE A PICTURE AFTER X MILLISECONDS ===
+    void requestTimedSave(int ms) {
+        std::thread([this, ms]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            this->requestSave(1);
+            }).detach();
+    }
 
-	// Readout Frames are stored here. 
-	std::vector<cv::Mat> m_frames;
-
-	
-	void image_save() {
-		runtime_flags.set_true_imSave_flag();
-	}
-
-	void getDatastream(int i) {
-		m_datastream_A = m_dataStream.at(i);
-	}
-
-	
 private:
-	// Try to work with a function pointer this time for callback.
-	// While the m_funct_ptr is a member, the adresse it not owned by the class!
-	std::mutex m_acquisition_block;
-	void(*m_image_handler)(const cv::Mat&) = nullptr;
-	int camera_n{};
+    std::shared_ptr<Camera> m_camera;
+    std::shared_ptr<ImageStore> m_store;
+    std::shared_ptr<ScreenDisplay> m_display;
+    std::shared_ptr<defl::AcquisitionController> m_controller;
 
-	std::shared_ptr<peak::core::DataStream> m_datastream_A;
-	std::shared_ptr<peak::core::NodeMap> m_nodemapRemoteDevice_A;
-	//std::atomic<AcquisitionWorker::command> m_controll_variable{ command::stop };
-	std::thread m_readout_thread;
-	std::thread m_controller_thread;
+    std::thread m_thread;
+    std::atomic<bool> m_running{ false };
 
+    // === NEW: counter for pending save operations ===
+    std::atomic<int> m_pendingSaves{ 0 };
 
-	// Used by ~AcquisitioWorker() to close according Datastream()
-	void close() {
-		runtime_flags.set_false_acquisition_flag();
-		if (!m_datastream_A) {
-			try { m_datastream_A->StopAcquisition(); }
-			catch (...) {}
-		}
-		if (m_readout_thread.joinable()) m_readout_thread.join();
+    void loop() {
+        auto ds = m_camera -> dataStream(0);
+        auto nm = m_camera -> nodeMap(0);
 
-		// avoid self-join deadlock: only join process thread from a different thread
-		if (m_controller_thread.joinable()
-			&& std::this_thread::get_id() != m_controller_thread.get_id()) {
-			m_controller_thread.join();
-		}
-		//resetHandlers();
-	}
+        while (m_running.load()) {
+            try {
+                auto buffer = ds->WaitForFinishedBuffer(5000);
+                if (!buffer) continue;
 
+                cv::Mat view(buffer->Height(), buffer->Width(),
+                    CV_8UC1, (void*)buffer->BasePtr(), buffer->Width());
 
-	void run_readout() {
-		while (runtime_flags.get_acquisition_flag()) {
-			try {
-				//std::cout << "Visualize ";
-				const auto buffer = m_datastream_A->WaitForFinishedBuffer(5000); //could use peak::core::Timeout::INFINITE_TIMEOUT
-				
-				if (buffer) {
-					// Be carefull!!! view does NOT own the data. It is read directly from the buffer through 
-					// the void pointer, pointing to the first element of the Buffer. 
-					// Even more dangerous -> Void pointer used. At this point openCV does not know 
-					// if the image is Mono8 Mono10 or Mono12. 
-					cv::Mat view(buffer->Height(), buffer->Width(), CV_8UC1, (void*)buffer->BasePtr(), buffer->Width());
-					//Callback called
-					cv::cvtColor(view, view, cv::COLOR_BayerRG2GRAY); //Camera is BayerBG
-					cv::Mat rotated = rotImage180(view);
-					m_image_handler(rotated);
-					if (runtime_flags.get_imSave_flag()) {
-						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-						m_frames.push_back(rotated.clone());
-						runtime_flags.set_false_imSave_flag();
-						runtime_flags.set_true_save_process_finished();
-					}
-					//if (runtime_flags.get_acquisition_flag()) return;
-					m_datastream_A->QueueBuffer(buffer);
-					
-				}
-			}
-			catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }
-		}
-	}
+                // convert bayer to gray
+                cv::Mat gray;
+                cv::cvtColor(view, gray, cv::COLOR_BayerRG2GRAY);
 
-	void run_readout1() {
-		int n_pics{ 0 };
-		while (runtime_flags.get_acquisition_flag()) {
-			try {
-				//std::cout << "Visualize ";
-				const auto buffer = m_datastream_A->WaitForFinishedBuffer(5000); //could use peak::core::Timeout::INFINITE_TIMEOUT
+                cv::rotate(gray, gray, cv::ROTATE_180);
+                // Always store raw if wanted
+                //m_store->add(FrameRole::RawFrame, gray);
 
-				if (buffer) {
-					// Be carefull!!! view does NOT own the data. It is read directly from the buffer through 
-					// the void pointer, pointing to the first element of the Buffer. 
-					// Even more dangerous -> Void pointer used. At this point openCV does not know 
-					// if the image is Mono8 Mono10 or Mono12. 
-					cv::Mat view(buffer->Height(), buffer->Width(), CV_8UC1, (void*)buffer->BasePtr(), buffer->Width());
-					//Callback called
-					cv::cvtColor(view, view, cv::COLOR_BayerRG2GRAY); //Camera is BayerBG
-					cv::Mat rotated = rotImage180(view);
-					m_image_handler(rotated);
-					if (runtime_flags.get_imSave_flag()) {
-						std::unique_lock<std::mutex> lk_save(runtime_flags.save_mutex);
-						runtime_flags.set_false_imSave_flag();
-						//so the save function waits 
-						std::cout << "AcquisitionWorker image " << n_pics++ << "\n";
-						m_frames.push_back(rotated.clone());
-						lk_save.unlock();
+                // Show live preview
+                if (m_display)
+                    m_display->showCamera(gray);
 
-						runtime_flags.cv.notify_one();
-					}
-					//if (runtime_flags.get_acquisition_flag()) return;
-					m_datastream_A->QueueBuffer(buffer);
+                // === NEW: SAVE REQUEST LOGIC ===
+                int saveNow = m_pendingSaves.load();
+                if (saveNow > 0) {
+                    std::unique_lock m_img_save (m_controller->mtx);
+                    m_pendingSaves.fetch_sub(1);
+                    m_store->add(m_controller->mode, gray.clone());
+                    m_img_save.unlock();
+                    m_controller->cv.notify_one();
+                }
 
-				}
-			}
-			catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }
-		}
-	}
-
-	void resetHandlers() {
-		std::cout << "Image Handler (AcquisitionWorker) is set to null \n";
-		m_image_handler = nullptr;
-	}
+                ds->QueueBuffer(buffer);
+            }
+            catch (...) {
+            }
+        }
+    }
 };
 
-
-cv::Mat rotImage180(const cv::Mat& mat) {
-	int width = mat.cols; //no function just public member variable
-	int height = mat.rows;
-	cv::Vec<float, 2> center(float(width / 2.), float(height / 2.));
-	cv::Mat rot_Matrix = cv::getRotationMatrix2D(center, 180., 1.);
-	cv::Mat destination(height, width, CV_8UC1);
-	cv::warpAffine(mat, destination, rot_Matrix, destination.size());
-	return destination;
-}
-
-
-
-#endif //  ACUISITIONWORKER_H

@@ -127,61 +127,7 @@ private:
 		}
 	}
 };
-/*
-struct DisplayInformation {
-public:
-	int posx{}, posy{};
-	int width{}, height{};
 
-	float width_mm{ 527.04f }, height_mm{ 296.46f }, diagonal_mm{ 605.0f };
-	float pixelptich_mm{ 0.2745f };
-
-	float wavelength{}; //is given in number per 2pi
-
-
-	// Delete copy and move to prevent duplicates
-	DisplayInformation(const DisplayInformation&) = delete;
-	DisplayInformation& operator=(const DisplayInformation&) = delete;
-	DisplayInformation(DisplayInformation&&) = delete;
-	DisplayInformation& operator=(DisplayInformation&&) = delete;
-
-	// Static Member functions that holds static instance of the struct object. 
-	// The instance is returned by reference which leads to only one instance created in the file.
-	// The default constructor is private therefore can not be called from outside the class, only be the static member function. 
-	static DisplayInformation& instance() {
-		static DisplayInformation single_instance; // created once, on first call
-		single_instance.getDispalyInformation();
-		return single_instance;
-	}
-private:
-	DisplayInformation() = default;
-	void getDispalyInformation() {
-		DISPLAY_DEVICE dd;
-		dd.cb = sizeof(dd);
-		bool SecondDisplay{ false };
-
-		DEVMODE dm;
-		dm.dmSize = sizeof(dm);
-		if (!EnumDisplaySettings(dd.DeviceName, ENUM_CURRENT_SETTINGS, &dm)) {
-			std::cerr << "Could not get display settings.\n";
-			return;
-		}
-		else {
-			std::cerr << "No second display found.\n";
-			posx = 0;
-			posy = 0;
-			width = 1920;
-			height = 1080;
-			return;
-		}
-		// Be carefull second window position is just hardcoded!!
-		posx = 1920; //dm.dmPosition.x;
-		posy = dm.dmPosition.y; //normally 0
-		width = dm.dmPelsWidth;
-		height = dm.dmPelsHeight;
-	}
-};
-*/
 
 struct Flags {
 public:

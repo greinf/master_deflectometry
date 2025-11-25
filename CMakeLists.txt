@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 message (STATUS "[${PROJECT_NAME}] Processing ${CMAKE_CURRENT_LIST_FILE}")
 
+
+
 # Setup target executable with the same name as our project
 add_executable (${PROJECT_NAME}
     src/camera.cpp
@@ -14,6 +16,7 @@ add_executable (${PROJECT_NAME}
     src/main.cpp
     src/deflectometry.cpp
     src/imgProcessing.cpp
+    src/imageStore.cpp
 )
 
 # Find packages
@@ -52,6 +55,16 @@ target_link_libraries (${PROJECT_NAME}
     ${OpenCV_LIBS}
 )
 
+
+# Add include directory (root)
+target_include_directories(${PROJECT_NAME}
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/config
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/runtime
+)
+
+
 # Call deploy function
 # This function will add a post-build steps to your target in order to copy all needed files (e.g. DLL's) to the output directory.
 ids_peak_deploy(${PROJECT_NAME})
@@ -63,8 +76,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_EXTENSIONS NO
 )
 
-# Add include path
-include_directories(${CMAKE_SOURCE_DIR}/include)
+
 
 # Enable multiprocessing for MSVC
 if (MSVC)

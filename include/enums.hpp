@@ -13,6 +13,11 @@ enum class DisplayMode {
 	max_value
 };
 
+enum class UnwrapMode {
+	manually,
+	opencv,
+	max_value
+};
 
 enum class AcquisitionMode {
 	UserInput,

@@ -284,29 +284,8 @@ array<vector<Mat>, 2> runCameraCalibration(vector<Mat>& frames,
     float distanceOverride = -1.0f,
     int winSize = 11)
 {
-    /*
-    const String keys
-        = "{help h usage ? |           | print this message            }"
-        "{@settings      |default.xml| input setting file            }"
-        "{d              |           | actual distance between top-left and top-right corners of "
-        "the calibration grid }"
-        "{winSize        | 11        | Half of search window for cornerSubPix }";
-    CommandLineParser parser(argc, argv, keys);
-    parser.about("This is a camera calibration sample.\n"
-        "Usage: camera_calibration [configuration_file -- default ./default.xml]\n"
-        "Near the sample file you'll find the configuration file, which has detailed help of "
-        "how to edit it. It may be any OpenCV supported file format XML/YAML.");
-    if (!parser.check()) {
-        parser.printErrors();
-        return 0;
-    }
+   
 
-    if (parser.has("help")) {
-        parser.printMessage();
-        return 0;
-    }
-
-    */
     //! [file_read]
     //! 
     array<vector<Mat>, 2> frames_chessboard_pts{};
@@ -362,55 +341,7 @@ array<vector<Mat>, 2> runCameraCalibration(vector<Mat>& frames,
         release_object = true;
     }
     */
-    //create CharucoBoard
-    /*
-    cv::aruco::Dictionary dictionary;
-    if (s.calibrationPattern == Settings::CHARUCOBOARD) {
-        if (s.arucoDictFileName == "") {
-            cv::aruco::PredefinedDictionaryType arucoDict;
-            if (s.arucoDictName == "DICT_4X4_50") { arucoDict = cv::aruco::DICT_4X4_50; }
-            else if (s.arucoDictName == "DICT_4X4_100") { arucoDict = cv::aruco::DICT_4X4_100; }
-            else if (s.arucoDictName == "DICT_4X4_250") { arucoDict = cv::aruco::DICT_4X4_250; }
-            else if (s.arucoDictName == "DICT_4X4_1000") { arucoDict = cv::aruco::DICT_4X4_1000; }
-            else if (s.arucoDictName == "DICT_5X5_50") { arucoDict = cv::aruco::DICT_5X5_50; }
-            else if (s.arucoDictName == "DICT_5X5_100") { arucoDict = cv::aruco::DICT_5X5_100; }
-            else if (s.arucoDictName == "DICT_5X5_250") { arucoDict = cv::aruco::DICT_5X5_250; }
-            else if (s.arucoDictName == "DICT_5X5_1000") { arucoDict = cv::aruco::DICT_5X5_1000; }
-            else if (s.arucoDictName == "DICT_6X6_50") { arucoDict = cv::aruco::DICT_6X6_50; }
-            else if (s.arucoDictName == "DICT_6X6_100") { arucoDict = cv::aruco::DICT_6X6_100; }
-            else if (s.arucoDictName == "DICT_6X6_250") { arucoDict = cv::aruco::DICT_6X6_250; }
-            else if (s.arucoDictName == "DICT_6X6_1000") { arucoDict = cv::aruco::DICT_6X6_1000; }
-            else if (s.arucoDictName == "DICT_7X7_50") { arucoDict = cv::aruco::DICT_7X7_50; }
-            else if (s.arucoDictName == "DICT_7X7_100") { arucoDict = cv::aruco::DICT_7X7_100; }
-            else if (s.arucoDictName == "DICT_7X7_250") { arucoDict = cv::aruco::DICT_7X7_250; }
-            else if (s.arucoDictName == "DICT_7X7_1000") { arucoDict = cv::aruco::DICT_7X7_1000; }
-            else if (s.arucoDictName == "DICT_ARUCO_ORIGINAL") { arucoDict = cv::aruco::DICT_ARUCO_ORIGINAL; }
-            else if (s.arucoDictName == "DICT_APRILTAG_16h5") { arucoDict = cv::aruco::DICT_APRILTAG_16h5; }
-            else if (s.arucoDictName == "DICT_APRILTAG_25h9") { arucoDict = cv::aruco::DICT_APRILTAG_25h9; }
-            else if (s.arucoDictName == "DICT_APRILTAG_36h10") { arucoDict = cv::aruco::DICT_APRILTAG_36h10; }
-            else if (s.arucoDictName == "DICT_APRILTAG_36h11") { arucoDict = cv::aruco::DICT_APRILTAG_36h11; }
-            else {
-                cout << "incorrect name of aruco dictionary \n";
-                return 1;
-            }
-
-            dictionary = cv::aruco::getPredefinedDictionary(arucoDict);
-        }
-        else {
-            cv::FileStorage dict_file(s.arucoDictFileName, cv::FileStorage::Mode::READ);
-            cv::FileNode fn(dict_file.root());
-            dictionary.readDictionary(fn);
-        }
-    }
     
-    else {
-        // default dictionary
-        dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50);
-    }
-    
-    cv::aruco::CharucoBoard ch_board({ s.boardSize.width, s.boardSize.height }, s.squareSize, s.markerSize, dictionary);
-    cv::aruco::CharucoDetector ch_detector(ch_board);
-    */
 
 	//2D array of points in image plane.
     std::vector<int> markerIds;
@@ -517,48 +448,7 @@ array<vector<Mat>, 2> runCameraCalibration(vector<Mat>& frames,
 
             frames_chessboard_pts[0].push_back(view);
         }
-        //! [pattern_found]
-        //----------------------------- Output Text ------------------------------------------------
-  //      //! [output_text]
-  //      string msg = (mode == CAPTURING) ? "100/100" :
-  //          mode == CALIBRATED ? "Calibrated" : "Press 'g' to start";
-  //      int baseLine = 0;
-
-		//// Does necessary Steps to write text on image
-  //      Size textSize = getTextSize(msg, 1, 1, 1, &baseLine);
-  //      Point textOrigin(view.cols - 2 * textSize.width - 10, view.rows - 2 * baseLine - 10);
-
-  //      if (mode == CAPTURING)
-  //      {
-  //          if (s.showUndistorted)
-  //              msg = cv::format("%d/%d Undist", (int)imagePoints.size(), s.nrFrames);
-  //          else
-  //              msg = cv::format("%d/%d", (int)imagePoints.size(), s.nrFrames);
-  //      }
-
-  //      putText(view, msg, textOrigin, 1, 1, mode == CALIBRATED ? GREEN : RED);
-
-  //      if (blinkOutput)
-  //          bitwise_not(view, view);
-        //! [output_text]
-        //------------------------- Video capture  output  undistorted ------------------------------
-        //! [output_undistorted]
-        /*
-        if (mode == CALIBRATED && s.showUndistorted)
-        {
-            Mat temp = view.clone();
-            if (s.useFisheye)
-            {
-                Mat newCamMat;
-                fisheye::estimateNewCameraMatrixForUndistortRectify(cameraMatrix, distCoeffs, imageSize,
-                    Matx33d::eye(), newCamMat, 1);
-                cv::fisheye::undistortImage(temp, view, cameraMatrix, distCoeffs, newCamMat);
-            }
-            else
-                undistort(temp, view, cameraMatrix, distCoeffs);
-        }
-        */
-        //! [output_undistorted]
+        
         //------------------------------ Show image and check for input commands -------------------
         //! [await_input]
         imshow("Image View", view);

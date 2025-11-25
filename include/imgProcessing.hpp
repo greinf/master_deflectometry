@@ -1,8 +1,6 @@
 ﻿#ifndef IMGPROCESSING_H
 #define IMGPROCESSING_H
-
 #include "flagHandler.hpp"
-#include "imageHandler.hpp"
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <functional>
@@ -16,10 +14,14 @@
 #include <algorithm>
 #include <iterator>
 #include <cmath>
+#include <opencv2/core/hal/interface.h>
+#include <opencv2/core/traits.hpp>
+
+
 
 using CalibPairF = std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>>;
 using CalibPairD = std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>>;
-
+class ImageStore;
 
 struct calibrationData {
 	cv::Mat cameraMatrix;
@@ -67,7 +69,9 @@ public:
 
 
 	template<typename Type>
-	ImageProcessing(Type val) {
+	ImageProcessing(Type val, std::shared_ptr<ImageStore> imgStore)
+		:m_imgStore(imgStore)
+	{
 		++instance_counter;
 		try {
 			if (instance_counter > 1)
@@ -98,15 +102,36 @@ public:
 	T::Type current_type{ T::Type::error_t };
 	
 
-	void gray_value_calib(std::vector<cv::Mat>&);
+	std::vector<std::pair<double, double>> gray_value_calib(
+		const std::vector<cv::Mat>&, 
+		int pics_per_val, 
+		int stepwidth);
 
-	void wrapped_phase();
+	// Return a std::vector<cv:Mat> with 6 entries
+	// 0-1 Wrapped phase (horizontal - vertical)
+	// 1-2 Contrast (horizontal - vertical)
+	// 3-4 Base Intensity (horizontal - vertical)
+	std::vector<cv::Mat> do_wrapped_Phase(
+		const std::vector<cv::Mat>&, 
+		int n_pics_per_Phase,
+		int n_shifts);
 
-	cv::Mat createMask();
+
+	// Calculates Mask from both the contrast pictures
+	// Input 
+	// vec: 2 Images CV_64F double Horizontal / Vertical
+	// treshold: Threshold for binary mask. Encodes at which percentag of the maximum the boundarie is (0 ... 1)
+	// Output: CV_8U Picture, same size as Input
+	cv::Mat createMask(
+		const std::vector<cv::Mat>& vec,
+		double threshold);
+
 
 	void bayerToGray();
 
-	void unwrapped_phase();
+	std::vector<cv::Mat> unwrapped_phase(
+		const std::vector<cv::Mat>& wrapped_phase,
+		const std::vector<cv::Mat>& contrast);
 
 	void goldsteinUnwrap();
 
@@ -121,8 +146,14 @@ public:
 	void load_calib(std::string path);
 
 	void calc_reproject_error(bool visualizing);
-
-	void manual_phaseUnwrap();
+	 
+	// Function takes:
+	// wrapped = std::vector<cv::Mat> wrapped Phase horizontal + vertical -> 2 Images type: double
+	// contrast = std::vector<cv::Mat> contrast horizontal + vertical -> 2 Images type: double 
+	// n_shifts = int Information how many Shifts per 
+	std::vector<cv::Mat> manual_phaseUnwrap(
+		const std::vector<cv::Mat>& wrapped,
+		const std::vector<cv::Mat>& contrast);
 
 
 
@@ -232,7 +263,35 @@ public:
 	std::vector<double> extract_Row_reprojection(int x);
 	std::vector<double> extract_Row_unwrap(int x);
 
+	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> do_calibration_Points(
+		const std::vector<cv::Mat>& unwrapped,
+		const cv::Mat& mask,
+		const double wavelength,
+		const int gridX,
+		const int gridY,
+		const double pixel_pitch_mm,
+		const double screenWidth_mm,
+		const double screenHeight_mm
+	);
+
+	cv::Mat do_reprojection_error(
+		const std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>>& caliPoints,
+		const cv::Mat& caliMatrix,
+		const cv::Mat& distCoeffs,
+		const cv::Mat& rvec,
+		const cv::Mat& tvec,
+		double* sqrtErr,
+		double* maxErr,
+		const cv::Mat& mask
+		);
+
 private:	
+	//New class to hold the data
+	std::shared_ptr<ImageStore> m_imgStore;
+
+
+
+
 	static inline int instance_counter{ 0 };
 	std::vector<cv::Mat> m_frames{};
 	std::vector<cv::Mat> m_raw_phase{};
@@ -243,7 +302,7 @@ private:
 
 	void unwrap_column(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int colunn);
 
-	cv::Mat mean(std::vector<cv::Mat>&);
+	cv::Mat mean(const std::vector<cv::Mat>&);
 
 	std::array<cv::Mat, (std::size_t)2> m_s1{};
 	std::array<cv::Mat, (std::size_t)2> m_s2{};
@@ -418,8 +477,8 @@ private:
 	typename std::enable_if<is_vec_or_array<Container>::value, void>::type
 		save_png(const std::filesystem::path& path, const Container& c);
 		
-	// Three templates types are used, because at this point not clear which datatypes the camera calibration
-	// the PnP are returning and the user defined datatype T. 
+	 /*Three templates types are used, because at this point not clear which datatypes the camera calibration
+	 the PnP are returning and the user defined datatype T. */
 	template <typename T>
 	typename std::enable_if<
 		std::is_floating_point<T>::value,
@@ -495,7 +554,7 @@ private:
 		cv::Mat_<T> transform_inv = rot_inv* cam_inv;
 
 		cv::Mat error_visualizer2(m_mask.size(),
-			CV_MAKETYPE(cv::DataType<T>::type, 2),
+			CV_MAKETYPE(cv::DataType<T>::depth, 2),
 			cv::Scalar(0, 0));
 
 		for (std::size_t count = 0; count < homogen_imagePoints_undis.size(); ++count) {
@@ -533,8 +592,8 @@ private:
 
 		// MixChannels
 		cv::Mat out[2] = {
-			cv::Mat(error_visualizer2.size(), CV_MAKETYPE(cv::DataType<T>::type, 1)),
-			cv::Mat(error_visualizer2.size(), CV_MAKETYPE(cv::DataType<T>::type, 1))
+			cv::Mat(error_visualizer2.size(), CV_MAKETYPE(cv::DataType<T>::depth, 1)),
+			cv::Mat(error_visualizer2.size(), CV_MAKETYPE(cv::DataType<T>::depth, 1))
 		};
 		int from_to[] = { 0,0, 1,1 };
 		cv::mixChannels(&error_visualizer2, 1, out, 2, from_to, 2);
@@ -576,7 +635,7 @@ private:
 		//unsave reinterpretatoin
 		cv::Mat error_visualizer2_mat(
 			m_mask.size(),
-			CV_MAKETYPE(cv::DataType<T>::type, 2),
+			CV_MAKETYPE(cv::DataType<T>::depth, 1),
 			error_visualizer2.ptr()
 		);
 		*/
@@ -584,7 +643,7 @@ private:
 		/*cv::Mat error_visualizer2_mat;
 		error_visualizer2.convertTo(
 			error_visualizer2_mat,
-			CV_MAKETYPE(cv::DataType<T>::type, 2)
+			CV_MAKETYPE(cv::DataType<T>::depth, 1)
 		);*/
 
 		// *mainly to see the error of the grayvalue calibration (periodic errors)*

@@ -1,6 +1,5 @@
 #ifndef	DEFLECTOMETRY_H
 #define DEFLECTOMETRY_H
-
 #include <memory>
 #include <vector>
 #include <exception>
@@ -9,88 +8,161 @@
 #include <thread>
 #include <opencv2/opencv.hpp>
 
-
 //Forward Decleration Enums + Class
-enum class AcquisitionMode;
-enum class Shift_mode;
-enum class DisplayMode;
 
-class Screen;
+enum class Shift_mode;
+enum class FrameRole;
+enum class UnwrapMode;
+
+class Pattern;
 class AcquisitionWorker;
 class ImageProcessing;
+class ImageStore;
+class ScreenDisplay;
+namespace defl {
+	class AcquisitionController;
+	class PhaseShiftConfig;
+	class CameraConfig;
+}
 
 class Deflectometry {
 public:
 	 Deflectometry();
 
-	 void start_meassurement(Shift_mode, DisplayMode, int);
-	 void show_acquistion();
+	 //void phase_unwrap(bool save, const std::string& path);
+
+	 //void TestOptimal();
+	 //
+	 //void camera_calibration(int camera, std::string image_path);
+	 //
+	 //// Access Image Processing class, there all imgaes of the PhaseUnwrap are stored. 
+	 //// A .xml file is created at the given address, where the image data can be accesed. The
+	 //// data is stored in the original CV_32F format. Therefore not showable.
+	 //// Acces image files by creating a cv::FileStorage fs Instance at this point. and fs["std::string"] >> cv::Mat 
+	 //void save_frames(std::string&);
+
+	 //// Stores 8 bit images in .png / .jpg format. Images have to be given in in a uchar 8 bit with 1 or 3 channels, in 
+	 //// a vector<cv::Mat> format and the address where the files need to be stored. 
+	 //// If floating point images are given to this function, cv::imwrite will try to save them which leads to data loss. 
+	 //void save_frames(std::vector<cv::Mat>& frames, const std::string& path);
+
+	 //void calc_reproject_error(bool visualizing = true, bool saving = false, const std::string& path = "");
+
+	 //void load_frames(const std::string& path);
+	 //void load_calib(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_camera_calib.xml");
+
+	 //void load_gray_value_calib(const std::string& path);
+
+	 //void gray_value_apply();
+
+	 //void extract_Column(std::string path);
+
+	 //void extract_Line(std::string path);
+
+	 //std::pair<double, double> fitLine1D(const std::vector<double>& y);
+	 //
+	 //void manual_phaseUnwrap();
+
+
 	 
-	 void phase_unwrap(bool save, const std::string& path);
+	 // Method to Acquire the phase Shifted pictures. 
+	 // Shift_mode: classifies wich shift mode is used 4 Shift mode or user defined
+	 // n_pics: how many pictures per Phase picture
+	 // save: Boolean value if the pictures should be saved. 
+	 // number_of_Periods: Classfies the wavelength of the pattern by specifing the number
+	 // of Waves on the y-axis
+	 std::vector<cv::Mat> do_phase_measurement(Shift_mode,
+		 int n_pics,
+		 bool save,
+		 const std::string& save_path,
+		 int number_of_perdios = 7);
 
-	 void TestOptimal();
-	 
-	 void camera_calibration(int camera, std::string image_path);
-	 
-	 // Access Image Processing class, there all imgaes of the PhaseUnwrap are stored. 
-	 // A .xml file is created at the given address, where the image data can be accesed. The
-	 // data is stored in the original CV_32F format. Therefore not showable.
-	 // Acces image files by creating a cv::FileStorage fs Instance at this point. and fs["std::string"] >> cv::Mat 
-	 void save_frames(std::string&);
+	 std::vector<cv::Mat> do_wrapped_phase(
+		 const std::vector<cv::Mat>& vec,
+		 int n_pics_perPhase,
+		 int n_shifts,
+		 bool save,
+		 const std::string& path_save);
 
-	 // Stores 8 bit images in .png / .jpg format. Images have to be given in in a uchar 8 bit with 1 or 3 channels, in 
-	 // a vector<cv::Mat> format and the address where the files need to be stored. 
-	 // If floating point images are given to this function, cv::imwrite will try to save them which leads to data loss. 
-	 void save_frames(std::vector<cv::Mat>& frames, const std::string& path);
+	 std::vector<cv::Mat> do_unwrapped_phase(
+		 const std::vector<cv::Mat>& wrapped,
+		 const std::vector<cv::Mat>& contrast,
+		 UnwrapMode mode,
+		 bool save,
+		 const std::string& save_path
+	 );
 
-	 void calc_reproject_error(bool visualizing = true, bool saving = false, const std::string& path = "");
 
-	 void load_frames(const std::string& path);
-	 void generatePattern();
-	 void load_calib(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_camera_calib.xml");
+	 std::vector<cv::Mat> do_reprojection(
+		 const std::vector<cv::Mat>& unwrapped,
+		 const std::vector<cv::Mat>& contrast, 
+		 const std::vector<cv::Mat>& cam_Matrix,
+		 const std::vector<cv::Mat>& dist_Coeffs,
+		 const double wavelength,
+		 const int grid_points_x,
+		 const int grid_points_y,
+		 const double pixel_pitch,
+		 bool save, 
+		 const std::string& save_path,
+		 const double screen_width,
+		 const double screen_height
+	 );
 
-	 void grayValueCalib(int camera = 0);
 
-	 void saveResponseCurve(const std::string& filename);
-	 void load_gray_value_calib(const std::string& path);
 
-	 void gray_value_apply();
 
-	 void extract_Column(std::string path);
+	 // Function to create GrayValue calibration. 
+	 // n_pics_per_value: the ammount of pictures taken per gray value
+	 // save_path: The path where the LUT is stored as a .csv file
+	 bool do_grayvalue_calibration(
+		 int n_pics_per_value,
+		 std::string save_path);
 
-	 void extract_Line(std::string path);
+	 bool do_camera_calibration();
 
-	 std::pair<double, double> fitLine1D(const std::vector<double>& y);
-	 
-	 void manual_phaseUnwrap();
+	 void load(FrameRole, const std::string&);
 
+	 std::vector<cv::Mat> Deflectometry::get(FrameRole role);
+
+	 void setupPattern(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22");
+
+	 /*void loadPhaseConfig(const std::string& path);*/
 
 private:
-	std::shared_ptr<Screen> m_screen{nullptr};
+	std::shared_ptr<ImageStore> m_img_store{ nullptr };
+	std::shared_ptr<Pattern> m_pattern{nullptr};
 	std::shared_ptr<AcquisitionWorker> m_acquisition_worker{ nullptr };
 	std::shared_ptr<ImageProcessing> m_img_processing{ nullptr };
-	std::thread img_handler_thread;
-
-	std::vector<std::pair<double, double>> m_LUT;
-
-	// Contoller_thread that is used to oversee the acquisition of camera frames
-	// druing the meassurment. This is done by UserInput.
-	void controller_userInput();
-
-	std::vector<cv::Mat> m_optimalFrames;
-	std::vector<cv::Mat> m_optimalPhase;
-
-
-	void saveSliceToCSV(const std::string& filename,
-		const std::vector<double>& unwrap,
-		const std::pair<double, double>& unwrapFit,// regressions a,b unwrap
-		const std::vector<double>& repro,
-		const std::pair<double, double>& reproFit);
+	std::shared_ptr<ScreenDisplay> m_screenDisplay{ nullptr };
+	std::shared_ptr<defl::AcquisitionController> m_acquisition_controller;
 	
-	// Controller thread for automatic acquisaition. Default argument is ammount of pictures taken per 
-	// Meassurment. Information about ammount of shift_steps is saved in flagHandler.hpp.
-	void controller_automatic(std::unique_lock<std::mutex>&& lk_pattern, std::unique_lock<std::mutex>&& lk_save);
-	void controller_automatic_gray(std::unique_lock<std::mutex>&& lk_pattern, std::unique_lock<std::mutex>&& lk_save);
+	std::vector<std::shared_ptr<defl::PhaseShiftConfig>> m_pattern_config{};
+	std::vector<std::shared_ptr<defl::CameraConfig>> m_camera_config{};
+
+	// Methods to connect and Setup Hardware -> Camera and Acquisitionworker class get Setup
+	bool init();
+
+	// Class to disconnect from Hardware -> Camera and Acquisitionworker get set to nullptr
+	bool disconnect();
+
+	//bool capture_single_frame(FrameRole role);
+
+	// --- End -----
+
+
+
+	//// Contoller_thread that is used to oversee the acquisition of camera frames
+	//// druing the meassurment. This is done by UserInput.
+	//void controller_userInput();
+
+	//std::vector<cv::Mat> m_optimalFrames;
+	//std::vector<cv::Mat> m_optimalPhase;
+
+	//void saveSliceToCSV(const std::string& filename,
+	//	const std::vector<double>& unwrap,
+	//	const std::pair<double, double>& unwrapFit,// regressions a,b unwrap
+	//	const std::vector<double>& repro,
+	//	const std::pair<double, double>& reproFit);
 	
 };
 
