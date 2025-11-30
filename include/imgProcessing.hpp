@@ -116,6 +116,11 @@ public:
 		int n_pics_per_Phase,
 		int n_shifts);
 
+	cv::Vec2d newtonSolverUndistort(
+		const cv::Vec2d& coordiantes,
+		const cv::Mat& cam_Matrix,
+		const cv::Mat& dist_coeffs
+	);
 
 	// Calculates Mask from both the contrast pictures
 	// Input 
@@ -126,6 +131,9 @@ public:
 		const std::vector<cv::Mat>& vec,
 		double threshold);
 
+	cv::Mat ImageProcessing::distortImage(const cv::Mat& img,
+		const cv::Mat& K,
+		const cv::Mat& distCoeffs);
 
 	void bayerToGray();
 
@@ -134,6 +142,8 @@ public:
 		const std::vector<cv::Mat>& contrast);
 
 	void goldsteinUnwrap();
+
+	std::pair<double, double> ImageProcessing::fitLine1D(const std::vector<double>& y);
 
 	// This function saves uncompressed images to a .xml file. This allows for storing of floating point values. 
 	void saveImages(const std::string& path);
@@ -156,6 +166,9 @@ public:
 		const std::vector<cv::Mat>& contrast);
 
 
+	std::vector<double> ImageProcessing::extract_Column(const cv::Mat& picture, const cv::Mat& mask, int col = 0);
+
+	std::vector<double> ImageProcessing::extract_Line(const cv::Mat& picture, const cv::Mat& mask, int row = 0);
 
 	std::array<cv::Mat, (std::size_t) 2> m_baseIntensity;
 	std::array<cv::Mat, (std::size_t) 2> m_contrast;

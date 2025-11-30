@@ -158,6 +158,30 @@ Deflectometry::Deflectometry() {
 	
 }
 
+
+
+auto nearly_equal = [&](double a, double b) {
+	double eps = 1e-9;
+	return std::abs(a - b) < eps;
+	};
+
+
+bool Deflectometry::check_synthaticall_points(const std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>>& pts) {
+	CV_Assert(pts.first.size() == pts.second.size());
+	int counter{ 0 };
+	for (std::size_t i = 0; i < pts.first.size(); ++i) {
+		if (!nearly_equal(pts.first[i][0], pts.second[i][0]) ||
+			!nearly_equal(pts.first[i][1], pts.second[i][1]))
+		{
+			std::cout << "ImagePoints: " << pts.first[i] << '\n';
+			std::cout << "ObjectPoints: " << pts.second[i] << '\n';
+			++counter;
+		}
+	}
+	return (counter > 0) ? (false) : (true);
+}
+
+
 std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const std::vector<cv::Mat>& unwrapped,
 	const std::vector<cv::Mat>& contrast,
@@ -172,7 +196,7 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const double screen_width,
 	const double screen_height) 
 {
-	cv::Mat mask = m_img_processing->createMask(contrast, 0.5);
+	/*cv::Mat mask = m_img_processing->createMask(contrast, 0.5);
 
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
@@ -183,23 +207,46 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			grid_points_y,
 			pixel_pitch,
 			screen_width,
-			screen_height);
+			screen_height);*/
 
+	// --- Set to 0 for debugging --- 
+	cv::Mat mask = m_img_processing->createMask(unwrapped, 0);
+
+	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
+		m_img_processing->do_calibration_Points(
+			unwrapped,
+			mask,
+			wavelength,
+			grid_points_x,
+			grid_points_y,
+			1,
+			screen_width,
+			screen_height
+		);
+
+	if (check_synthaticall_points(calibrationPoints)) std::cout << "Happy Calibration Points ";
+	else std::cout << "Not so happy ";
+	// --- For debugging --
+	cv::Mat synthetical_camera_matrix = cv::Mat::eye(3, 3, CV_64F); 
+	cv::Mat synthetical_distortion = cv::Mat::zeros(dist_Coeffs[0].size(), CV_64F);
+	// --- end ---
 	cv::Mat rvec, tvec;
 	bool ok = cv::solvePnP(calibrationPoints.second, calibrationPoints.first,
-		cam_Matrix[0], dist_Coeffs[0], rvec, tvec,
+		synthetical_camera_matrix, synthetical_distortion, rvec, tvec,
 		false,
 		cv::SOLVEPNP_ITERATIVE);
 	if (!ok) throw std::runtime_error("solvePnP failed.");
 	std::cout << "Translation vec " << cv::norm(tvec) << '\n';
+
+	std::cout << "Rotation Vector " << rvec << '\n';
 
 	double sqrt_err, max_err;
 
 	cv::Mat reprojection_img = m_img_processing->
 		do_reprojection_error(
 			calibrationPoints, 
-			cam_Matrix[0],
-			dist_Coeffs[0],
+			synthetical_camera_matrix,
+			synthetical_distortion,
 			rvec,
 			tvec,
 			&sqrt_err,
@@ -223,6 +270,77 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	return xy;
 }
 
+cv::Mat Deflectometry::distortImage(const cv::Mat& img, const cv::Mat& cam_Matrix, const cv::Mat& dist_Coeffs) {
+
+	cv::Size imageSize = img.size();
+	//cv::Mat distorted = m_img_processing->distortImage(img, cam_Matrix, dist_Coeffs);
+	cv::Mat distorted;
+	cv::undistort(img, distorted, cam_Matrix, dist_Coeffs, cv::noArray());
+
+	m_img_store->add(FrameRole::Debug, distorted);
+	cv::Mat undistort, undistort1;
+	cv::Mat distorted64;
+	distorted.convertTo(distorted64, CV_64F);
+	cv::Mat disto = (cv::Mat_<double>(1, 5) << 1.0E-5, 0.006, 0.0, 0.0, 0.0);
+	cv::Mat map1, map2;
+	cv::initUndistortRectifyMap(
+		cam_Matrix, dist_Coeffs, Mat(),
+		getOptimalNewCameraMatrix(cam_Matrix, dist_Coeffs, imageSize, 1, imageSize, 0), imageSize,
+		CV_16SC2, map1, map2);
+	cv::remap(img, undistort, map1, map2, INTER_LINEAR);
+
+
+	m_img_store->add(FrameRole::Debug, undistort);
+
+	m_img_store->add(FrameRole::Debug, undistort1);
+	m_img_store->show(FrameRole::Pattern);
+	m_img_store->show(FrameRole::Debug);
+	return distorted;
+}
+
+cv::Mat Deflectometry::distortImage_manual(
+	const cv::Mat& img,
+	const cv::Mat& cam_Matrix,
+	const cv::Mat& dist_Coeffs)
+{
+	CV_Assert(img.rows > 2 && img.cols > 2);
+	CV_Assert(dist_Coeffs.rows > 0);
+	CV_Assert(cam_Matrix.rows == 3, cam_Matrix.cols == 3);
+	cv::Mat mapx(img.size(), CV_64F, cv::Scalar(0)), mapy(img.size(), CV_64F, cv::Scalar(0));
+
+	for (int row = 0; row < img.rows; ++row) {
+		double* ptr_x = mapx.ptr<double>(row);
+		double* ptr_y = mapy.ptr<double>(row);
+		for (int cols = 0; cols < img.cols; ++cols) {
+			//cv::Vec2d distorted = newtonSolver(cv::Vec2d(row, cols), )
+			cv::Vec2d distorted_coordinates =
+				m_img_processing->newtonSolverUndistort(cv::Vec2d(cols, row), cam_Matrix, dist_Coeffs);
+			ptr_x[cols] = distorted_coordinates[0];
+			ptr_y[cols] = distorted_coordinates[1];
+		}
+	}
+	cv::Mat distorted;
+	cv::Mat img32, mapx32, mapy32;
+	img.convertTo(img32, CV_32F);
+	mapx.convertTo(mapx32, CV_32F);
+	mapy.convertTo(mapy32, CV_32F);
+
+	cv::remap(img32, distorted, mapx32, mapy32, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+	m_img_store->add(FrameRole::Debug, distorted);
+	m_img_store->show(FrameRole::Debug);
+	return distorted;
+}
+
+
+
+
+
+void Deflectometry::get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2)
+{
+	cv::Mat difference = mat1 - mat2;
+	m_img_store->add(FrameRole::Debug, difference);
+	m_img_store->show(FrameRole::Debug);
+}
 
 bool Deflectometry::init() {
 	try {
@@ -244,6 +362,8 @@ bool Deflectometry::init() {
 	}
 	catch (std::exception& e) { std::cout << "EXCEPTION: " << e.what() << std::endl; return false; }
 }
+
+
 
 bool Deflectometry::disconnect() {
 	try {
@@ -284,6 +404,20 @@ std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 
 	return unwrappedPhase;
 }
+
+std::vector<cv::Mat> Deflectometry::generatePattern(bool save, const std::string& path) {
+	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", false);
+	m_pattern->generate_phaseShift(Shift_mode::four_phase_shift, 10);
+
+	std::vector<cv::Mat> pattern_double = m_img_store->get(FrameRole::PatternDouble);
+	if (save)
+		m_img_store->saveRoleXML(FrameRole::PatternDouble, path);
+	
+	m_img_store->show(FrameRole::PatternDouble);
+	return pattern_double;
+}
+
+
 
 std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 	Shift_mode mode,
@@ -417,13 +551,11 @@ std::vector<cv::Mat> Deflectometry::do_wrapped_phase(
 }
 
 
-
-
-void Deflectometry::setupPattern(std::string path) {
+void Deflectometry::setupPattern(std::string path, bool useLUT) {
 	m_pattern = std::make_shared<Pattern>(1080, 1920, m_img_store);
 	m_img_store->loadRoleXML(FrameRole::GrayLUT, path);
 	std::vector<std::pair<double, double>> Lut = m_img_store->getLut();
-	if (!Lut.empty()) {
+	if (!Lut.empty() && useLUT) {
 		m_pattern->load_gray_calib_data(std::move(Lut));
 		std::cout << "LUT loaded and ready \n";
 	}
@@ -509,6 +641,7 @@ bool Deflectometry::do_grayvalue_calibration(
 
 	return true;
 }
+
 
 
 bool Deflectometry::do_camera_calibration()
@@ -625,26 +758,7 @@ bool Deflectometry::do_camera_calibration()
 //	m_img_processing->manual_phaseUnwrap();
 //}
 //
-//void Deflectometry::save_frames(std::vector<cv::Mat>& frames, const std::string& path) {
-//	int counter = 0;
-//	std::filesystem::path p(path);
-//	//Use ternary operator with side effect -> comma operator, to achieve same return type
-//	//std::filesystem::exists(p) ? (std::cout << "Path exists! \n", true) : (std::filesystem::create_directory(p), true); //ternary operator must in each path return same kind of value
-//
-//	//Or use lambda expressions because have same datatype
-//	//std::filesystem::exists(p) ? []() {std::cout << "path exists! \n"; } : 
-//	//	[&]() {std::filesystem::create_directory(p); std::cout << "Path created! \n"; }();
-//
-//	// Create a callable lambda that checks and creates directory
-//	check_create_dir(std::move(p));
-//
-//	for (const auto& frame : frames) {
-//		std::string file_path = path + "/frame_" + std::to_string(counter) + ".png";
-//		cv::imwrite(file_path, frame);
-//		++counter;
-//	}
-//}
-//
+
 
 //
 
@@ -722,32 +836,5 @@ bool Deflectometry::do_camera_calibration()
 //}
 //
 //
-//void Deflectometry::extract_Column(std::string path) {
-//	int cols{ (m_img_processing->m_unwrapped_phase[0].cols / 2) };
-//	
-//	std::vector<double> repro_column = m_img_processing->extract_Column_reprojection(cols);
-//	std::vector<double> unwrap_column = m_img_processing->extract_Column_unwrap(cols);
-//	
-//	auto fit_unwrap = fitLine1D(unwrap_column);
-//	auto fit_repro = fitLine1D(repro_column);
-//
-//	saveSliceToCSV(path,
-//		unwrap_column, fit_unwrap,
-//		repro_column, fit_repro);
-//}
-//
-//
-//void Deflectometry::extract_Line(std::string path) {
-//	int rows{ (m_img_processing->m_unwrapped_phase[0].rows / 2) };
-//	std::vector<double> repro_row = m_img_processing->extract_Row_reprojection(rows);
-//	std::vector<double> unwrap_row = m_img_processing->extract_Row_unwrap(rows);
-//
-//	auto fit_unwrap = fitLine1D(unwrap_row);
-//	auto fit_repro = fitLine1D(unwrap_row);
-//
-//	saveSliceToCSV(path,
-//		unwrap_row, fit_unwrap,
-//		repro_row, fit_repro);
-//
-//}
+
 //

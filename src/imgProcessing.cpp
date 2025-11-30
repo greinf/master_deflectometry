@@ -66,6 +66,9 @@ ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(cv::Mat& mat) const {
     return helper;
 }
 
+
+
+
 std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_calibration_Points(
     const std::vector<cv::Mat>& unwrapped,
     const cv::Mat& mask,
@@ -133,6 +136,67 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
     cv::waitKey(0);
     return output;
 }
+
+
+std::vector<double> ImageProcessing::extract_Column(const cv::Mat& picture, const cv::Mat& mask, int col) {
+    CV_Assert(picture.size() == mask.size());
+    CV_Assert(picture.type() == CV_64FC1);
+    CV_Assert(picture.channels() == 1);
+    CV_Assert(mask.type() == CV_8U);
+
+    if(!col) col = (picture.cols / 2);
+           
+    std::vector<double> column_vec;
+
+    for (int row = 0; row < picture.rows; ++row) {
+        const double* ptr_pic = picture.ptr<double>(row);
+        const uchar* ptr_mask = mask.ptr<uchar>(row);
+        if (*ptr_mask) column_vec.push_back(ptr_pic[col]);
+    }
+
+    return column_vec;
+}
+
+
+std::vector<double> ImageProcessing::extract_Line(const cv::Mat& picture, const cv::Mat& mask, int row) {
+    CV_Assert(picture.size() == mask.size());
+    CV_Assert(picture.type() == CV_64FC1);
+    CV_Assert(picture.channels() == 1);
+    CV_Assert(mask.type() == CV_8U);
+
+    if (!row) row = (picture.rows / 2);
+
+    std::vector<double> column_vec;
+
+    for (int row = 0; row < picture.rows; ++row) {
+        const double* ptr_pic = picture.ptr<double>(row);
+        const uchar* ptr_mask = mask.ptr<uchar>(row);
+        if (*ptr_mask) column_vec.push_back(ptr_pic[row]);
+    }
+
+    return column_vec;
+}
+
+std::pair<double, double> ImageProcessing::fitLine1D(const std::vector<double>& y) {
+    CV_Assert(!y.empty());
+    const std::size_t N = static_cast<std::size_t>(y.size());
+    double sumx = 0.0, sumy = 0.0, sumxx = 0.0, sumxy = 0.0;
+    
+    for (std::size_t i = 0; i < N; ++i) {
+    	double x = static_cast<double>(i);
+    	double v = y[i];
+    	sumx += x;
+    	sumy += v;
+    	sumxx += x * x;
+    	sumxy += x * v;
+    }
+    
+    double denom = N * sumxx - sumx * sumx;
+    double a = (N * sumxy - sumx * sumy) / denom;
+    double b = (sumy - a * sumx) / N;
+    
+    return { a, b };
+    }
 
 cv::Mat ImageProcessing::do_reprojection_error(
     const std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>>& caliPoints,
@@ -234,6 +298,159 @@ cv::Mat ImageProcessing::do_reprojection_error(
 
     return error_map;
 }
+
+cv::Mat ImageProcessing::distortImage(const cv::Mat& img,
+    const cv::Mat& K,
+    const cv::Mat& distCoeffs)
+{
+    int W = img.cols;
+    int H = img.rows;
+
+    cv::Mat map_x(H, W, CV_32F);
+    cv::Mat map_y(H, W, CV_32F);
+
+    double fx = K.at<double>(0, 0);
+    double fy = K.at<double>(1, 1);
+    double cx = K.at<double>(0, 2);
+    double cy = K.at<double>(1, 2);
+
+    double k1 = distCoeffs.at<double>(0, 0);
+    double k2 = distCoeffs.at<double>(1, 0);
+    double p1 = distCoeffs.at<double>(2, 0);
+    double p2 = distCoeffs.at<double>(3, 0);
+    double k3 = distCoeffs.cols >= 5 ? distCoeffs.at<double>(4, 0) : 0.0;
+
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+
+            // --- Normalize in Camera Coordinates
+            double x_u = (x - cx) / fx;
+            double y_u = (y - cy) / fy;
+
+            double r2 = x_u * x_u + y_u * y_u;
+            double r4 = r2 * r2;
+            double r6 = r4 * r2;
+
+            double radial = 1 + k1 * r2 + k2 * r4 + k3 * r6;
+
+            // see lateral + radial distortion 
+            double x_d = x_u * radial + 2 * p1 * x_u * y_u + p2 * (r2 + 2 * x_u * x_u);
+            double y_d = y_u * radial + p1 * (r2 + 2 * y_u * y_u) + 2 * p2 * x_u * y_u;
+
+            // back to pixels
+            map_x.at<float>(y, x) = fx * x_d + cx;
+            map_y.at<float>(y, x) = fy * y_d + cy;
+        }
+    }
+
+    cv::Mat img32;
+    img.convertTo(img32, CV_32F);
+
+    cv::Mat distorted;
+    cv::remap(img32, distorted, map_x, map_y, cv::INTER_LINEAR);
+
+    return distorted;
+}
+
+cv::Vec2d ImageProcessing::newtonSolverUndistort(
+    const cv::Vec2d& pixelCoords,   // (u_d, v_d) verzerrt in Pixeln
+    const cv::Mat& cam_Matrix,
+    const cv::Mat& dist_coeffs)
+{
+    // --- Basic sanity checks ---
+    CV_Assert(cam_Matrix.type() == CV_64F);
+    CV_Assert(cam_Matrix.rows == 3 && cam_Matrix.cols == 3);
+    CV_Assert(dist_coeffs.type() == CV_64F);
+    CV_Assert(dist_coeffs.total() >= 4);       // mind. k1, k2, p1, p2
+
+    // --- Intrinsics ---
+    const double fx = cam_Matrix.at<double>(0, 0);
+    const double fy = cam_Matrix.at<double>(1, 1);
+    const double cx = cam_Matrix.at<double>(0, 2);
+    const double cy = cam_Matrix.at<double>(1, 2);
+
+    // --- Distortion coefficients (k1,k2,p1,p2[,k3]) ---
+    const double* dptr = dist_coeffs.ptr<double>(0);
+    const double k1 = dptr[0];
+    const double k2 = dptr[1];
+    const double p1 = dptr[2];
+    const double p2 = dptr[3];
+    const double k3 = (dist_coeffs.total() > 4) ? dptr[4] : 0.0;
+
+    // --- Distorted pixel coordinates (u_d, v_d) ---
+    const double u_d = pixelCoords[0];
+    const double v_d = pixelCoords[1];
+
+    // --- Convert to normalized distorted coordinates (x_d, y_d) ---
+    const double x_d = (u_d - cx) / fx;
+    const double y_d = (v_d - cy) / fy;
+
+    // --- Initial guess for undistorted normalized coordinates (x_u, y_u) ---
+    double x_u = x_d;
+    double y_u = y_d;
+
+    // --- Newton iteration ---
+    for (int iter = 0; iter < 5; ++iter) {
+        // Radius
+        const double r2 = x_u * x_u + y_u * y_u;
+        const double r4 = r2 * r2;
+        const double r6 = r4 * r2;
+
+        // Radial term
+        const double L = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+        const double dLdr2 = k1 + 2.0 * k2 * r2 + 3.0 * k3 * r4;
+        const double Lx = 2.0 * x_u * dLdr2;
+        const double Ly = 2.0 * y_u * dLdr2;
+
+        // Tangential distortion
+        const double tx = 2.0 * p1 * x_u * y_u + p2 * (r2 + 2.0 * x_u * x_u);
+        const double ty = p1 * (r2 + 2.0 * y_u * y_u) + 2.0 * p2 * x_u * y_u;
+
+        // Tangential derivatives
+        const double dtxdx = 2.0 * p1 * y_u + 6.0 * p2 * x_u;
+        const double dtxdy = 2.0 * p1 * x_u + 2.0 * p2 * y_u;
+        const double dtydx = 2.0 * p1 * x_u + 2.0 * p2 * y_u;
+        const double dtydy = 6.0 * p1 * y_u + 2.0 * p2 * x_u;
+
+        // Forward distortion of current (x_u, y_u)
+        const double fx = x_u * L + tx;
+        const double fy = y_u * L + ty;
+
+        // Residual: f(x_u, y_u) - (x_d, y_d) = 0
+        const double R_x = fx - x_d;
+        const double R_y = fy - y_d;
+
+        // Jacobian matrix entries
+        const double a = L + x_u * Lx + dtxdx;   // ∂f_x / ∂x_u
+        const double b = x_u * Ly + dtxdy;       // ∂f_x / ∂y_u
+        const double c = y_u * Lx + dtydx;       // ∂f_y / ∂x_u
+        const double d = L + y_u * Ly + dtydy;   // ∂f_y / ∂y_u
+
+        const double det = a * d - b * c;
+        if (std::abs(det) < 1e-18) {
+            break; // numerisch instabil -> abbrechen
+        }
+
+        // Newton step Δx, Δy (solve J * Δ = R)
+        const double dx = (d * R_x - b * R_y) / det;
+        const double dy = (-c * R_x + a * R_y) / det;
+
+        x_u -= dx;
+        y_u -= dy;
+
+        if (dx * dx + dy * dy < 1e-18) {
+            break; // konvergiert
+        }
+    }
+
+    // --- Back to pixel coordinates (u_undist, v_undist) ---
+    const double u_undist = fx * x_u + cx;
+    const double v_undist = fy * y_u + cy;
+
+    return cv::Vec2d(u_undist, v_undist);
+}
+
+
 
 std::vector<cv::Mat> ImageProcessing::do_wrapped_Phase(const std::vector<cv::Mat>& vec,
     int n_pics_perPhase,

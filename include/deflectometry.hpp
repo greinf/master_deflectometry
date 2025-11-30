@@ -34,12 +34,7 @@ public:
 	 //void TestOptimal();
 	 //
 	 //void camera_calibration(int camera, std::string image_path);
-	 //
-	 //// Access Image Processing class, there all imgaes of the PhaseUnwrap are stored. 
-	 //// A .xml file is created at the given address, where the image data can be accesed. The
-	 //// data is stored in the original CV_32F format. Therefore not showable.
-	 //// Acces image files by creating a cv::FileStorage fs Instance at this point. and fs["std::string"] >> cv::Mat 
-	 //void save_frames(std::string&);
+	
 
 	 //// Stores 8 bit images in .png / .jpg format. Images have to be given in in a uchar 8 bit with 1 or 3 channels, in 
 	 //// a vector<cv::Mat> format and the address where the files need to be stored. 
@@ -61,7 +56,7 @@ public:
 
 	 //std::pair<double, double> fitLine1D(const std::vector<double>& y);
 	 //
-	 //void manual_phaseUnwrap();
+
 
 
 	 
@@ -109,8 +104,6 @@ public:
 	 );
 
 
-
-
 	 // Function to create GrayValue calibration. 
 	 // n_pics_per_value: the ammount of pictures taken per gray value
 	 // save_path: The path where the LUT is stored as a .csv file
@@ -124,9 +117,17 @@ public:
 
 	 std::vector<cv::Mat> Deflectometry::get(FrameRole role);
 
-	 void setupPattern(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22");
+	 void setupPattern(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", bool useLUT = true);
 
 	 /*void loadPhaseConfig(const std::string& path);*/
+
+	 std::vector<cv::Mat> generatePattern(bool save, const std::string& path);
+
+	 void get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2); 
+
+	 cv::Mat distortImage(const cv::Mat&, const cv::Mat& cam_Matrix, const cv::Mat& dist_coeffs);
+
+	 cv::Mat distortImage_manual(const cv::Mat& img, const cv::Mat& cam_Matrix, const cv::Mat& dist_coeffs);
 
 private:
 	std::shared_ptr<ImageStore> m_img_store{ nullptr };
@@ -147,13 +148,9 @@ private:
 
 	//bool capture_single_frame(FrameRole role);
 
+	bool check_synthaticall_points(const std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>>&);
 	// --- End -----
 
-
-
-	//// Contoller_thread that is used to oversee the acquisition of camera frames
-	//// druing the meassurment. This is done by UserInput.
-	//void controller_userInput();
 
 	//std::vector<cv::Mat> m_optimalFrames;
 	//std::vector<cv::Mat> m_optimalPhase;

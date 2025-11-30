@@ -23,6 +23,11 @@ int main()
 
     std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23" };
 
+   
+
+    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_out_camera_data_First_real_calib.xml" };
+    //meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
+
     /*std::vector<cv::Mat> raw_phase = 
         meassure.do_phase_measurement(Shift_mode::four_phase_shift, 5, true, path, 10);*/
 
@@ -33,14 +38,40 @@ int main()
     /*std::vector<cv::Mat> wrappedPhase =
         meassure.do_wrapped_phase(raw_input, 5, 4, true, path);*/
 
-    meassure.load(FrameRole::WrappedPhase, path);
-    std::vector<cv::Mat> wrappedPhase = meassure.get(FrameRole::WrappedPhase);
+    /*meassure.generatePattern(true, path);*/
+
+    meassure.load(FrameRole::PatternDouble, path);
+
+    std::vector<cv::Mat> pattern = meassure.get(FrameRole::PatternDouble);
+    /*std::vector<cv::Mat> cam_Matrix = meassure.get(FrameRole::CalibrationMatrix);
+    std::vector<cv::Mat> dist_coeffs = meassure.get(FrameRole::DistortionCoeff);*/
+
+    cv::Mat img = pattern[0];
+
+    cv::Mat cam_Matrix = cv::Mat::eye(3, 3, CV_64F);
+    cam_Matrix *= 800;
+    cam_Matrix.at<double>(0, 2) = img.cols / 2.0;
+    cam_Matrix.at<double>(1, 2) = img.rows / 2.0;
+    cam_Matrix.at<double>(2, 2) = 1;
+    cv::Size imageSize = img.size();
+    std::vector<double> dist_coeff{ -1.0E-5 , -0.006, 0.0 , 0.0, 0.0 };
+    cv::Mat dist_coeffs(dist_coeff, true);
+
+    std::cout << "Matrix: " << cam_Matrix << '\n';
+
+    cv::Mat distroted = 
+        meassure.distortImage_manual(img, cam_Matrix, dist_coeffs);
+
+    
+
+    /*meassure.load(FrameRole::WrappedPhase, path);
+    std::vector<cv::Mat> wrappedPhase = meassure.get(FrameRole::WrappedPhase);*/
 
     meassure.load(FrameRole::Contrast, path);
     std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
    
-    std::vector<cv::Mat> unwrappedPhase =
-        meassure.do_unwrapped_phase(wrappedPhase, contrastPhase, UnwrapMode::opencv, true, path);
+    /*std::vector<cv::Mat> unwrappedPhase =
+        meassure.do_unwrapped_phase(wrappedPhase, contrastPhase, UnwrapMode::manually, true, path);*/
 
     //meassure.loadPhaseConfig("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23/0.xml");
 
@@ -50,27 +81,23 @@ int main()
     /*meassure.load(FrameRole::UnwrappedPhase, path);
     std::vector<cv::Mat> unwrapped = meassure.get(FrameRole::UnwrappedPhase);*/
 
-    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_out_camera_data_First_real_calib.xml" };
-    meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
 
-    std::vector<cv::Mat> cam_Matrix{ meassure.get(FrameRole::CalibrationMatrix) };
-    std::vector<cv::Mat> dist_Coeffs{ meassure.get(FrameRole::DistortionCoeff) };
-
-    
     std::vector<cv::Mat> reprojection = meassure.do_reprojection(
-        unwrappedPhase,
+        pattern,
         contrastPhase,
         cam_Matrix,
-        dist_Coeffs,
+        dist_coeffs,
         108.0,
-        unwrappedPhase[0].cols,
-        unwrappedPhase[0].rows,
+        pattern[0].cols,
+        pattern[0].rows,
         0.2745, //PixelPitch
         true,
         path,
         527.04, //Dispaly Width
         296.46 //Dispaly Height
     );
+
+    
 }
 
 
