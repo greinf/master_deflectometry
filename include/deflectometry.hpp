@@ -91,8 +91,8 @@ public:
 	 std::vector<cv::Mat> do_reprojection(
 		 const std::vector<cv::Mat>& unwrapped,
 		 const std::vector<cv::Mat>& contrast, 
-		 const std::vector<cv::Mat>& cam_Matrix,
-		 const std::vector<cv::Mat>& dist_Coeffs,
+		 const cv::Mat& cam_Matrix,
+		 const cv::Mat& dist_Coeffs,
 		 const double wavelength,
 		 const int grid_points_x,
 		 const int grid_points_y,
@@ -125,7 +125,7 @@ public:
 
 	 void get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2); 
 
-	 cv::Mat distortImage(const cv::Mat&, const cv::Mat& cam_Matrix, const cv::Mat& dist_coeffs);
+	 cv::Mat undistortImage(const cv::Mat&, const cv::Mat& cam_Matrix, const cv::Mat& dist_coeffs);
 
 	 cv::Mat distortImage_manual(const cv::Mat& img, const cv::Mat& cam_Matrix, const cv::Mat& dist_coeffs);
 

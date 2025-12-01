@@ -16,59 +16,85 @@
 int main()
 {
     //Supress open CV Information -only warnings are logged. 
-    
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
 
     Deflectometry meassure{};
 
     std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23" };
 
-   
-
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_out_camera_data_First_real_calib.xml" };
+
     //meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
 
     /*std::vector<cv::Mat> raw_phase = 
         meassure.do_phase_measurement(Shift_mode::four_phase_shift, 5, true, path, 10);*/
 
     // Calibrated Gray Value 4 Phase Shift - 
-    /*meassure.load(FrameRole::RawInput, path);
-    std::vector<cv::Mat> raw_input = meassure.get(FrameRole::RawInput);*/
+    meassure.load(FrameRole::RawPhase, path);
+    std::vector<cv::Mat> raw_input = meassure.get(FrameRole::RawPhase);
 
     /*std::vector<cv::Mat> wrappedPhase =
         meassure.do_wrapped_phase(raw_input, 5, 4, true, path);*/
 
     /*meassure.generatePattern(true, path);*/
 
-    meassure.load(FrameRole::PatternDouble, path);
-
-    std::vector<cv::Mat> pattern = meassure.get(FrameRole::PatternDouble);
     /*std::vector<cv::Mat> cam_Matrix = meassure.get(FrameRole::CalibrationMatrix);
     std::vector<cv::Mat> dist_coeffs = meassure.get(FrameRole::DistortionCoeff);*/
 
-    cv::Mat img = pattern[0];
+    /*meassure.load(FrameRole::PatternDouble, path);
+    std::vector<cv::Mat> pattern = meassure.get(FrameRole::PatternDouble);*/
+
+    meassure.load(FrameRole::Contrast, path);
+    std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
+
+    cv::Mat img = raw_input[0];
 
     cv::Mat cam_Matrix = cv::Mat::eye(3, 3, CV_64F);
     cam_Matrix *= 800;
     cam_Matrix.at<double>(0, 2) = img.cols / 2.0;
     cam_Matrix.at<double>(1, 2) = img.rows / 2.0;
     cam_Matrix.at<double>(2, 2) = 1;
+   
     cv::Size imageSize = img.size();
-    std::vector<double> dist_coeff{ -1.0E-5 , -0.006, 0.0 , 0.0, 0.0 };
+    std::vector<double> dist_coeff{ 8.0E-3 , 0.00008, 0.0 , 0.0, 0.0 }; //0.0 , 0.0, 0.0 , 0.0, 0.0
     cv::Mat dist_coeffs(dist_coeff, true);
 
     std::cout << "Matrix: " << cam_Matrix << '\n';
 
+    std::vector<cv::Mat> pattern_distorted;
+    for (auto& img : raw_input) {
+        pattern_distorted.emplace_back(meassure.distortImage_manual(img, cam_Matrix, dist_coeffs));
+    }
+
+    std::vector<cv::Mat> reprojection = meassure.do_reprojection(
+        pattern_distorted,
+        contrastPhase,
+        cam_Matrix,
+        dist_coeffs,
+        108.0,
+        raw_input[0].cols,
+        raw_input[0].rows,
+        0.2745, //PixelPitch
+        true,
+        path,
+        527.04, //Dispaly Width
+        296.46 //Dispaly Height
+    );
+
+
     cv::Mat distroted = 
         meassure.distortImage_manual(img, cam_Matrix, dist_coeffs);
+
+
+    cv::Mat undistorted =
+        meassure.undistortImage(distroted, cam_Matrix, dist_coeffs);
 
     
 
     /*meassure.load(FrameRole::WrappedPhase, path);
     std::vector<cv::Mat> wrappedPhase = meassure.get(FrameRole::WrappedPhase);*/
 
-    meassure.load(FrameRole::Contrast, path);
-    std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
+    
    
     /*std::vector<cv::Mat> unwrappedPhase =
         meassure.do_unwrapped_phase(wrappedPhase, contrastPhase, UnwrapMode::manually, true, path);*/
@@ -82,20 +108,7 @@ int main()
     std::vector<cv::Mat> unwrapped = meassure.get(FrameRole::UnwrappedPhase);*/
 
 
-    std::vector<cv::Mat> reprojection = meassure.do_reprojection(
-        pattern,
-        contrastPhase,
-        cam_Matrix,
-        dist_coeffs,
-        108.0,
-        pattern[0].cols,
-        pattern[0].rows,
-        0.2745, //PixelPitch
-        true,
-        path,
-        527.04, //Dispaly Width
-        296.46 //Dispaly Height
-    );
+    
 
     
 }

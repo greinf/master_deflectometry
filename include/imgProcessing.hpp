@@ -116,7 +116,7 @@ public:
 		int n_pics_per_Phase,
 		int n_shifts);
 
-	cv::Vec2d newtonSolverUndistort(
+	cv::Vec2d newtonSolverdistort(
 		const cv::Vec2d& coordiantes,
 		const cv::Mat& cam_Matrix,
 		const cv::Mat& dist_coeffs
@@ -131,7 +131,7 @@ public:
 		const std::vector<cv::Mat>& vec,
 		double threshold);
 
-	cv::Mat ImageProcessing::distortImage(const cv::Mat& img,
+	cv::Mat ImageProcessing::undistortImage(const cv::Mat& img,
 		const cv::Mat& K,
 		const cv::Mat& distCoeffs);
 

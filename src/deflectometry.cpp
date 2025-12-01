@@ -185,8 +185,8 @@ bool Deflectometry::check_synthaticall_points(const std::pair<std::vector<cv::Ve
 std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const std::vector<cv::Mat>& unwrapped,
 	const std::vector<cv::Mat>& contrast,
-	const std::vector<cv::Mat>& cam_Matrix,
-	const std::vector<cv::Mat>& dist_Coeffs,
+	const cv::Mat& cam_Matrix,
+	const cv::Mat& dist_Coeffs,
 	const double wavelength,
 	const int grid_points_x,
 	const int grid_points_y,
@@ -212,6 +212,8 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	// --- Set to 0 for debugging --- 
 	cv::Mat mask = m_img_processing->createMask(unwrapped, 0);
 
+	m_img_store->show(FrameRole::RawPhase);
+
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
 			unwrapped,
@@ -224,15 +226,15 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			screen_height
 		);
 
-	if (check_synthaticall_points(calibrationPoints)) std::cout << "Happy Calibration Points ";
-	else std::cout << "Not so happy ";
+	//if (check_synthaticall_points(calibrationPoints)) std::cout << "Happy Calibration Points ";
+	//else std::cout << "Not so happy ";
 	// --- For debugging --
-	cv::Mat synthetical_camera_matrix = cv::Mat::eye(3, 3, CV_64F); 
-	cv::Mat synthetical_distortion = cv::Mat::zeros(dist_Coeffs[0].size(), CV_64F);
+	/*cv::Mat synthetical_camera_matrix = cv::Mat::eye(3, 3, CV_64F); 
+	cv::Mat synthetical_distortion = cv::Mat::zeros(dist_Coeffs[0].size(), CV_64F);*/
 	// --- end ---
 	cv::Mat rvec, tvec;
 	bool ok = cv::solvePnP(calibrationPoints.second, calibrationPoints.first,
-		synthetical_camera_matrix, synthetical_distortion, rvec, tvec,
+		cam_Matrix, dist_Coeffs, rvec, tvec,
 		false,
 		cv::SOLVEPNP_ITERATIVE);
 	if (!ok) throw std::runtime_error("solvePnP failed.");
@@ -245,8 +247,8 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	cv::Mat reprojection_img = m_img_processing->
 		do_reprojection_error(
 			calibrationPoints, 
-			synthetical_camera_matrix,
-			synthetical_distortion,
+			cam_Matrix,
+			dist_Coeffs,
 			rvec,
 			tvec,
 			&sqrt_err,
@@ -270,32 +272,33 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	return xy;
 }
 
-cv::Mat Deflectometry::distortImage(const cv::Mat& img, const cv::Mat& cam_Matrix, const cv::Mat& dist_Coeffs) {
+cv::Mat Deflectometry::undistortImage(const cv::Mat& img, const cv::Mat& cam_Matrix, const cv::Mat& dist_Coeffs) {
 
 	cv::Size imageSize = img.size();
 	//cv::Mat distorted = m_img_processing->distortImage(img, cam_Matrix, dist_Coeffs);
-	cv::Mat distorted;
-	cv::undistort(img, distorted, cam_Matrix, dist_Coeffs, cv::noArray());
-
-	m_img_store->add(FrameRole::Debug, distorted);
-	cv::Mat undistort, undistort1;
+	cv::Mat distorted = m_img_processing->undistortImage(img, cam_Matrix, dist_Coeffs);
 	cv::Mat distorted64;
-	distorted.convertTo(distorted64, CV_64F);
+	distorted.convertTo(distorted64, CV_32F);
+
+	//cv::undistort(img, distorted, cam_Matrix, dist_Coeffs, cv::noArray());
+	//m_img_store->add(FrameRole::Debug, distorted);
+	cv::Mat undistort, undistort1;
 	cv::Mat disto = (cv::Mat_<double>(1, 5) << 1.0E-5, 0.006, 0.0, 0.0, 0.0);
 	cv::Mat map1, map2;
 	cv::initUndistortRectifyMap(
 		cam_Matrix, dist_Coeffs, Mat(),
-		getOptimalNewCameraMatrix(cam_Matrix, dist_Coeffs, imageSize, 1, imageSize, 0), imageSize,
+		getOptimalNewCameraMatrix(cam_Matrix, dist_Coeffs, imageSize, 0, imageSize, 0), imageSize,
 		CV_16SC2, map1, map2);
-	cv::remap(img, undistort, map1, map2, INTER_LINEAR);
+
+	cv::remap(img, undistort1, map1, map2, INTER_LINEAR);
 
 
-	m_img_store->add(FrameRole::Debug, undistort);
+	m_img_store->add(FrameRole::Debug, distorted64);
 
 	m_img_store->add(FrameRole::Debug, undistort1);
-	m_img_store->show(FrameRole::Pattern);
+	//m_img_store->show(FrameRole::Pattern);
 	m_img_store->show(FrameRole::Debug);
-	return distorted;
+	return distorted64;
 }
 
 cv::Mat Deflectometry::distortImage_manual(
@@ -314,11 +317,12 @@ cv::Mat Deflectometry::distortImage_manual(
 		for (int cols = 0; cols < img.cols; ++cols) {
 			//cv::Vec2d distorted = newtonSolver(cv::Vec2d(row, cols), )
 			cv::Vec2d distorted_coordinates =
-				m_img_processing->newtonSolverUndistort(cv::Vec2d(cols, row), cam_Matrix, dist_Coeffs);
+				m_img_processing->newtonSolverdistort(cv::Vec2d(cols, row), cam_Matrix, dist_Coeffs);
 			ptr_x[cols] = distorted_coordinates[0];
 			ptr_y[cols] = distorted_coordinates[1];
 		}
 	}
+
 	cv::Mat distorted;
 	cv::Mat img32, mapx32, mapy32;
 	img.convertTo(img32, CV_32F);
@@ -326,9 +330,12 @@ cv::Mat Deflectometry::distortImage_manual(
 	mapy.convertTo(mapy32, CV_32F);
 
 	cv::remap(img32, distorted, mapx32, mapy32, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
-	m_img_store->add(FrameRole::Debug, distorted);
-	m_img_store->show(FrameRole::Debug);
-	return distorted;
+
+	cv::Mat distorted64;
+	distorted.convertTo(distorted64, CV_64F);
+	/*m_img_store->add(FrameRole::Debug, distorted);
+	m_img_store->show(FrameRole::Debug);*/
+	return distorted64;
 }
 
 

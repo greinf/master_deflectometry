@@ -237,7 +237,15 @@ cv::Mat ImageProcessing::do_reprojection_error(
         img_pts.emplace_back(v[0], v[1]);
 
     std::vector<cv::Point2d> undist;
-    cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
+
+    cv::Size dist_sz = distCoeffs.size();
+    const double* dist_ptr = distCoeffs.ptr<double>(0);
+    // ---Check if distotion_coefficients are set. Mainly debugging ---
+    if (dist_ptr[0] || dist_ptr[1] || dist_ptr[2] || dist_ptr[3]) {
+        cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
+    }
+
+    else undist = img_pts;
 
     // --- Error map (dx, dy) on display plane ---
     cv::Mat error_map(mask.size(), CV_64FC2, cv::Scalar(0, 0));
@@ -299,7 +307,7 @@ cv::Mat ImageProcessing::do_reprojection_error(
     return error_map;
 }
 
-cv::Mat ImageProcessing::distortImage(const cv::Mat& img,
+cv::Mat ImageProcessing::undistortImage(const cv::Mat& img,
     const cv::Mat& K,
     const cv::Mat& distCoeffs)
 {
@@ -352,7 +360,7 @@ cv::Mat ImageProcessing::distortImage(const cv::Mat& img,
     return distorted;
 }
 
-cv::Vec2d ImageProcessing::newtonSolverUndistort(
+cv::Vec2d ImageProcessing::newtonSolverdistort(
     const cv::Vec2d& pixelCoords,   // (u_d, v_d) verzerrt in Pixeln
     const cv::Mat& cam_Matrix,
     const cv::Mat& dist_coeffs)
