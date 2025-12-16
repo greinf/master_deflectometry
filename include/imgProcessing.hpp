@@ -122,6 +122,18 @@ public:
 		const cv::Mat& dist_coeffs
 	);
 
+	cv::Vec2d ImageProcessing::undistortImagePts(const cv::Vec2d pts,
+		const cv::Mat& K,
+		const cv::Mat& distCoeffs);
+
+	std::vector<cv::Vec2d> distortImagePoints(
+		const std::vector<cv::Vec2d>&,
+		const cv::Mat&,
+		const cv::Mat&
+	);
+
+	cv::Mat calcDistortionError(const cv::Mat& img);
+
 	// Calculates Mask from both the contrast pictures
 	// Input 
 	// vec: 2 Images CV_64F double Horizontal / Vertical

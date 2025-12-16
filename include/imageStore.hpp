@@ -30,6 +30,12 @@ enum class FrameRole {
     ReprojectionY,     // Image that contains the Y-component of the errorvector, from the reprojection on the display
     Debug,             // For any debug intermediate outputs
     all,               // Command for saving and loading
+    GridPattern,       // GridPattern -> A grid of crosses over the hole image 
+    DistortionCalib,   // A 2 Channel picture where the value at each pixel represent the original coordinates before the distortion. 
+    DistortErrX,       // Picture that showcases the ammount of Distortion in the X component
+    DistortErrY,       // Picture that showcases the ammount of Distortion in the Y component
+    UndistortErrX,     // Picture that showscases the ammount of Distortion after the undistortion in the X compoment.
+    UndistortErrY,      // Picture that showcases the ammound of Distortion after the undistortion in the Y compoment. 
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -96,9 +102,10 @@ private:
         "RawPhase", "RawInput", "WrappedPhase","Contrast", 
         "BaseIntensity", "UnwrappedPhase","CalibrationImg", "CalibrationMatrix", 
         "DistortionCoefficients", "CalibrationImagesMarked", "ReprojectionX",
-        "ReprojectionY", "Debug", "All"
+        "ReprojectionY", "Debug", "All", "GridPattern", "DistortionCalib", "DistortErrX",
+        "DistortErrY", "UndistortErrX", "UndistortErrY"
     } };
-
+    
 };
 
 #endif

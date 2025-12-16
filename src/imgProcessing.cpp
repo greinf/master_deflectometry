@@ -231,21 +231,32 @@ cv::Mat ImageProcessing::do_reprojection_error(
         C_mat.at<double>(2));
 
     // --- Prepare undistorted normalized image points ---
-    std::vector<cv::Point2d> img_pts;
+    std::vector<cv::Vec2d> img_pts;
     img_pts.reserve(caliPoints.first.size());
     for (const auto& v : caliPoints.first)
         img_pts.emplace_back(v[0], v[1]);
 
-    std::vector<cv::Point2d> undist;
+    std::vector<cv::Vec2d> undist;
 
     cv::Size dist_sz = distCoeffs.size();
     const double* dist_ptr = distCoeffs.ptr<double>(0);
     // ---Check if distotion_coefficients are set. Mainly debugging ---
-    if (dist_ptr[0] || dist_ptr[1] || dist_ptr[2] || dist_ptr[3]) {
-        cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
+    if (dist_ptr[0] || dist_ptr[1] || dist_ptr[2] || dist_ptr[3]) {  // 
+        std::cout << "In Reprojection: Use Undistort Pipeline \n";
+        // --- DistortImagePoints --- 
+        undist = distortImagePoints(img_pts, caliMatrix, distCoeffs);
+        //cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
+
+        //undistortion
+       /* for (const auto& vec : img_pts) {
+            undist.emplace_back(undistortImagePts(vec, caliMatrix, distCoeffs));
+        }*/
     }
 
-    else undist = img_pts;
+    else {
+        undist = img_pts;
+        std::cout << "Undistort Pipeline Skipped \n";
+    }
 
     // --- Error map (dx, dy) on display plane ---
     cv::Mat error_map(mask.size(), CV_64FC2, cv::Scalar(0, 0));
@@ -275,7 +286,7 @@ cv::Mat ImageProcessing::do_reprojection_error(
         }
 
         // Direction in camera frame from undistorted normalized coordinates
-        cv::Vec3d d_cam(undist[i].x, undist[i].y, 1.0);
+        cv::Vec3d d_cam(undist[i][0], undist[i][1], 1.0);
 
         // Direction in world/display frame
 
@@ -307,6 +318,88 @@ cv::Mat ImageProcessing::do_reprojection_error(
     return error_map;
 }
 
+std::vector<cv::Vec2d> ImageProcessing::distortImagePoints(
+    const std::vector<cv::Vec2d>& imgPts,
+    const cv::Mat& calimatrix,
+    const cv::Mat& distcoeffs) 
+{
+    CV_Assert(!calimatrix.empty());
+    CV_Assert(!distcoeffs.empty());
+    CV_Assert(!imgPts.empty());
+
+    cv::Range range(0, imgPts.size());
+    std::vector<cv::Vec2d> distorted(imgPts.size());
+
+    cv::parallel_for_(range,
+        [&](const cv::Range range) {
+            for (int i = range.start; i < range.end; ++i) {
+                distorted[i] = newtonSolverdistort(imgPts[i], calimatrix, distcoeffs);
+            }
+        });
+    
+    return distorted;
+}
+
+
+cv::Mat ImageProcessing::calcDistortionError(const cv::Mat& img) {
+    CV_Assert(!img.empty());
+    CV_Assert(img.type() == CV_64FC2);
+    cv::Mat error_img(img.size(), CV_64FC2);
+    for (int row = 0; row < img.rows; ++row) {
+        const double* pic = img.ptr<double>(row);
+        double* error_pic = error_img.ptr<double>(row);
+        for (int cols = 0; cols < img.cols; ++cols) {
+            error_pic[cols * 2] = pic[cols * 2] - static_cast<double>(cols);
+            error_pic[cols * 2 + 1] = pic[cols * 2 + 1] - static_cast<double>(row);
+        }
+    }
+
+    /*minmaxloc data{ get_minmaxloc(error_img) };
+    std::cout << data;*/
+
+    return error_img;
+}
+
+cv::Vec2d ImageProcessing::undistortImagePts(
+    const cv::Vec2d img_pt,
+    const cv::Mat& K,
+    const cv::Mat& dist_coeffs
+)
+{
+    double fx = K.at<double>(0, 0);
+    double fy = K.at<double>(1, 1);
+    double cx = K.at<double>(0, 2);
+    double cy = K.at<double>(1, 2);
+
+    double k1 = dist_coeffs.at<double>(0, 0);
+    double k2 = dist_coeffs.at<double>(1, 0);
+    double p1 = dist_coeffs.at<double>(2, 0);
+    double p2 = dist_coeffs.at<double>(3, 0);
+    double k3 = dist_coeffs.cols >= 5 ? dist_coeffs.at<double>(4, 0) : 0.0;
+
+    
+    // --- Normalize in Camera Coordinates
+    double x_u = (img_pt[0] - cx) / fx;
+    double y_u = (img_pt[1] - cy) / fy;
+
+    double r2 = x_u * x_u + y_u * y_u;
+    double r4 = r2 * r2;
+    double r6 = r4 * r2;
+
+    double radial = 1 + k1 * r2 + k2 * r4 + k3 * r6;
+
+    // see lateral + radial distortion 
+    double x_d = x_u * radial + 2 * p1 * x_u * y_u + p2 * (r2 + 2 * x_u * x_u);
+    double y_d = y_u * radial + p1 * (r2 + 2 * y_u * y_u) + 2 * p2 * x_u * y_u;
+
+    double x_d1 = fx * x_d + cx;
+    double y_d1 = fy * y_d + cy;
+
+    return cv::Vec2d{ x_d1,y_d1 };
+}
+    
+
+
 cv::Mat ImageProcessing::undistortImage(const cv::Mat& img,
     const cv::Mat& K,
     const cv::Mat& distCoeffs)
@@ -317,37 +410,11 @@ cv::Mat ImageProcessing::undistortImage(const cv::Mat& img,
     cv::Mat map_x(H, W, CV_32F);
     cv::Mat map_y(H, W, CV_32F);
 
-    double fx = K.at<double>(0, 0);
-    double fy = K.at<double>(1, 1);
-    double cx = K.at<double>(0, 2);
-    double cy = K.at<double>(1, 2);
-
-    double k1 = distCoeffs.at<double>(0, 0);
-    double k2 = distCoeffs.at<double>(1, 0);
-    double p1 = distCoeffs.at<double>(2, 0);
-    double p2 = distCoeffs.at<double>(3, 0);
-    double k3 = distCoeffs.cols >= 5 ? distCoeffs.at<double>(4, 0) : 0.0;
-
     for (int y = 0; y < H; ++y) {
         for (int x = 0; x < W; ++x) {
-
-            // --- Normalize in Camera Coordinates
-            double x_u = (x - cx) / fx;
-            double y_u = (y - cy) / fy;
-
-            double r2 = x_u * x_u + y_u * y_u;
-            double r4 = r2 * r2;
-            double r6 = r4 * r2;
-
-            double radial = 1 + k1 * r2 + k2 * r4 + k3 * r6;
-
-            // see lateral + radial distortion 
-            double x_d = x_u * radial + 2 * p1 * x_u * y_u + p2 * (r2 + 2 * x_u * x_u);
-            double y_d = y_u * radial + p1 * (r2 + 2 * y_u * y_u) + 2 * p2 * x_u * y_u;
-
-            // back to pixels
-            map_x.at<float>(y, x) = fx * x_d + cx;
-            map_y.at<float>(y, x) = fy * y_d + cy;
+            cv::Vec2d distorted = undistortImagePts(cv::Vec2d(x, y), K, distCoeffs);
+            map_x.at<float>(y, x) = static_cast<float>(distorted[0]);
+            map_y.at<float>(y, x) = static_cast<float>(distorted[1]);
         }
     }
 
@@ -355,9 +422,11 @@ cv::Mat ImageProcessing::undistortImage(const cv::Mat& img,
     img.convertTo(img32, CV_32F);
 
     cv::Mat distorted;
-    cv::remap(img32, distorted, map_x, map_y, cv::INTER_LINEAR);
+    cv::remap(img32, distorted, map_x, map_y, cv::INTER_CUBIC, cv::BORDER_CONSTANT);
+    cv::Mat distorted64;
+    distorted.convertTo(distorted64, CV_64F);
 
-    return distorted;
+    return distorted64;
 }
 
 cv::Vec2d ImageProcessing::newtonSolverdistort(
@@ -370,6 +439,7 @@ cv::Vec2d ImageProcessing::newtonSolverdistort(
     CV_Assert(cam_Matrix.rows == 3 && cam_Matrix.cols == 3);
     CV_Assert(dist_coeffs.type() == CV_64F);
     CV_Assert(dist_coeffs.total() >= 4);       // mind. k1, k2, p1, p2
+    CV_Assert(dist_coeffs.isContinuous());
 
     // --- Intrinsics ---
     const double fx = cam_Matrix.at<double>(0, 0);
@@ -398,7 +468,7 @@ cv::Vec2d ImageProcessing::newtonSolverdistort(
     double y_u = y_d;
 
     // --- Newton iteration ---
-    for (int iter = 0; iter < 5; ++iter) {
+    for (int iter = 0; iter < 1000; ++iter) {
         // Radius
         const double r2 = x_u * x_u + y_u * y_u;
         const double r4 = r2 * r2;
@@ -436,6 +506,7 @@ cv::Vec2d ImageProcessing::newtonSolverdistort(
 
         const double det = a * d - b * c;
         if (std::abs(det) < 1e-18) {
+            //std::cout << "Reached termination cirterium \n";
             break; // numerisch instabil -> abbrechen
         }
 
@@ -447,6 +518,7 @@ cv::Vec2d ImageProcessing::newtonSolverdistort(
         y_u -= dy;
 
         if (dx * dx + dy * dy < 1e-18) {
+            //std::cout << "Reached termination cirterium \n";
             break; // konvergiert
         }
     }

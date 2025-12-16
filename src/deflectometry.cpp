@@ -181,6 +181,94 @@ bool Deflectometry::check_synthaticall_points(const std::pair<std::vector<cv::Ve
 	return (counter > 0) ? (false) : (true);
 }
 
+std::vector<cv::Mat> Deflectometry::generateCartesian(
+	bool save,
+	const std::string& path,
+	int gridX,
+	int gridY)
+{
+	CV_Assert((gridX > 0) && (gridY > 0));
+	CV_Assert(!path.empty());
+	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", false);
+	cv::Mat cartesian = m_pattern->generateCartesian(gridX, gridY);
+
+	m_img_store->add(FrameRole::GridPattern, cartesian);
+	if (save) {
+		m_img_store->saveRole(FrameRole::GridPattern, path);
+		m_img_store->saveRoleXML(FrameRole::GridPattern, path);
+	}
+	m_img_store->show(FrameRole::GridPattern);
+	std::vector<cv::Mat> cartesianvec{ cartesian };
+	return cartesianvec;
+}
+
+cv::Mat Deflectometry::generateCoordinateImg(bool save, const std::string& path) {
+	setupPattern();
+	cv::Mat coordinateImg = m_pattern->generatecoordianteImg();
+	m_img_store->add(FrameRole::DistortionCalib, coordinateImg);
+	if (save) {
+		//m_img_store->saveRole(FrameRole::DistortionCalib, path);
+		m_img_store->saveRoleXML(FrameRole::DistortionCalib, path);
+	}
+	//m_img_store->show(FrameRole::DistortionCalib);
+
+	return coordinateImg;
+}
+
+std::vector<cv::Vec2d> Deflectometry::distortionPipelineTest(
+	const cv::Mat& mat,
+	const cv::Mat& dist,
+	const std::vector<cv::Vec2d> img_pts)
+{
+	CV_Assert(!img_pts.empty());
+	CV_Assert(mat.size() == cv::Size(3, 3));
+	
+	//These two are doing essentially the SAME :(((((((((((
+	std::vector<cv::Vec2d> distorted;
+	for (const auto& vec : img_pts) {
+		distorted.push_back(m_img_processing->newtonSolverdistort(vec, mat, dist));
+	}
+
+	std::vector<cv::Vec2d> distorted1;
+	cv::undistortPoints(
+		img_pts,
+		distorted1,
+		mat,
+		dist,
+		cv::noArray(),
+		mat
+	);
+
+	std::vector<cv::Vec2d> undistorted;
+	for (const auto& vec : distorted) {
+		undistorted.push_back(m_img_processing->undistortImagePts(vec, mat, dist));
+	}
+
+
+	double sum_sq = 0.0;
+	double max_err = 0.0;
+
+	std::vector<cv::Vec2d> error;
+	error.reserve(img_pts.size());
+
+	for (size_t i = 0; i < img_pts.size(); ++i) {
+		cv::Vec2d e = img_pts[i] - undistorted[i];
+		error.push_back(e);
+
+		double err = cv::norm(e);          // ||e||
+		sum_sq += err * err;               // sum ||e||^2
+		max_err = std::max(max_err, err);  // max ||e||
+	}
+
+	double l2_total = std::sqrt(sum_sq);                      // sqrt(sum ||e||^2)
+	double rmse = std::sqrt(sum_sq / img_pts.size());     // sqrt(mean ||e||^2)
+
+	std::cout << "Max Err:  " << max_err << '\n';
+	std::cout << "L2 total: " << l2_total << '\n';
+	std::cout << "RMSE:     " << rmse << '\n';
+
+	return error;
+}
 
 std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const std::vector<cv::Mat>& unwrapped,
@@ -210,9 +298,7 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			screen_height);*/
 
 	// --- Set to 0 for debugging --- 
-	cv::Mat mask = m_img_processing->createMask(unwrapped, 0);
-
-	m_img_store->show(FrameRole::RawPhase);
+	cv::Mat mask = m_img_processing->createMask(unwrapped, 0.051);
 
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
@@ -243,6 +329,8 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	std::cout << "Rotation Vector " << rvec << '\n';
 
 	double sqrt_err, max_err;
+
+
 
 	cv::Mat reprojection_img = m_img_processing->
 		do_reprojection_error(
@@ -277,28 +365,94 @@ cv::Mat Deflectometry::undistortImage(const cv::Mat& img, const cv::Mat& cam_Mat
 	cv::Size imageSize = img.size();
 	//cv::Mat distorted = m_img_processing->distortImage(img, cam_Matrix, dist_Coeffs);
 	cv::Mat distorted = m_img_processing->undistortImage(img, cam_Matrix, dist_Coeffs);
-	cv::Mat distorted64;
-	distorted.convertTo(distorted64, CV_32F);
+	cv::Mat distorted32;
+	distorted.convertTo(distorted32, CV_32F);
 
 	//cv::undistort(img, distorted, cam_Matrix, dist_Coeffs, cv::noArray());
 	//m_img_store->add(FrameRole::Debug, distorted);
 	cv::Mat undistort, undistort1;
-	cv::Mat disto = (cv::Mat_<double>(1, 5) << 1.0E-5, 0.006, 0.0, 0.0, 0.0);
+	
 	cv::Mat map1, map2;
+	
 	cv::initUndistortRectifyMap(
 		cam_Matrix, dist_Coeffs, Mat(),
-		getOptimalNewCameraMatrix(cam_Matrix, dist_Coeffs, imageSize, 0, imageSize, 0), imageSize,
-		CV_16SC2, map1, map2);
+		cam_Matrix, imageSize,
+		CV_32FC2, map1, map2);
 
-	cv::remap(img, undistort1, map1, map2, INTER_LINEAR);
+	cv::remap(img, undistort1, map1, map2, cv::INTER_CUBIC, cv::BORDER_CONSTANT);
 
+	cv::Mat undistorted64;
+	undistort1.convertTo(undistorted64, CV_64F);
 
-	m_img_store->add(FrameRole::Debug, distorted64);
+	m_img_store->add(FrameRole::Debug, distorted32);
 
 	m_img_store->add(FrameRole::Debug, undistort1);
 	//m_img_store->show(FrameRole::Pattern);
-	m_img_store->show(FrameRole::Debug);
-	return distorted64;
+	//m_img_store->show(FrameRole::Debug);
+	return undistorted64;
+}
+
+
+cv::Mat Deflectometry::undistortImageManuell(
+	const cv::Mat& img,
+	const cv::Mat& cam,
+	const cv::Mat& dist_coeffs)
+{
+	CV_Assert(!img.empty());
+	CV_Assert(cam.size() == cv::Size(3, 3));
+
+	cv::Mat undistorted = m_img_processing->undistortImage(img, cam, dist_coeffs);
+	return undistorted;
+}
+
+
+
+cv::Mat Deflectometry::calcDistortionError(const cv::Mat& img) {
+	cv::Mat error = 
+		m_img_processing->calcDistortionError(img);
+	return error;
+}
+
+void Deflectometry::saveVecImage(
+	const FrameRole role,
+	const std::vector<cv::Mat>& vec,
+	bool save,
+	const std::string& path)
+{
+	CV_Assert(!vec.empty());
+	for (const auto& img : vec) {
+		saveSingleImage(role, img, save, path);
+	}
+}
+
+
+void Deflectometry::saveSingleImage(
+	const FrameRole role,
+	const cv::Mat& img,
+	bool save,
+	const std::string& path) 
+{
+	CV_Assert(img.size().area() > 0);
+	CV_Assert(img.channels() <= 2);
+
+	if(img.channels()==2){
+		std::cout << "Save Distortion Error Pics, Special case \n";
+		cv::Mat arr[2];
+		cv::split(img, arr);
+		m_img_store->add(FrameRole::DistortErrX, arr[0]);
+		m_img_store->add(FrameRole::DistortErrY, arr[1]);
+		if (save) {
+			m_img_store->saveRoleXML(FrameRole::DistortErrX, path);
+			m_img_store->saveRoleXML(FrameRole::DistortErrY, path);
+		}
+		return;
+	}
+
+	m_img_store->add(role, img);
+	if (save) {
+		m_img_store->saveRole(role, path);
+		m_img_store->saveRoleXML(role, path);
+	}
 }
 
 cv::Mat Deflectometry::distortImage_manual(
@@ -332,8 +486,15 @@ cv::Mat Deflectometry::distortImage_manual(
 	cv::remap(img32, distorted, mapx32, mapy32, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
 
 	cv::Mat distorted64;
+	
 	distorted.convertTo(distorted64, CV_64F);
 	/*m_img_store->add(FrameRole::Debug, distorted);
+	m_img_store->show(FrameRole::Debug);*/
+	
+	// If multiple Channels are there. 
+	/*std::vector<cv::Mat> split_xy;
+	cv::split(distorted64, split_xy);
+	for (const auto& img : split_xy) { m_img_store->add(FrameRole::Debug, img); }
 	m_img_store->show(FrameRole::Debug);*/
 	return distorted64;
 }
@@ -342,11 +503,14 @@ cv::Mat Deflectometry::distortImage_manual(
 
 
 
-void Deflectometry::get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2)
+cv::Mat Deflectometry::get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2, bool save)
 {
 	cv::Mat difference = mat1 - mat2;
-	m_img_store->add(FrameRole::Debug, difference);
-	m_img_store->show(FrameRole::Debug);
+	if (save) {
+		m_img_store->add(FrameRole::Debug, difference);
+		m_img_store->show(FrameRole::Debug);
+	}
+	return difference;
 }
 
 bool Deflectometry::init() {
@@ -557,9 +721,11 @@ std::vector<cv::Mat> Deflectometry::do_wrapped_phase(
 	return std::vector<cv::Mat>(wrapped_phase_out.begin(), std::next(wrapped_phase_out.begin(), 2));
 }
 
-
-void Deflectometry::setupPattern(std::string path, bool useLUT) {
-	m_pattern = std::make_shared<Pattern>(1080, 1920, m_img_store);
+// Does create a new instance of Pattern and tries to load the LUT for Gray Value calibration
+// This function defines the size of all the ouput pictures through initialization
+// Is Set to 1080, 1920
+void Deflectometry::setupPattern(std::string path, bool useLUT, int pixelX, int pixelY) {
+	m_pattern = std::make_shared<Pattern>(pixelY, pixelX, m_img_store);
 	m_img_store->loadRoleXML(FrameRole::GrayLUT, path);
 	std::vector<std::pair<double, double>> Lut = m_img_store->getLut();
 	if (!Lut.empty() && useLUT) {

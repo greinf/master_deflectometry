@@ -85,7 +85,80 @@ std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(int stepwidth)
 	return grayFrames;
 }
 
+cv::Mat Pattern::generateCartesian(int gridX, int gridY) {
+	//Use the member varialles m_pixel_x and m_pixel_y
+	CV_Assert((gridX > 0 )&& (gridY > 0));
+	CV_Assert((m_pixel_x > 0) && (m_pixel_y > 0));
+	cv::Mat cartesian = createCartesian(m_pixel_y, m_pixel_x, gridY, gridX);
+	return cartesian;
+}
 
+cv::Mat Pattern::createCartesian(
+	const int pixelY,
+	const int pixelX,
+	const int GridY,
+	const int GridX) {
+	CV_Assert((pixelX > 0) && (pixelY > 0));
+	CV_Assert((GridY > 0) && (GridX > 0));
+	CV_Assert((GridY <= pixelY) && (GridX <= pixelX));
+	cv::Mat empty = cv::Mat::zeros(pixelY, pixelX, CV_8U);
+	std::vector<cv::Vec2i> gridPoints = getCartesianGridpoints(empty.size(), GridX, GridY);
+
+	for (std::size_t count = 0; count < gridPoints.size(); ++count) {
+		cv::drawMarker(empty, cv::Point2i(gridPoints[count][0], gridPoints[count][1]), cv::Scalar(255), 0);
+	}
+
+	return empty;
+}
+
+cv::Mat Pattern::createCoordinateImg(int pixel_x, int pixel_y) {
+	CV_Assert(pixel_x > 0 && pixel_y > 0);
+
+	cv::Mat coord(pixel_y, pixel_x, CV_64FC2);
+
+	for (int row = 0; row < coord.rows; ++row) {
+		double* ptr = coord.ptr<double>(row);
+		// --- Also possible and safer ---
+		// One can use this instead of a double* which points to the first channel of the first column. 
+		// cv::Vec2f* ptr = mat.ptr<cv::Vec2f>(row);
+		// ptr[col] == cv::Vec2f(x,y)
+		// Be Carefull .cols still refers to the REAL amount of cols and therefore must be multplied times the channels (as below)
+		for (int col = 0; col < coord.cols; ++col) {
+			// index = 2 * col because we have 2 channels per pixel
+			ptr[2 * col] = static_cast<double>(col); // x
+			ptr[2 * col + 1] = static_cast<double>(row); // y
+		}
+	}
+
+	return coord;
+}
+
+cv::Mat Pattern::generatecoordianteImg() {
+	cv::Mat coordImg = createCoordinateImg(m_pixel_x, m_pixel_y);
+	return coordImg;
+}
+
+std::vector<cv::Vec2i> Pattern::getCartesianGridpoints(
+	const cv::Size& sz,
+	const int gridPointsX,
+	const int gridPointsY)
+{
+	CV_Assert(sz.area() > 0);
+	CV_Assert(gridPointsX <= sz.width);
+	CV_Assert(gridPointsY <= sz.height);
+
+	const int stepx = sz.width / gridPointsX;
+	const int stepy = sz.height / gridPointsY;
+
+	std::vector<cv::Vec2i> coordinates;
+
+	for (int row = 0; row < sz.height; row += stepy) {
+		for (int cols = 0; cols < sz.width; cols += stepx) {
+			coordinates.push_back(cv::Vec2i(cols, row));
+		}
+	}
+	return coordinates;
+}
 
 
 bool Pattern::prepareShiftParameters(int n_periods_in_y, int steps) {
@@ -133,6 +206,8 @@ std::vector<cv::Mat> Pattern::generatePhase(int pixel_x, int pixel_y, double wav
 		return {};
 	}
 }
+
+
 
 std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 	const std::vector<cv::Mat>& phaseMaps,

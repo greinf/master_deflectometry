@@ -51,14 +51,23 @@ public:
 	 //void gray_value_apply();
 
 	 //void extract_Column(std::string path);
-
+	 
 	 //void extract_Line(std::string path);
 
 	 //std::pair<double, double> fitLine1D(const std::vector<double>& y);
 	 //
 
+	 cv::Mat undistortImageManuell(
+		 const cv::Mat& img,
+		 const cv::Mat& cam,
+		 const cv::Mat& dist_coeffs
+	 );
 
 
+	 std::vector<cv::Vec2d> distortionPipelineTest(
+	 const cv::Mat& mat,
+	 const cv::Mat& dist,
+	 const std::vector<cv::Vec2d>);
 	 
 	 // Method to Acquire the phase Shifted pictures. 
 	 // Shift_mode: classifies wich shift mode is used 4 Shift mode or user defined
@@ -86,6 +95,7 @@ public:
 		 bool save,
 		 const std::string& save_path
 	 );
+
 
 
 	 std::vector<cv::Mat> do_reprojection(
@@ -117,13 +127,46 @@ public:
 
 	 std::vector<cv::Mat> Deflectometry::get(FrameRole role);
 
-	 void setupPattern(std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", bool useLUT = true);
+	 cv::Mat calcDistortionError(const cv::Mat& img);
+
+	 cv::Mat generateCoordinateImg(
+		 bool save,
+		 const std::string& path);
+
+	 void setupPattern(
+		 std::string path = "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22",
+		 bool useLUT = true,
+		 int pixelX = 1920,
+		 int pixelY = 1080);
 
 	 /*void loadPhaseConfig(const std::string& path);*/
 
-	 std::vector<cv::Mat> generatePattern(bool save, const std::string& path);
+	 void saveVecImage(
+		 const FrameRole,
+		 const std::vector<cv::Mat>&,
+		 bool save,
+		 const std::string& path
+	 );
 
-	 void get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2); 
+	 void saveSingleImage(
+		 const FrameRole,
+		 const cv::Mat&,
+		 bool save,
+		 const std::string& path);
+
+	 std::vector<cv::Mat> generatePattern(
+		 bool save, 
+		 const std::string& path);
+
+	 std::vector<cv::Mat> generateCartesian(
+		 bool save,
+		 const std::string& path,
+		 int gridX,
+		 int gridY);
+
+	 // calculates the element wise difference of a two images and return the result. 
+	 // when save value is set to true the value is saved in Debug FrameRole of the ImageStore
+	 cv::Mat get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2, bool save = false); 
 
 	 cv::Mat undistortImage(const cv::Mat&, const cv::Mat& cam_Matrix, const cv::Mat& dist_coeffs);
 

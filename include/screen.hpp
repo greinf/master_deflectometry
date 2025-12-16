@@ -31,9 +31,14 @@ public:
 	//void grayValueCalibration();
 	void generate_phaseShift(Shift_mode, int n_periods_y = 10);
 
-	std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(int stepwidth);
+	std::vector<cv::Mat> generateGrayCalibrationSequence(int stepwidth);
 
+	cv::Mat generateCartesian(int gridX, int gridY);
 	
+	cv::Mat generatecoordianteImg();
+
+	cv::Mat createCoordinateImg(int pixel_x, int pixel_y);
+
 	/*void displayPatterns_single_thread();
 	void displayPatterns_multi_thread();*/
 
@@ -47,6 +52,18 @@ public:
 	}
 
 	void generate_optimalPhase();
+
+	std::vector<cv::Vec2i> getCartesianGridpoints(
+		const cv::Size& sz,
+		const int gridPointsX,
+		const int gridPointsY
+	);
+
+	cv::Mat createCartesian(
+		const int pixely, 
+		const int pixelx, 
+		const int gridY, 
+		const int gridX);
 
 	std::vector<std::shared_ptr<defl::PhaseShiftConfig>> getPhaseConfig() { return m_cfg; }
 
