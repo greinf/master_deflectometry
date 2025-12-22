@@ -284,7 +284,7 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const double screen_width,
 	const double screen_height) 
 {
-	/*cv::Mat mask = m_img_processing->createMask(contrast, 0.5);
+	cv::Mat mask = m_img_processing->createMask(contrast, 0.2);
 
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
@@ -295,12 +295,12 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			grid_points_y,
 			pixel_pitch,
 			screen_width,
-			screen_height);*/
+			screen_height);
 
 	// --- Set to 0 for debugging --- 
-	cv::Mat mask = m_img_processing->createMask(unwrapped, 0.051);
+	//cv::Mat mask = m_img_processing->createMask(unwrapped, 0.0);
 
-	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
+	/*std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
 			unwrapped,
 			mask,
@@ -310,7 +310,7 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			1,
 			screen_width,
 			screen_height
-		);
+		);*/
 
 	//if (check_synthaticall_points(calibrationPoints)) std::cout << "Happy Calibration Points ";
 	//else std::cout << "Not so happy ";
@@ -327,10 +327,25 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	std::cout << "Translation vec " << cv::norm(tvec) << '\n';
 
 	std::cout << "Rotation Vector " << rvec << '\n';
+	
+	std::vector<cv::Point2d> img_proj;
+	cv::projectPoints(
+		calibrationPoints.second, // objectPoints
+		rvec, tvec,
+		cam_Matrix,
+		dist_Coeffs,
+		img_proj
+	);
+
+	// jetzt Pixel-Reprojection-Error
+	double err = 0;
+	for (size_t i = 0; i < img_proj.size(); ++i) {
+		err += cv::norm(img_proj[i] - cv::Point2d(calibrationPoints.first[i]));
+	}
+	err /= img_proj.size();
+	std::cout << "Mean pixel reprojection error: " << err << std::endl;
 
 	double sqrt_err, max_err;
-
-
 
 	cv::Mat reprojection_img = m_img_processing->
 		do_reprojection_error(
@@ -358,6 +373,29 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 		m_img_store->saveRoleXML(FrameRole::ReprojectionY, save_path);
 	}
 	return xy;
+}
+
+
+// ReferenceMode cross = 0,
+// checkerboard = 1
+cv::Mat Deflectometry::do_reference_Pattern(
+	const ReferenceMode mode,
+	const int n_pics,
+	bool save,
+	const std::string& path) 
+{
+	CV_Assert(n_pics > 0);
+	CV_Assert(static_cast<int>(mode) < 2 &&
+		static_cast<int>(mode) >= 0);
+	
+	cv::Mat pattern = m_pattern->generateCheckerboard(1920, 1080, 100);
+	//cv::Mat pattern = m_pattern->generateCross(1920, 1080, 1920.0 / 2, 1080.0 / 2, 4);
+
+	/*cv::Mat pattern = (static_cast<int>(mode)) ?
+		m_pattern->generateCheckerboard() :
+		m_pattern->generateCross();*/
+	return pattern;
+
 }
 
 cv::Mat Deflectometry::undistortImage(const cv::Mat& img, const cv::Mat& cam_Matrix, const cv::Mat& dist_Coeffs) {
@@ -598,7 +636,7 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 	int n_periods)
 {
 	// Fixed Destination of the Gray Calibration File
-	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22");
+	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23");
 	
 	m_pattern->generate_phaseShift(mode, n_periods);
 	if (!init()) {
@@ -745,7 +783,7 @@ bool Deflectometry::do_grayvalue_calibration(
 	int gray_steps{ 1 };
 	// 1) Pattern-Generator: 256 Graustufen
 	
-	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22");
+	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", false);
 	m_pattern->generateGrayCalibrationSequence(gray_steps);
 
 	if (!init()) {
@@ -815,17 +853,14 @@ bool Deflectometry::do_grayvalue_calibration(
 	return true;
 }
 
-
-
-bool Deflectometry::do_camera_calibration()
-{
+std::vector<cv::Mat> Deflectometry::getFrames(FrameRole role) {
 	if (!init()) {
 		std::cerr << "Init failed. Aborting camera calibration.\n";
-		return false;
+		return {};
 	}
 
 	//Pics are saved in FrameRole::Calibration
-	m_acquisition_controller->mode = FrameRole::Calibration;
+	m_acquisition_controller->mode = role;
 
 	m_screenDisplay->assignCameraPreProcessing(showRawMaxValred);
 	m_screenDisplay->start();
@@ -863,7 +898,7 @@ bool Deflectometry::do_camera_calibration()
 		}
 
 		case 'E':
-			std::cout << "Exiting calibration.\n";
+			std::cout << "Exiting \n";
 			running = false;
 			break;
 
@@ -879,7 +914,28 @@ bool Deflectometry::do_camera_calibration()
 	m_screenDisplay->stop();
 	disconnect();
 
-	std::vector<cv::Mat> checkerboard = m_img_store->get(FrameRole::Calibration);
+	std::vector<cv::Mat> checkerboard = m_img_store->get(role);
+	return checkerboard;
+}
+
+// return RGB
+std::array<double, (std::size_t)3> Deflectometry::doWhiteBalance(
+	const std::vector<cv::Mat>& vec,
+	int roi_x,
+	int roi_y,
+	int roi_width,
+	int roi_height){
+	CV_Assert(std::all_of(vec.begin(), vec.end(),
+		[](const cv::Mat& mat) ->bool {
+			return (!mat.empty() && (mat.type() == CV_8UC1));
+		}));
+	return m_img_processing->doWhiteBalance(vec, 300, 300, 300, 300);
+}
+
+bool Deflectometry::do_camera_calibration()
+{
+	std::vector<cv::Mat> checkerboard = getFrames(FrameRole::Calibration);
+	m_img_store->saveRole(FrameRole::Calibration, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/COLOR_BayerBG2BGR");
 
 	// Save Path for Calibration in settings path
 	std::array<std::vector<cv::Mat>, 2> camera = runCameraCalibration(checkerboard, true,

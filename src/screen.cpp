@@ -52,6 +52,99 @@ Pattern::Pattern(int heigth, int width, std::shared_ptr<ImageStore> img_store) :
 //	return;
 //}
 
+// n_checkersize in pixel
+cv::Mat Pattern::generateCheckerboard(
+	const int pixel_x,
+	const int pixel_y,
+	const int n_checkersize)
+{
+	CV_Assert(pixel_x > 0 && pixel_y > 0);
+	CV_Assert(n_checkersize >= 0);
+
+	cv::Mat pattern(pixel_y, pixel_x, CV_64F, cv::Scalar(0.0));
+
+	const int W = pixel_x;
+	const int H = pixel_y;
+
+	// ---------- SPECIAL CASE: symmetric 2x2 checkerboard ----------
+	if (n_checkersize == 0) {
+
+		// image center in pixel coordinates
+		const double cx = (W - 1) * 0.5;
+		const double cy = (H - 1) * 0.5;
+
+		for (int y = 0; y < H; ++y) {
+			double* ptr = pattern.ptr<double>(y);
+			for (int x = 0; x < W; ++x) {
+
+				const bool right = (x > cx);
+				const bool bottom = (y > cy);
+
+				// XOR gives checkerboard pattern
+				const bool white = right ^ bottom;
+				ptr[x] = white ? 255.0 : 0.0;
+			}
+		}
+		return pattern;
+	}
+
+	// ---------- GENERAL CASE: regular checkerboard ----------
+	CV_Assert(n_checkersize < W && n_checkersize < H);
+
+	for (int y = 0; y < H; ++y) {
+		double* ptr = pattern.ptr<double>(y);
+		const int by = y / n_checkersize;
+		for (int x = 0; x < W; ++x) {
+			const int bx = x / n_checkersize;
+			const bool white = (bx + by) & 1;
+			ptr[x] = white ? 255.0 : 0.0;
+		}
+	}
+
+	return pattern;
+}
+
+
+
+
+cv::Mat Pattern::generateCross(
+	const int pixel_x,
+	const int pixel_y,
+	const double mid_x,
+	const double mid_y,
+	const int thickness)
+{
+	// checks if the value is odd. We want even values vor symmetrie
+	// This function only works for even pixel_x and even even pixely
+	CV_Assert(!(thickness & 1) && !(pixel_x & 1) && !(pixel_y & 1));
+	CV_Assert((pixel_x > 0) && (pixel_y > 0));
+	CV_Assert((mid_x > 0) && (mid_x < pixel_x));
+	CV_Assert((mid_y > 0) && (mid_y < pixel_y));
+	CV_Assert(thickness > 1);
+	
+	int x_start, x_end, y_start, y_end;
+	x_start = std::ceil(mid_x - (thickness/2.0));
+	x_end = std::floor(mid_x + (thickness / 2.0));
+
+	y_start = std::ceil(mid_y - (thickness / 2.0));
+	y_end = std::floor(mid_y + (thickness / 2.0));
+
+	cv::Mat pattern(pixel_y, pixel_x, CV_64F, cv::Scalar(0));
+	for (int row = 0; row < pattern.rows; ++row) {
+		double* const ptr = pattern.ptr<double>(row);
+		for (int cols = 0; cols < pattern.cols; ++cols) {
+			if ((row >= y_start) && (row <= y_end)) {
+				ptr[cols] = 255;
+				continue;
+			}
+			if ((cols >= x_start) && (cols <= x_end)) {
+				ptr[cols] = 255;
+			}
+		}
+	}
+	return pattern;
+}
+
 std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(int stepwidth)
 {
 	std::vector<cv::Mat> grayFrames;

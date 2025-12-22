@@ -28,6 +28,20 @@ public:
 		max_parameter
 	};
 
+	cv::Mat generateCross(
+		const int pixel_x,
+		const int pixel_y,
+		const double mid_x,
+		const double mid_y,
+		const int thickness
+	);
+
+	cv::Mat generateCheckerboard(
+		const int pixel_x,
+		const int pixel_y,
+		const int n_checker_size
+	);
+
 	//void grayValueCalibration();
 	void generate_phaseShift(Shift_mode, int n_periods_y = 10);
 

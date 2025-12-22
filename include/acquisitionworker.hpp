@@ -75,11 +75,15 @@ private:
                 cv::Mat view(buffer->Height(), buffer->Width(),
                     CV_8UC1, (void*)buffer->BasePtr(), buffer->Width());
 
+                /*std::cout << "Channels " << view.channels() << '\n';
+                std::cout << "Size " << view.size() << '\n';*/
                 // convert bayer to gray
                 cv::Mat gray;
-                cv::cvtColor(view, gray, cv::COLOR_BayerRG2GRAY);
+                cv::rotate(view, gray, cv::ROTATE_180);
 
-                cv::rotate(gray, gray, cv::ROTATE_180);
+                
+                cv::cvtColor(gray, gray, cv::COLOR_BayerRG2GRAY);
+                
                 // Always store raw if wanted
                 //m_store->add(FrameRole::RawFrame, gray);
 

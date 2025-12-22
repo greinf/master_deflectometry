@@ -288,6 +288,16 @@ public:
 	std::vector<double> extract_Row_reprojection(int x);
 	std::vector<double> extract_Row_unwrap(int x);
 
+	// Setup for calculating weights for the gain of single color channels -> BayerRG setup
+	// Return {B,G,R}
+	// Because the Bild was rotated in this context RGB !!!
+	std::array<double, (std::size_t)3> doWhiteBalance(
+		const std::vector<cv::Mat>&,
+		int roi_x,
+		int roi_y,
+		int roi_width,
+		int roi_height);
+
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> do_calibration_Points(
 		const std::vector<cv::Mat>& unwrapped,
 		const cv::Mat& mask,

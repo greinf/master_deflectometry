@@ -184,6 +184,89 @@ bool Camera::adjustSettings(std::size_t i) {
 
     using namespace peak::core::nodes;
 
+
+    //// Small functionality to search for nodes 
+    //for (const auto& node : nm->Nodes()) {
+    //    const std::string name = node->Name();
+
+    //    // case-insensitive search
+    //    auto contains = [&](const std::string& key) {
+    //        return std::search(
+    //            name.begin(), name.end(),
+    //            key.begin(), key.end(),
+    //            [](char a, char b) {
+    //                return std::tolower(a) == std::tolower(b);
+    //            }
+    //        ) != name.end();
+    //        };
+
+    //    if (contains("gain") || contains("exposure")) {
+    //        std::cout
+    //            << name
+    //            << ", readable=" << node->IsReadable()
+    //            << "]\n";
+    //    }
+    //}
+
+    auto gainSelector =
+        std::dynamic_pointer_cast<peak::core::nodes::EnumerationNode>(nm->FindNode("GainSelector"));
+
+    // Gain
+    auto gain =
+        std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("Gain"));
+
+    if (!gainSelector || !gain) {
+        std::cerr << "GainSelector or Gain node not found \n";
+        return false;
+    }
+
+    if (gain && gainSelector) {
+        try {
+            std::array<std::string, (std::size_t)3> color{ "Red", "Green", "Blue" };
+            std::array<double, (std::size_t)3> gain_val{ 1.53982, 1.0, 1.24211 }; //   1.198660134060, 1.0, 1.5666735106970 
+            for (std::size_t i = 0; i < color.size(); ++i) {
+                gainSelector->SetCurrentEntry(color[i]);
+                gain->SetValue(gain_val[i]);
+                std::cout << "Set " << color[i] << " gain to: " << gain_val[i] << '\n';;
+            }
+
+            for (std::size_t i = 0; i < color.size(); ++i) {
+                gainSelector->SetCurrentEntry(color[i]);
+                std::cout << color[i] << ": " << gain->Value() << '\n';
+            }
+
+            /*gain->SetValue(gain->Minimum());
+            std::cout << "Gain value is set to " << gain->Value() << '\n';
+            runtime_flags.camera_data.gain = gain->Value();*/
+        }
+        catch (const std::exception& e) {
+            std::cout << "EXCEPTION (Gain): " << e.what() << '\n';
+            return false;
+        }
+    }
+
+    
+
+    if (gainSelector) {
+        for (const auto& entry : gainSelector->AvailableEntries()) {
+            std::cout << entry->DisplayName() << '\n';
+        }
+    }
+
+    auto pixelFormatNode =
+        std::dynamic_pointer_cast<EnumerationNode>(nm->FindNode("PixelFormat"));
+    
+    if (pixelFormatNode) {
+        std::cout << "PixelFormat name Found: \n";
+        for (const auto& entry : pixelFormatNode->AvailableEntries()) {
+            std::cout << "Pixel Format " << entry->Name() << '\n';
+        }
+    }
+    else std::cout << "PixelFormat Node not available \n";
+
+
+
+
     // ExposureMode
     auto exposure_mode =
         std::dynamic_pointer_cast<EnumerationNode>(nm->FindNode("ExposureMode"));
@@ -211,7 +294,7 @@ bool Camera::adjustSettings(std::size_t i) {
         std::dynamic_pointer_cast<FloatNode>(nm->FindNode("AcquisitionFrameRateConv"));
     if (frame_rate) {
         try {
-            frame_rate->SetValue(4.0);
+            frame_rate->SetValue(2.5);
             std::cout << "Current Frame Rate " << frame_rate->Value() << '\n';
             runtime_flags.camera_data.frame_rate = frame_rate->Value();
         }
@@ -236,20 +319,7 @@ bool Camera::adjustSettings(std::size_t i) {
         }
     }
 
-    // Gain
-    auto gain =
-        std::dynamic_pointer_cast<FloatNode>(nm->FindNode("Gain"));
-    if (gain) {
-        try {
-            gain->SetValue(gain->Minimum());
-            std::cout << "Gain value is set to " << gain->Value() << '\n';
-            runtime_flags.camera_data.gain = gain->Value();
-        }
-        catch (const std::exception& e) {
-            std::cout << "EXCEPTION (Gain): " << e.what() << '\n';
-            return false;
-        }
-    }
+    
 
     std::cout << "wait\n";
     return true;

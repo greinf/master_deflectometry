@@ -24,4 +24,9 @@ enum class AcquisitionMode {
 	Automatic,
 };
 
+enum class ReferenceMode {
+	cross,
+	checkerboard
+};
+
 #endif // !1

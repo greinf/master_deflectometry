@@ -13,6 +13,7 @@
 enum class Shift_mode;
 enum class FrameRole;
 enum class UnwrapMode;
+enum class ReferenceMode;
 
 class Pattern;
 class AcquisitionWorker;
@@ -63,6 +64,15 @@ public:
 		 const cv::Mat& dist_coeffs
 	 );
 
+	 std::vector<cv::Mat> getFrames(FrameRole);
+
+	 //1280 x 1024
+	 std::array<double, (std::size_t)3> doWhiteBalance(
+	 const std::vector<cv::Mat>&,
+	 int roi_x = 250,
+	 int roi_y = 250,
+	 int roi_width = 200,
+	 int roi_height = 200);
 
 	 std::vector<cv::Vec2d> distortionPipelineTest(
 	 const cv::Mat& mat,
@@ -113,6 +123,12 @@ public:
 		 const double screen_height
 	 );
 
+	 cv::Mat do_reference_Pattern(
+		 const ReferenceMode mode,
+		 const int n_pics,
+		 bool save,
+		 const std::string& path
+	 );
 
 	 // Function to create GrayValue calibration. 
 	 // n_pics_per_value: the ammount of pictures taken per gray value

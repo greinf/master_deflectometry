@@ -99,6 +99,9 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
 
     cv::cvtColor(debug, debug, cv::COLOR_GRAY2BGR);
 
+    //Debug
+    double minX{}, minY{}, maxX{}, maxY{};
+
     for (double rowd = 0; rowd < sz.height; rowd += step_Y) {
         int row = std::min(int(rowd), sz.height - 1);
         const double* x_ptr = unwrapped[0].ptr<double>(row);
@@ -112,31 +115,101 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
 
             //double theoretical_limitX{ static_cast<double>(wavelength * sz.width) };
             //double theoretical_limitY{ static_cast<double>(wavelength * sz.height) };
-
+            
             double phaseValX = x_ptr[cols];
             double phaseValY = y_ptr[cols];
+
+            //Debug step not really clean !!! 
+            if ((phaseValX<=0) || (phaseValY<=0)) continue;
 
             double X_pixel = (phaseValX / CV_2PI) * wavelength;
             double Y_pixel = (phaseValY / CV_2PI) * wavelength;
 
             double X_mm = X_pixel * pixe_pitch_mm;
             double Y_mm = Y_pixel * pixe_pitch_mm;
+            
+            minX = std::min(minX, X_mm);
+            minY = std::min(minY, Y_mm);
+            maxX = std::max(maxX, X_mm);
+            maxY = std::max(maxY, Y_mm);
+
             imagePoints.emplace_back(cv::Vec2d(cols, row));
-            objectPoints.emplace_back(cv::Vec3d(X_mm, Y_mm, 0));
-            //std::cout << "ImagePoints: " << cv::Vec2d(cols, row) << '\n';
-            //std::cout << "ObjectPoints: " << cv::Vec3d(X_mm, Y_mm, 0) << '\n';
+            objectPoints.emplace_back(X_mm, Y_mm, 0);
+                
+            /*std::cout << "ImagePoints: " << cv::Vec2d(cols, row) << '\n';
+            std::cout << "ObjectPoints: " << cv::Vec3d(X_mm, Y_mm, 0) << '\n';*/
             cv::drawMarker(debug, cv::Point(cols, row), cv::Scalar(0, 255, 0), cv::MARKER_CROSS);
         }
     }
+
+    std::cout << "Object Points: \n" <<
+        "minVal: X: " << minX << " Y: " << minY << '\n' <<
+        "maxVal: X: " << maxX << " Y: " << maxY << '\n';
+
+    std::cout << "Image Points: \n" <<
+        "maxVal: X: " << sz.width << " Y: " << sz.height << '\n';
+
     output.first = imagePoints;
     output.second = objectPoints;
 
     cv::normalize(debug, debug, 0, 255, cv::NORM_MINMAX, CV_8SC3);
     cv::imshow("debug", debug);
     cv::waitKey(0);
+    cv::destroyWindow("debug");
     return output;
 }
 
+
+
+std::array<double, (std::size_t)3> ImageProcessing::doWhiteBalance(
+    const std::vector<cv::Mat>& vec,
+    int roi_x,
+    int roi_y,
+    int roi_width,
+    int roi_height) {
+    //Be carefull, only valid for BayerRG setup
+
+    CV_Assert(roi_x >= 0 && roi_y >= 0);
+    CV_Assert(roi_width > 0 && roi_height > 0);
+    CV_Assert(std::all_of(vec.begin(), vec.end(),
+        [](const cv::Mat& mat) ->bool {
+            return (!mat.empty() && (mat.type() == CV_8UC1));
+        }));
+    cv::Mat white_mean = mean(vec);
+    cv::Size sz = white_mean.size();
+    double g{}, b{}, r{};
+    int g_n{}, b_n{}, r_n{};
+
+    for (int row = roi_y; row < roi_y + roi_height; row += 2) {
+        //ptr_G RGRGR ...
+        //ptr_B GBGBG ...
+        const double* ptr_R = white_mean.ptr<double>(row);
+        const double* ptr_B = white_mean.ptr<double>(row + 1);
+        for (int cols = roi_x; cols < roi_x + roi_width; ++cols) {
+            if (cols % 2) {
+                g += ptr_R[cols];
+                b += ptr_B[cols];
+                ++g_n;
+                ++b_n;
+            }
+            else {
+                r += ptr_R[cols];
+                g += ptr_B[cols];
+                ++r_n;
+                ++g_n;
+            }
+        }
+    }
+    if (!g_n || !b_n || !r_n) {
+        return { 1, 1, 1 };
+    }
+
+    const double meanR = r / r_n;
+    const double meanB = b / b_n;
+    const double meanG = g / g_n;
+
+    return { meanG / meanR, 1.0, meanG / meanB };
+}
 
 std::vector<double> ImageProcessing::extract_Column(const cv::Mat& picture, const cv::Mat& mask, int col) {
     CV_Assert(picture.size() == mask.size());
@@ -234,7 +307,7 @@ cv::Mat ImageProcessing::do_reprojection_error(
     std::vector<cv::Vec2d> img_pts;
     img_pts.reserve(caliPoints.first.size());
     for (const auto& v : caliPoints.first)
-        img_pts.emplace_back(v[0], v[1]);
+        img_pts.emplace_back(cv::Vec2d(v[0], v[1]));
 
     std::vector<cv::Vec2d> undist;
 
@@ -244,11 +317,11 @@ cv::Mat ImageProcessing::do_reprojection_error(
     if (dist_ptr[0] || dist_ptr[1] || dist_ptr[2] || dist_ptr[3]) {  // 
         std::cout << "In Reprojection: Use Undistort Pipeline \n";
         // --- DistortImagePoints --- 
-        undist = distortImagePoints(img_pts, caliMatrix, distCoeffs);
-        //cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
-
+        //undist = distortImagePoints(img_pts, caliMatrix, distCoeffs);
+        cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
+        //undist = img_pts;
         //undistortion
-       /* for (const auto& vec : img_pts) {
+        /*for (const auto& vec : img_pts) {
             undist.emplace_back(undistortImagePts(vec, caliMatrix, distCoeffs));
         }*/
     }
@@ -727,7 +800,7 @@ std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
     CV_Assert(wrapped[0].type() == contrast[0].type());
     CV_Assert(wrapped[0].size() == contrast[0].size());
 
-    cv::Mat mask = createMask(contrast, 0.5);
+    cv::Mat mask = createMask(contrast, 0.3);
 
     std::vector<cv::Mat> unwrapped_phase(2);
     for (auto& m : unwrapped_phase) { m = cv::Mat::zeros(wrapped[0].size(), CV_64F); }

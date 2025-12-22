@@ -34,7 +34,10 @@ public:
     void showCamera(const cv::Mat& img) {
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            img.copyTo(m_camFrame);
+            cv::Mat image;
+            if (ptr) image = ptr(img);
+            else image = img;
+            image.copyTo(m_camFrame);
         }
     }
 
@@ -75,7 +78,12 @@ private:
         cv::namedWindow("Processed", cv::WINDOW_NORMAL);
 
         cv::setWindowProperty("Camera", cv::WND_PROP_TOPMOST, 1);
-        cv::setWindowProperty("Pattern", cv::WND_PROP_TOPMOST, 1);
+        cv::setWindowProperty(
+            "Pattern",
+            cv::WND_PROP_FULLSCREEN,
+            cv::WINDOW_FULLSCREEN
+        );
+        cv::moveWindow("Pattern", 1920, 0);
 
         while (m_running.load()) {
             cv::Mat cam, pat, proc;
