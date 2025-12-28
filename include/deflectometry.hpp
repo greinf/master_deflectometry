@@ -58,6 +58,12 @@ public:
 	 //std::pair<double, double> fitLine1D(const std::vector<double>& y);
 	 //
 
+	 std::vector<cv::Vec2d> getReferencePoint(
+		 const std::vector<cv::Mat>& img,
+		 const ReferenceMode mode,
+		 const cv::Mat& mask
+	 );
+
 	 cv::Mat undistortImageManuell(
 		 const cv::Mat& img,
 		 const cv::Mat& cam,

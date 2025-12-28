@@ -387,16 +387,61 @@ cv::Mat Deflectometry::do_reference_Pattern(
 	CV_Assert(n_pics > 0);
 	CV_Assert(static_cast<int>(mode) < 2 &&
 		static_cast<int>(mode) >= 0);
-	
-	cv::Mat pattern = m_pattern->generateCheckerboard(1920, 1080, 100);
+
 	//cv::Mat pattern = m_pattern->generateCross(1920, 1080, 1920.0 / 2, 1080.0 / 2, 4);
 
-	/*cv::Mat pattern = (static_cast<int>(mode)) ?
-		m_pattern->generateCheckerboard() :
-		m_pattern->generateCross();*/
+	cv::Mat pattern = (static_cast<int>(mode)) ?
+		m_pattern -> generateCheckerboard(1920, 1080, 0) :
+		m_pattern -> generateCross(1920, 1080, 1920.0 / 2, 1080.0 / 2, 4);
 	return pattern;
 
 }
+
+// ReferenceMode cross = 0,
+// checkerboard = 1
+std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
+	const std::vector<cv::Mat>& img,
+	const ReferenceMode mode,
+	const cv::Mat& mask)
+{
+	CV_Assert(!img.empty());
+
+	std::vector<cv::Vec2d> refPoint;
+	std::vector<cv::Vec2d> refinedPoint;
+	switch (static_cast<int>(mode)) {
+	case(static_cast<int>(ReferenceMode::cross)):
+		std::cout << "Not implemented Path !!";
+		return {};
+	case(static_cast<int>(ReferenceMode::checkerboard)):
+
+		
+		cv::Mat templ = m_img_processing->getTemplateChess(img[0], cv::Size{311, 311});
+		cv::Mat templfloat;
+		//templ.convertTo(templfloat, CV_64F);
+
+		//double val = m_img_processing->bilinearInterpolation(templfloat, { 49.5 ,49.5 });
+		refPoint = m_img_processing -> harrisCornerDetection(img, { 5,5 });
+
+		
+
+		refinedPoint = m_img_processing->doTemplateMatching(refPoint, img, templ);
+
+		cv::Mat color;
+		cv::Mat check;
+		cv::normalize(img[0], check, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::cvtColor(check, color, cv::COLOR_GRAY2BGR);
+
+		cv::Point point(refPoint[0][1], refPoint[0][0]);
+		cv::drawMarker(color, point, cv::Scalar(255, 0, 0), 0, 100);
+		
+		cv::imshow("checking", color);
+		cv::waitKey(0);
+
+		return {};
+	}
+}
+
+
 
 cv::Mat Deflectometry::undistortImage(const cv::Mat& img, const cv::Mat& cam_Matrix, const cv::Mat& dist_Coeffs) {
 

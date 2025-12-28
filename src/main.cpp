@@ -36,8 +36,8 @@ auto showNormalized = [](const cv::Mat& img) {
     CV_Assert(img.channels() == 1);
     cv::Mat gray;
     if (img.type() != CV_8U) {
-        img.convertTo(gray, CV_8U);
-        cv::normalize(gray, gray, 0, 255, cv::NORM_MINMAX, CV_8U);
+        //img.convertTo(gray, CV_8U);
+        cv::normalize(img, gray, 0, 255, cv::NORM_MINMAX, CV_8U);
     }
     else gray = img;
     cv::imshow("normalized", gray);
@@ -48,6 +48,18 @@ auto showNormalized = [](const cv::Mat& img) {
 //C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23 GrayLut for Desktop at FH
 //C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22 GrayLut for Deskotp BMZ
 
+auto show1to1 = [](const cv::Mat& img) {
+    CV_Assert(img.channels() == 1);
+
+    cv::Mat u8;
+    if (img.type() == CV_8U) u8 = img;
+    else cv::normalize(img, u8, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+    cv::namedWindow("normalized", cv::WINDOW_AUTOSIZE); // wichtig: 1:1
+    cv::imshow("normalized", u8);
+    cv::waitKey(0);
+    cv::destroyWindow("normalized");
+    };
 
 int main()
 {
@@ -74,8 +86,23 @@ int main()
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_out_camera_data_First_real_calib.xml" };
 
-    cv::Mat pattern = meassure.do_reference_Pattern(ReferenceMode::cross, (int)4, true, path);
-    showNormalized(pattern);
+    cv::Mat pattern = meassure.do_reference_Pattern(ReferenceMode::checkerboard, (int)4, true, path);
+
+
+    show1to1(pattern);
+
+    cv::Mat mask;// (pattern.size(), CV_8U);
+    std::vector<cv::Mat> pattern_vec{ pattern };
+
+    std::vector<cv::Vec2d> ref_point=
+        meassure.getReferencePoint(pattern_vec, ReferenceMode::checkerboard, mask);
+    
+    std::cout << ref_point.size() << " Reference Point found. \n";
+    for (const auto& point : ref_point) {
+        std::cout << point << '\n';
+    }
+
+    
     //std::vector<cv::Mat> pattern = meassure.generatePattern(true, path);
     
     //// Calibrated Gray Value 4 Phase Shift - 

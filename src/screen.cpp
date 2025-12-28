@@ -69,22 +69,23 @@ cv::Mat Pattern::generateCheckerboard(
 	// ---------- SPECIAL CASE: symmetric 2x2 checkerboard ----------
 	if (n_checkersize == 0) {
 
-		// image center in pixel coordinates
-		const double cx = (W - 1) * 0.5;
-		const double cy = (H - 1) * 0.5;
+		const int mx = W / 2;
+		const int my = H / 2;
 
 		for (int y = 0; y < H; ++y) {
 			double* ptr = pattern.ptr<double>(y);
+			const bool bottom = (y >= my);
 			for (int x = 0; x < W; ++x) {
-
-				const bool right = (x > cx);
-				const bool bottom = (y > cy);
-
-				// XOR gives checkerboard pattern
+				const bool right = (x >= mx);
 				const bool white = right ^ bottom;
 				ptr[x] = white ? 255.0 : 0.0;
 			}
 		}
+		/*cv::Mat gray;
+		cv::normalize(pattern, gray, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::imshow("pattern", gray);
+		cv::waitKey(0);
+		cv::imwrite("C:/Users/grein/Desktop/josepha.jpg", gray);*/
 		return pattern;
 	}
 

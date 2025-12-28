@@ -281,6 +281,50 @@ public:
 
 	void save_Reprodata(const std::string& path);
 
+	std::vector<cv::Vec2d> getRefinedCheckerboardCorner(
+		const std::vector<cv::Mat> img,
+		const cv::Size sz
+	);
+
+	std::vector<cv::Vec2d> harrisCornerDetection(
+		const cv::Mat& img,
+		const cv::Size& window_sz,
+		const double k1 = 0.04, 
+		bool blur = true, 
+		bool gaussian_window = true
+	);
+
+	std::vector<cv::Vec2d> doTemplateMatching(
+		std::vector<cv::Vec2d>& corners,
+		const cv::Mat& img,
+		const cv::Mat& templ
+	);
+
+	double bilinearInterpolation(
+		const cv::Mat& img,
+		const cv::Vec2d& coordintate
+	);
+
+	std::vector<cv::Vec2d> doTemplateMatching(
+		std::vector<cv::Vec2d>& corners,
+		const std::vector<cv::Mat>& img,
+		const cv::Mat& templ
+	);
+
+	cv::Mat ImageProcessing::getTemplateChess(
+		const cv::Mat img,
+		const cv::Size sz = { 50,50 }
+	);
+
+	// Just a helper function that means over vector before doing the Corner Detection
+	std::vector<cv::Vec2d> harrisCornerDetection(
+		const std::vector<cv::Mat>& img,
+		const cv::Size& window_sz,
+		const double k1 = 0.04, 
+		bool blur = true, 
+		bool gaussian_window = true
+	);
+
 
 	std::vector<double> extract_Column_unwrap(int x);
 	std::vector<double> extract_Column_reprojection(int x);

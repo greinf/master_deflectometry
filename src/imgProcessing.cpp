@@ -16,6 +16,9 @@
 #include <new>
 #include <opencv2/core/hal/interface.h>
 #include <opencv2/core/traits.hpp>
+#include <numeric>
+#include <algorithm>
+#include <cmath>
 
 
 //Allocator!!!! must be fixed 
@@ -66,7 +69,402 @@ ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(cv::Mat& mat) const {
     return helper;
 }
 
+std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
+    const std::vector<cv::Mat>& img,
+    const cv::Size& window_sz,
+    const double k1, 
+    bool blur,
+    bool gaussian_w)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(window_sz.area() > 0);
+    CV_Assert(k1 > 0);
+    if (img.size() == 1) return harrisCornerDetection(img[0], window_sz, k1, blur, gaussian_w);
 
+    cv::Mat mean_img = mean(img);
+    return harrisCornerDetection(mean_img, window_sz, k1, blur, gaussian_w);
+}
+
+
+
+// Use Bilinear Interpolation
+// Expet the Vec2d to be (y,x)!
+double ImageProcessing::bilinearInterpolation(
+    const cv::Mat& img,
+    const cv::Vec2d& coord)
+{
+    CV_Assert(img.type() == CV_64F);
+    CV_Assert(img.size().area() > 2);
+    CV_Assert(img.channels() == 1);
+    CV_Assert(coord.val[0] >= 0 && coord.val[1] >= 0);
+    CV_Assert(img.rows > coord.val[0] && img.cols > coord.val[1]);
+
+    double floorX, ceilX, floorY, ceilY;
+    cv::Mat coordMat(2, 2, CV_64F);
+    cv::Mat vec1(1, 2, CV_64F), vec2(2, 1, CV_64F);
+    double* first = coordMat.ptr<double>(0);
+    double* vec1ptr = vec1.ptr<double>(0);
+    double* vec2ptr = vec2.ptr<double>(0);
+
+    floorY = std::floor(coord[0]);
+    ceilY = std::ceil(coord[0]);
+    
+    floorX = std::floor(coord[1]);
+    ceilX = std::ceil(coord[1]);
+
+    bool sameY(floorY == ceilY);
+    bool sameX(floorX == ceilX);
+    
+    // Validity check, Methode would fail for integer (nothing to interpolate)
+    if(sameX) {
+        if (sameY) return img.at<double>(static_cast<int>(coord[0]), 
+            static_cast<int>(coord[1]));
+        else {
+            double val;
+            double denom = ceilY - floorY;
+            val = (ceilY - coord[0]) * img.at<double>(static_cast<int>(ceilY), static_cast<int>(coord[1])) / denom +
+                (coord[0] - floorY) * img.at<double>(static_cast<int>(floorY), static_cast<int>(coord[1])) / denom;
+            return val;
+        }
+    }
+
+    if (sameY) {
+        // same X was checked before
+        double val;
+        double denom = ceilX - floorX;
+        val = (ceilX - coord[1]) * img.at<double>(static_cast<int>(coord[0]), static_cast<int>(ceilX)) / denom +
+            (coord[1] - floorX) * img.at<double>(static_cast<int>(coord[0]), static_cast<int>(floorX)) / denom;
+        return val;
+    }
+
+    const double* floor_row = img.ptr<double>(floorY);
+    const double* ceil_row = img.ptr<double>(ceilY);
+
+    first[0] = floor_row[static_cast<int>(floorX)];
+    first[1] = ceil_row[static_cast<int>(floorX)];
+    first[2] = floor_row[static_cast<int>(ceilX)];
+    first[3] = ceil_row[static_cast<int>(ceilX)];
+
+    double scalar = 1 / ((ceilX - floorX) * (ceilY - floorY));
+    vec1ptr[0] = (ceilX - coord[1]);
+    vec1ptr[1] = (coord[1] - floorX);
+
+    vec2ptr[0] = (ceilY - coord[0]);
+    vec2ptr[1] = (coord[0] - floorY);
+    
+    cv::Mat result = (vec1 * coordMat * vec2);
+    if (result.size().area() == 1) return  scalar * result.at<double>(0, 0);
+    else throw std::runtime_error("Bilinear Interpolation creates not reasonable values");
+    return {};
+    
+}
+
+
+
+// --- Build Jacobian to linearis the Problem
+// x = x_0 + t_x + u * cos(aplpha) - v*sin(alpha)
+// y = y_0 + t_x + u * sin(alpha) + v*cols(alpha)
+// parameters theta = (tx,ty, alpha)
+// res = sum(over (u,v)) w(u,v) * ((I(x(theta), x(theta)) - T(u,v)) = w(u,v) * I(x(theta), y(theta))-T
+// linearisiere the problem (without we would not be able to otimize): 
+// d(res)/d(theta)= w(u,v) * ( dI/dx * dx/d(theta) , dI/dy * dy/d(theta)) 
+// res(theata + sigma) = r(theta) + dr/d(theata) * sigma
+// this we can optimize
+// min res = Sum(u,v) w(u,v)*(r+J*sigma)^2
+// dres/dsigma = Sum(u,v) w(u,v)*2*(r+J*sigma)*J = 0 we optimize for derivative = 0
+// dres/dsigma = 0 = sum(u,v) 2*w(u,v)*r*J^T = 2*w*J^T*J*sigma
+// so we can solve this for sigma
+// let H = w*J^T*J and let g= w*J^T*r => H*sgima = -g => sigma = H^-1*(-g) we iteratte over this solution 
+// since the system is only real linear in a small area around the point
+std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
+    std::vector<cv::Vec2d>& corners,
+    const cv::Mat& img,
+    const cv::Mat& templ)
+{
+    CV_Assert(img.type() == CV_64F);
+    CV_Assert(templ.type() == CV_64F);
+    CV_Assert((templ.rows % 2) && (templ.cols % 2));
+    CV_Assert(!corners.empty());
+    CV_Assert(img.size().area() > 100);
+    CV_Assert(img.size().area() > templ.size().area());
+
+    cv::Mat templ64F;
+    if (templ.type() != CV_64F) templ.convertTo(templ64F, CV_64F);
+
+    cv::Mat img_x, img_y;
+    cv::Sobel(img, img_x, CV_64F, 1, 0);
+    cv::Sobel(img, img_y, CV_64F, 0, 1);
+
+    // --- Build the window Function Gaussian window
+    cv::Mat gaussian1D = cv::getGaussianKernel(templ.size().height, 0, CV_64F);
+    cv::Mat gaussian = gaussian1D * gaussian1D.t();
+    
+    // Just for testing just work with the frist found corner. 
+    std::vector<cv::Vec2d> corners_copy{ corners[0] };
+    
+    for (auto& corner : corners_copy) {
+        cv::Size size = templ.size();
+
+        // define the starting points in the image plane
+        // since templ.size() must be odd we do integer divition with 2 so the middle point is zero.
+        const int startPointRow = corner[0] - size.height / 2;
+        const int startPointCols = corner[1] - size.width / 2;
+        const int stopPointRow = corner[0] + size.height / 2;
+        const int stopPointCols = corner[1] + size.width / 2;
+
+        
+        cv::Vec3d sigma(0, 0, 0);
+        
+        // working variables as references to the sigma vector
+        volatile double& tx = sigma[0];
+        volatile double& ty = sigma[1];
+        volatile double& alpha = sigma[2];
+
+        //Build here the iteration loop!!!
+
+        for (int iterations = 0; iterations < 50; ++iterations) {
+            cv::Mat H(3, 3, CV_64F, cv::Scalar(0.0));
+            cv::Mat g(3, 1, CV_64F, cv::Scalar(0.0));
+            for (int temp_row = startPointRow; temp_row <= stopPointRow; ++temp_row) {
+                for (int temp_cols = startPointCols; temp_cols <= stopPointCols; ++temp_cols) {
+
+                    // shifted coordinates here coordinates U V are centered around the given Point we want to evaluate
+                    const int v = temp_row - (corner[0]);
+                    const int u = temp_cols - (corner[1]);
+
+                    cv::Mat J = (cv::Mat_<double>(2, 3) <<
+                        1.0, 0.0, -u * std::sin(alpha) - v * std::cos(alpha),
+                        0.0, 1.0, u * std::cos(alpha) - v * std::sin(alpha));
+                    // We need to calculate the Ix(u,v) Iy(u,v) and I(u,v). 
+                    // Only Problem u,v are functions itself. We call it u_warp and v_warp
+                    const double u_warp = corner[1] + tx + u * std::cos(alpha) - v * std::sin(alpha);
+                    const double v_warp = corner[0] + ty + u * std::sin(alpha) + v * std::cos(alpha);
+
+                    cv::Vec2d working_coord(v_warp, u_warp);
+
+                    const double i_inter = bilinearInterpolation(img, working_coord);
+                    const double i_x_inter = bilinearInterpolation(img_x, working_coord);
+                    const double i_y_inter = bilinearInterpolation(img_y, working_coord);
+
+                    cv::Mat IxIy = (cv::Mat_<double>(2, 1) << i_x_inter, i_y_inter);
+
+                    cv::Mat jacobian = IxIy.t() * J; // this should have as a result (1x3)
+
+                    // Template coordinate. Shifted that origin is like openCV in the left up corner
+                    // Also used for the weighting with the gaussian window
+                    const int v_templ = v + (size.height / 2);
+                    const int u_templ = u + (size.width / 2);
+                    const double r = i_inter - templ.at<double>(v_templ, u_templ);
+
+                    // The formula we are minimizing for is the min sum(u,v) w(u,v)*(r+J*sigma)^2;
+                    // Now create the building blocks H, g, sigma.
+                    double window = gaussian.at<double>(v_templ, u_templ);
+
+                    cv::Mat H_temp = window * (jacobian.t() * jacobian);
+                    cv::Mat g_temp = window * r * jacobian.t();
+
+                    H += H_temp;
+                    g += g_temp;
+                }
+            }
+            const cv::Mat it = H.inv() * (-g);
+            const double* it_ptr = it.ptr<double>(0);
+            if (it.size().area() == 3) {
+                sigma.val[0] += it_ptr[0];
+                sigma.val[1] += it_ptr[1];
+                sigma.val[2] += it_ptr[2];
+            }
+            else {
+                throw std::runtime_error("Return Vector of wrong dimension ");
+            }
+        }
+        // corner is reference to the big verctor 
+        corner = cv::Vec2d(corner[0] + sigma.val[1], corner[1] + sigma.val[0]);
+    }
+    return corners_copy;
+}
+
+cv::Mat ImageProcessing::getTemplateChess(
+    const cv::Mat img,
+    const cv::Size sz )
+{
+    CV_Assert(sz.height == sz.width);
+    CV_Assert(!(img.rows % 2));
+    CV_Assert(img.channels() == 1);
+    CV_Assert(sz.area() < img.size().area());
+    cv::Mat temp(sz, CV_64F);
+
+    cv::Mat img64;
+    if (img.type() != CV_64F) cv::normalize(img, img64, 0, 255, cv::NORM_MINMAX, CV_8U);
+    else img64 = img;
+
+    if (!(sz.height % 2)) {
+        // -- define the starting point
+        const int img_rowStart = (img.rows / 2) - (sz.height / 2);
+        const int img_colsStart = (img.cols / 2) - (sz.width / 2);
+
+        for (int row = 0; row < temp.rows; ++row) {
+            for (int cols = 0; cols < temp.cols; ++cols) {
+                temp.at<double>(row, cols) =
+                    img64.at<double>(row + img_rowStart, cols + img_colsStart);
+            }
+        }
+        /*cv::Mat show;
+        cv::normalize(temp, show, 0, 255, cv::NORM_MINMAX, CV_8U);
+        cv::imshow("template", temp);
+        cv::waitKey(0);*/
+
+        return temp;
+    }
+    else {
+        const double img_rowStart = 
+            (img.rows / 2) - (static_cast<double>(sz.height) / 2.0);
+        const double img_colsStart =
+            (img.cols / 2) - (static_cast<double>(sz.height) / 2.0);
+
+        for (int row = 0; row < temp.rows; ++row) {
+            for (int cols = 0; cols < temp.cols; ++cols) {
+                const cv::Vec2d coor{ row + img_rowStart, cols + img_colsStart };
+                temp.at<double>(row, cols) =
+                    bilinearInterpolation(img, coor);
+            }
+        }
+        /*cv::Mat show;
+        cv::normalize(temp, show, 0, 255, cv::NORM_MINMAX, CV_8U);
+        cv::imshow("template", temp);
+        cv::imwrite("C:/Users/grein/Desktop/josepha.jpg", show);
+        cv::waitKey(0);*/
+        return temp;
+    }
+
+}
+
+std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
+    std::vector<cv::Vec2d>& corner,
+    const std::vector<cv::Mat>& img,
+    const cv::Mat& templ)
+{
+    
+    CV_Assert(!corner.empty());
+    CV_Assert(!img.empty());
+    CV_Assert((templ.cols % 2) && (templ.rows % 2));
+    CV_Assert(std::all_of(img.begin(), img.end(),
+        [](const cv::Mat& image) {
+            return image.channels() == 1;
+        }));
+    CV_Assert(std::all_of(img.begin(), img.end(),
+        [&](const cv::Mat& image) {
+            return image.size() == img.begin()->size();
+        }));
+    CV_Assert(templ.size().area() < img[0].size().area());
+
+    cv::Mat img_mean = mean(img);
+
+    return doTemplateMatching(corner, img_mean, templ);
+}
+
+
+std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
+    const cv::Mat& img,
+    const cv::Size& sz,
+    const double k1,
+    bool blur, 
+    bool gaussian_window)
+{
+    CV_Assert(img.size().area() > 0);
+    CV_Assert(sz.area() > 0 && sz.area() < 100);
+    CV_Assert(sz.height == sz.width);
+    CV_Assert(sz.height % 2);
+    CV_Assert(k1 > 0);
+    CV_Assert(img.channels() == 1);
+
+    cv::Mat working = img.clone();
+    if (blur) cv::GaussianBlur(working, working, { 3,3 }, 0);
+
+    cv::Mat working64F;
+    if (working.type() != CV_64F) working.convertTo(working64F, CV_64F);
+    else working64F = working;
+
+    // --- Get d(img)/dx = img_x , d(img)/dy = img_y ---
+    cv::Mat img_x, img_y;
+    cv::Sobel(working64F, img_x, CV_64F, 1, 0, 5);
+    cv::Sobel(working64F, img_y, CV_64F, 0, 1, 5);
+
+    // --- Get helper for iterating the window
+    std::vector<int> cols_helper(sz.width);
+    std::iota(cols_helper.begin(), cols_helper.end(), -sz.width/(int)2);
+    
+    std::vector<std::pair<double, cv::Vec2d>> results;
+
+
+    // --- Create a gaussian Window for weighting the differences
+    cv::Mat window(sz, CV_64F, cv::Scalar(1));
+    if (gaussian_window) {
+        cv::Mat window1d = cv::getGaussianKernel(sz.height, 0);
+        window = window1d * window1d.t();
+    }
+
+    // --- ignore the outer points ---
+    int half = sz.width / 2;
+
+    for (int row = half; row < img.rows - half; ++row) {
+
+        std::vector<const double*> row_ptr_x;
+        std::vector<const double*> row_ptr_y;
+        row_ptr_x.reserve(sz.height);
+        row_ptr_y.reserve(sz.height);
+
+        for (int w_row = -half; w_row <= half; ++w_row) {
+            row_ptr_x.push_back(img_x.ptr<double>(row + w_row));
+            row_ptr_y.push_back(img_y.ptr<double>(row + w_row));
+        }
+
+        for (int cols = half; cols < img.cols - half; ++cols) {   // <--- wichtig: < nicht <=
+
+            double Sxx = 0.0, Syy = 0.0, Sxy = 0.0;
+
+            for (std::size_t r = 0; r < row_ptr_x.size(); ++r) {
+                const double* px = row_ptr_x[r];
+                const double* py = row_ptr_y[r];
+                const double* wrow = window.ptr<double>((int)r);
+
+                for (std::size_t cw = 0; cw < cols_helper.size(); ++cw) {
+                    int dx = cols_helper[cw];
+
+                    double ix = px[cols + dx];
+                    double iy = py[cols + dx];
+                    double w = wrow[cw];
+
+                    Sxx += w * ix * ix;
+                    Syy += w * iy * iy;
+                    Sxy += w * ix * iy;
+                }
+            }
+
+            double det = Sxx * Syy - Sxy * Sxy;
+            double trace = Sxx + Syy;
+
+            double R = det - k1 * trace * trace;   // <--- wichtig: Minus
+
+            results.emplace_back(R, cv::Vec2d((double)row, (double)cols));
+        }
+    }
+    std::sort(results.begin(), results.end(),
+        [](const std::pair<double, cv::Vec2d>& a,
+            const std::pair<double, cv::Vec2d>& b) {
+                return (a.first > b.first);
+        });
+
+    std::vector<cv::Vec2d> returnvec;
+    double k_max = results.begin()->first;
+    for (const std::pair<double, cv::Vec2d>& corner : results) {
+        returnvec.push_back(corner.second);
+        if (corner.first < k_max * 0.9) return returnvec;
+    }
+
+    std::cout << "We should never reach this path \n";
+    return {};
+}
 
 
 std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_calibration_Points(
@@ -159,7 +557,44 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
     return output;
 }
 
+std::vector<cv::Vec2d> ImageProcessing::getRefinedCheckerboardCorner(
+    const std::vector<cv::Mat> img,
+    const cv::Size sz)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(sz.area() >= 1);
+    CV_Assert(std::all_of(
+        img.begin(), img.end(), [](const cv::Mat img) {
+            return img.channels() < 2;
+        }
+    ));
 
+    cv::Mat mean_img;
+    if (img.size() > 1) {
+        mean_img = mean(img);
+    }
+    else mean_img = img[0];
+
+    std::vector<cv::Vec2d> corners;
+
+    cv::Mat img8U;
+    if (mean_img.type() != CV_8U) {
+        cv::normalize(mean_img, img8U, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+    }
+    else img8U = mean_img;
+
+    if (cv::findChessboardCorners(img8U, sz, corners)) {
+        std::cout << "Found " << corners.size() << " chessboard corner \n";
+        std::cout << "Refining ... \n";
+        cv::cornerSubPix(img, corners, cv::Size(11, 11), cv::Size(-1, -1), cv::TermCriteria(cv::TermCriteria::Type::EPS, 100, 1.0E-5));
+        return corners;
+    }
+
+    else {
+        std::cout << "Corner detection failed \n";
+        return {};
+    }
+}
 
 std::array<double, (std::size_t)3> ImageProcessing::doWhiteBalance(
     const std::vector<cv::Mat>& vec,
@@ -1580,6 +2015,11 @@ std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
 
 // Converts every Img to CV64F. Take the man value of the vector and return a CV64F img. 
 cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
+    CV_Assert(std::all_of(vec.begin(), vec.end(),
+        [](const cv::Mat& mat) {return mat.channels() == 1; }));
+
+    if (vec.size() == 1) return vec[0];
+
     for (size_t i = 1; i < vec.size(); ++i) {
         if (vec[i].size() != vec[0].size() || vec[i].type() != vec[0].type()) {
             throw std::runtime_error ("All pictures must be same kind and type. \n");
@@ -1589,7 +2029,7 @@ cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
 
     if(vec[0].type() != CV_64F) vec[0].convertTo(acc, CV_64FC1);
     
-    for (size_t i = 1; i < vec.size(); ++i) {
+    for (size_t i = 0; i < vec.size(); ++i) {
         cv::Mat temp;
         vec[i].convertTo(temp, CV_64FC1);
         acc += temp;   // pixelweise Addition
