@@ -223,7 +223,7 @@ bool Camera::adjustSettings(std::size_t i) {
     if (gain && gainSelector) {
         try {
             std::array<std::string, (std::size_t)3> color{ "Red", "Green", "Blue" };
-            std::array<double, (std::size_t)3> gain_val{ 1.53982, 1.0, 1.24211 }; //   1.198660134060, 1.0, 1.5666735106970 
+            std::array<double, (std::size_t)3> gain_val{ 1.198660134060, 1.0, 1.5666735106970 }; //   FH Dispaly 1.53982, 1.0, 1.24211
             for (std::size_t i = 0; i < color.size(); ++i) {
                 gainSelector->SetCurrentEntry(color[i]);
                 gain->SetValue(gain_val[i]);

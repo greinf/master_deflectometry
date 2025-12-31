@@ -15,6 +15,7 @@
 #include "screen.hpp"
 #include "config/CameraConfig.hpp"
 #include "config/PhaseShiftConfig.hpp"
+#include "algorithm"
 
 
 // ****Just for Fun ****
@@ -273,6 +274,7 @@ std::vector<cv::Vec2d> Deflectometry::distortionPipelineTest(
 std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const std::vector<cv::Mat>& unwrapped,
 	const std::vector<cv::Mat>& contrast,
+	const cv::Vec2d refPoint,
 	const cv::Mat& cam_Matrix,
 	const cv::Mat& dist_Coeffs,
 	const double wavelength,
@@ -284,12 +286,16 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const double screen_width,
 	const double screen_height) 
 {
-	cv::Mat mask = m_img_processing->createMask(contrast, 0.2);
+	//cv::Mat mask = m_img_processing->createMask(contrast, 0.2);
+
+	// --- Set to 0 for debugging ---
+	cv::Mat mask = m_img_processing->createMask(unwrapped, 0.0);
 
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
 			unwrapped,
 			mask,
+			refPoint,
 			wavelength,
 			grid_points_x,
 			grid_points_y,
@@ -297,27 +303,14 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			screen_width,
 			screen_height);
 
-	// --- Set to 0 for debugging --- 
-	//cv::Mat mask = m_img_processing->createMask(unwrapped, 0.0);
-
-	/*std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
-		m_img_processing->do_calibration_Points(
-			unwrapped,
-			mask,
-			wavelength,
-			grid_points_x,
-			grid_points_y,
-			1,
-			screen_width,
-			screen_height
-		);*/
-
+	// Only valid check for pixel_pitch = 1
 	//if (check_synthaticall_points(calibrationPoints)) std::cout << "Happy Calibration Points ";
 	//else std::cout << "Not so happy ";
 	// --- For debugging --
 	/*cv::Mat synthetical_camera_matrix = cv::Mat::eye(3, 3, CV_64F); 
 	cv::Mat synthetical_distortion = cv::Mat::zeros(dist_Coeffs[0].size(), CV_64F);*/
 	// --- end ---
+
 	cv::Mat rvec, tvec;
 	bool ok = cv::solvePnP(calibrationPoints.second, calibrationPoints.first,
 		cam_Matrix, dist_Coeffs, rvec, tvec,
@@ -378,7 +371,7 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 
 // ReferenceMode cross = 0,
 // checkerboard = 1
-cv::Mat Deflectometry::do_reference_Pattern(
+cv::Mat Deflectometry::generate_reference_Pattern(
 	const ReferenceMode mode,
 	const int n_pics,
 	bool save,
@@ -399,12 +392,25 @@ cv::Mat Deflectometry::do_reference_Pattern(
 
 // ReferenceMode cross = 0,
 // checkerboard = 1
+// Only the Checkerboard method is fully functioning. 
+// Two refinement methods are implemented. One Template matching optimizer doTemplateMatching()
+// and one method as a rebuild of the openCv cornersubPix that allows working with double values. 
+
 std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 	const std::vector<cv::Mat>& img,
 	const ReferenceMode mode,
-	const cv::Mat& mask)
+	const std::vector<cv::Mat>& contrastPhase)
 {
 	CV_Assert(!img.empty());
+	if (!contrastPhase.empty()) {
+		CV_Assert(std::all_of(contrastPhase.begin(), contrastPhase.end(), 
+			[&](const cv::Mat& contrast_img) ->bool {                       
+				return contrast_img.size() == img[0].size();
+			}
+		));
+	}
+
+	cv::Mat mask = m_img_processing->createMask(contrastPhase, 0.0);
 
 	std::vector<cv::Vec2d> refPoint;
 	std::vector<cv::Vec2d> refinedPoint;
@@ -414,30 +420,41 @@ std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 		return {};
 	case(static_cast<int>(ReferenceMode::checkerboard)):
 
+		// --- Start with first detecting rough position of possible corners ---
+		refPoint = m_img_processing->harrisCornerDetection(img, mask, { 5,5 });
+
+		// --- Template Matching method ---
+		// cv::Mat templ = m_img_processing->getTemplateChess(img[0], cv::Size{21, 21});
+		// refinedPoint = m_img_processing->doTemplateMatching(refPoint, img, templ);
+
+		// --- Open Cv method ---
+		// needs convertion to cv::Point2f in floating values
+		/*cv::Mat templfloat;
+		cv::Mat img8u;
+		img[0].convertTo(img8u, CV_8U);
+		std::vector<cv::Point2f> cornersub;
+		cornersub.emplace_back(cv::Point2f{ static_cast<float>(refPoint[0][1]),
+			static_cast<float>(refPoint[0][0]) });
+		cv::cornerSubPix(img8u, cornersub, { 11,11 }, { -1,-1 }, TermCriteria(TermCriteria::EPS + TermCriteria::COUNT, 30, 0.000001));*/
+
+		// --- Own Implementatoin of refine Croner ---
+		// methods works directly with cv::Vec2d (y,x) 
+		std::vector<cv::Vec2d> refinedCorner =
+			m_img_processing->refineCorner(img, refPoint, { 21,21 }, 1E-9);
+
 		
-		cv::Mat templ = m_img_processing->getTemplateChess(img[0], cv::Size{311, 311});
-		cv::Mat templfloat;
-		//templ.convertTo(templfloat, CV_64F);
-
-		//double val = m_img_processing->bilinearInterpolation(templfloat, { 49.5 ,49.5 });
-		refPoint = m_img_processing -> harrisCornerDetection(img, { 5,5 });
-
-		
-
-		refinedPoint = m_img_processing->doTemplateMatching(refPoint, img, templ);
-
 		cv::Mat color;
 		cv::Mat check;
 		cv::normalize(img[0], check, 0, 255, cv::NORM_MINMAX, CV_8U);
 		cv::cvtColor(check, color, cv::COLOR_GRAY2BGR);
 
-		cv::Point point(refPoint[0][1], refPoint[0][0]);
+		cv::Point point(refinedCorner[0][1], refinedCorner[0][0]);
 		cv::drawMarker(color, point, cv::Scalar(255, 0, 0), 0, 100);
 		
 		cv::imshow("checking", color);
 		cv::waitKey(0);
 
-		return {};
+		return refinedCorner;
 	}
 }
 
@@ -664,8 +681,10 @@ std::vector<cv::Mat> Deflectometry::generatePattern(bool save, const std::string
 	m_pattern->generate_phaseShift(Shift_mode::four_phase_shift, 10);
 
 	std::vector<cv::Mat> pattern_double = m_img_store->get(FrameRole::PatternDouble);
-	if (save)
+	if (save) {
 		m_img_store->saveRoleXML(FrameRole::PatternDouble, path);
+		m_img_store->saveRoleXML(FrameRole::RawPhase, path);
+	}
 	
 	m_img_store->show(FrameRole::PatternDouble);
 	return pattern_double;
@@ -896,6 +915,14 @@ bool Deflectometry::do_grayvalue_calibration(
 	m_img_store->saveRole(FrameRole::GrayLUT, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23");
 
 	return true;
+}
+
+std::vector<cv::Mat> Deflectometry::getFrames(
+	FrameRole role,
+	cv::Mat& img)
+{
+	m_screenDisplay->showPattern(img);
+	return getFrames(role);
 }
 
 std::vector<cv::Mat> Deflectometry::getFrames(FrameRole role) {

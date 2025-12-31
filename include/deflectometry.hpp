@@ -61,7 +61,7 @@ public:
 	 std::vector<cv::Vec2d> getReferencePoint(
 		 const std::vector<cv::Mat>& img,
 		 const ReferenceMode mode,
-		 const cv::Mat& mask
+		 const std::vector<cv::Mat>& contrast
 	 );
 
 	 cv::Mat undistortImageManuell(
@@ -70,7 +70,10 @@ public:
 		 const cv::Mat& dist_coeffs
 	 );
 
+	 // Method for connecting the camera, on user Input camera saves frame and stores it in the given FrameRole.
 	 std::vector<cv::Mat> getFrames(FrameRole);
+
+	 std::vector<cv::Mat> getFrames(FrameRole, cv::Mat& img);
 
 	 //1280 x 1024
 	 std::array<double, (std::size_t)3> doWhiteBalance(
@@ -117,6 +120,7 @@ public:
 	 std::vector<cv::Mat> do_reprojection(
 		 const std::vector<cv::Mat>& unwrapped,
 		 const std::vector<cv::Mat>& contrast, 
+		 const cv::Vec2d refPoint,
 		 const cv::Mat& cam_Matrix,
 		 const cv::Mat& dist_Coeffs,
 		 const double wavelength,
@@ -129,7 +133,7 @@ public:
 		 const double screen_height
 	 );
 
-	 cv::Mat do_reference_Pattern(
+	 cv::Mat generate_reference_Pattern(
 		 const ReferenceMode mode,
 		 const int n_pics,
 		 bool save,

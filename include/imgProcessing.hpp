@@ -288,6 +288,7 @@ public:
 
 	std::vector<cv::Vec2d> harrisCornerDetection(
 		const cv::Mat& img,
+		const cv::Mat& mask,
 		const cv::Size& window_sz,
 		const double k1 = 0.04, 
 		bool blur = true, 
@@ -298,6 +299,18 @@ public:
 		std::vector<cv::Vec2d>& corners,
 		const cv::Mat& img,
 		const cv::Mat& templ
+	);
+
+	std::vector<cv::Vec2d> findExtrema(
+		const std::vector<cv::Vec2d>&,
+		const std::vector<cv::Mat>&,
+		const cv::Size&
+	);
+
+	std::vector<cv::Vec2d> findExtrema(
+		const std::vector<cv::Vec2d>&,
+		const cv::Mat&,
+		const cv::Size&
 	);
 
 	double bilinearInterpolation(
@@ -317,14 +330,31 @@ public:
 	);
 
 	// Just a helper function that means over vector before doing the Corner Detection
+	// Return std::vector<cv::vec2d> in (y,x)
 	std::vector<cv::Vec2d> harrisCornerDetection(
 		const std::vector<cv::Mat>& img,
+		const cv::Mat& mask,
 		const cv::Size& window_sz,
 		const double k1 = 0.04, 
 		bool blur = true, 
 		bool gaussian_window = true
 	);
 
+	// Build the openCv method for refining the corners again.
+	// This methods allows double values which are prohobited in the openCV method
+	std::vector<cv::Vec2d> refineCorner(
+		const std::vector<cv::Mat>& img,
+		const std::vector<cv::Vec2d>& corners,
+		const cv::Size& sz,
+		const double eps
+	);
+
+	std::vector<cv::Vec2d> refineCorner(
+		const cv::Mat& img,
+		const std::vector<cv::Vec2d>& corners,
+		const cv::Size& sz,
+		const double eps
+	);
 
 	std::vector<double> extract_Column_unwrap(int x);
 	std::vector<double> extract_Column_reprojection(int x);
@@ -345,6 +375,7 @@ public:
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> do_calibration_Points(
 		const std::vector<cv::Mat>& unwrapped,
 		const cv::Mat& mask,
+		const cv::Vec2d& refPoint,
 		const double wavelength,
 		const int gridX,
 		const int gridY,

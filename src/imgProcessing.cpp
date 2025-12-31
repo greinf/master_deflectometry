@@ -71,18 +71,134 @@ ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(cv::Mat& mat) const {
 
 std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
     const std::vector<cv::Mat>& img,
+    const cv::Mat& mask,
     const cv::Size& window_sz,
     const double k1, 
     bool blur,
     bool gaussian_w)
 {
+    CV_Assert(mask.type() == CV_8U);
     CV_Assert(!img.empty());
     CV_Assert(window_sz.area() > 0);
     CV_Assert(k1 > 0);
-    if (img.size() == 1) return harrisCornerDetection(img[0], window_sz, k1, blur, gaussian_w);
+    if (img.size() == 1) return harrisCornerDetection(img[0], mask, window_sz, k1, blur, gaussian_w);
 
     cv::Mat mean_img = mean(img);
-    return harrisCornerDetection(mean_img, window_sz, k1, blur, gaussian_w);
+    return harrisCornerDetection(mean_img, mask, window_sz, k1, blur, gaussian_w);
+}
+
+std::vector<cv::Vec2d> ImageProcessing::refineCorner(
+    const std::vector<cv::Mat>& img,
+    const std::vector<cv::Vec2d>& corners,
+    const cv::Size& sz,
+    const double eps)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(!corners.empty());
+    CV_Assert(std::all_of(img.begin(), img.end(),
+        [&](const cv::Mat& pic) -> bool {
+            return img.begin()->size() == pic.size();
+        }));
+    CV_Assert(std::all_of(corners.begin(), corners.end(),
+        [&](const cv::Vec2d& vec) -> bool {
+            // val[0] ist Y (Reihe)
+            bool y_ok = (vec.val[0] > (sz.height / 2)) &&
+                (vec.val[0] < (img[0].rows - sz.height / 2));
+
+            // val[1] ist X (Spalte)
+            bool x_ok = (vec.val[1] > (sz.width / 2)) &&
+                (vec.val[1] < (img[0].cols - sz.width / 2));
+
+            return x_ok && y_ok;
+        }));
+    CV_Assert(sz.area() < img[0].size().area());
+    CV_Assert(eps > 0);
+
+    cv::Mat mean_img = mean(img);
+
+    return refineCorner(mean_img, corners, sz, eps);
+}
+
+std::vector<cv::Vec2d> ImageProcessing::refineCorner(
+    const cv::Mat& img,
+    const std::vector<cv::Vec2d>& corners,
+    const cv::Size& sz,
+    const double eps)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(!corners.empty());
+    CV_Assert(std::all_of(corners.begin(), corners.end(),
+        [&](const cv::Vec2d& vec) -> bool {
+            // val[0] ist Y (Reihe)
+            bool y_ok = (vec.val[0] > (sz.height / 2)) &&
+                (vec.val[0] < (img.rows - sz.height / 2));
+
+            // val[1] ist X (Spalte)
+            bool x_ok = (vec.val[1] > (sz.width / 2)) &&
+                (vec.val[1] < (img.cols - sz.width / 2));
+
+            return x_ok && y_ok;
+        }));
+    CV_Assert(sz.area() < img.size().area());
+    CV_Assert(eps > 0);
+    CV_Assert(img.type() == CV_64F);
+    CV_Assert(sz.height == sz.width);
+    CV_Assert(sz.height % 2);
+
+
+    std::vector<cv::Vec2d> corner_copy = corners;
+    cv::Mat I_x, I_y;
+    cv::Sobel(img, I_y, CV_64F, 1, 0);
+    cv::Sobel(img, I_x, CV_64F, 0, 1);
+    cv::Mat gaussian1D = cv::getGaussianKernel(sz.height, 0, CV_64F);
+    cv::Mat gaussian = gaussian1D * gaussian1D.t();
+
+
+    for (auto& corner : corner_copy) {
+        
+        for (int iteration = 0; iteration < 100; ++iteration) {
+            cv::Mat G(2, 2, CV_64F, cv::Scalar(0)); // names as in the openCV documentation
+            cv::Mat b(2, 1, CV_64F, cv::Scalar(0));
+            // Iterating steps
+        // First Iteration are with interger coordinates - this allows to be on the grid. 
+            const double img_start_row = corner[0] - static_cast<double>(sz.height / (int)2);
+            const double img_start_cols = corner[1] - static_cast<double>(sz.width / (int)2);
+            const double img_stop_row = corner[0] + static_cast<double>(sz.height / (int)2);
+            const double img_stop_cols = corner[1] + static_cast<double>(sz.width / (int)2);
+
+            const double* const gaus_ptr = gaussian.ptr<double>(0);
+            int gaus_count{ 0 };
+            for (double img_row = img_start_row; img_row <= img_stop_row; ++img_row) {
+                for (double img_col = img_start_cols; img_col <= img_stop_cols; ++img_col) {
+                    const double window_row = img_row - corner[0] - sz.height / 2;
+                    const double window_col = img_col - corner[1] - sz.height / 2;
+
+                    cv::Vec2d coord{ img_row, img_col };
+                    // Holds the gradient for the given image Point
+                    cv::Mat gradient = (cv::Mat_<double>(2, 1) <<
+                        bilinearInterpolation(I_x, coord),
+                        bilinearInterpolation(I_y, coord));
+                    cv::Mat p = (cv::Mat_<double>(2,1) <<
+                        img_col - corner[1], 
+                        img_row - corner[0]);
+                    /*cv::Mat diff_points = (cv::Mat_<double>(2, 1) <<
+                        (corner[1] - img_col), (corner[0] - img_row));*/
+                    //cv::Mat point = (cv::Mat_<double>(2, 1) << img_col, img_row);
+                    if (gaus_count >= gaussian.size().area()) throw std::runtime_error("Gausindex out of bounds. ");
+                    cv::Mat G_rc = gaus_ptr[gaus_count]*(gradient * gradient.t());
+                    G += G_rc;
+                    b += (G_rc * p);
+                    gaus_count++;
+                }
+            }
+            cv::Mat delta_sigma;
+            cv::solve(G, b, delta_sigma, cv::DECOMP_LU); // Or DECOMP_CHOLESKY
+            corner[1] -= delta_sigma.ptr<double>(0)[0];
+            corner[0] -= delta_sigma.ptr<double>(0)[1];
+            if (cv::norm(delta_sigma) < eps) break;
+        }
+    }
+    return corner_copy;
 }
 
 
@@ -156,10 +272,84 @@ double ImageProcessing::bilinearInterpolation(
     if (result.size().area() == 1) return  scalar * result.at<double>(0, 0);
     else throw std::runtime_error("Bilinear Interpolation creates not reasonable values");
     return {};
-    
+}
+
+std::vector<cv::Vec2d> ImageProcessing::findExtrema(
+    const std::vector<cv::Vec2d>& corners,
+    const std::vector<cv::Mat>& img,
+    const cv::Size& sz)
+{
+    CV_Assert(!corners.empty() || !img.empty());
+    CV_Assert(sz.area() > 0);
+    CV_Assert(img[0].size().area() > sz.area());
+
+    cv::Mat mean_img = mean(img);
+    return findExtrema(corners, mean_img, sz);
 }
 
 
+
+
+// This was put on ice but can be resumed at later time. 
+// 
+// Here we try with a quaratik
+// The goal is to approsimate a given window of a function through a polynom
+// We try to find the extrema, hopefully the corner of the chessboard location
+// q(u,v) = a*u^2 + b*u*v + c*v^2 + d*u + e*v + f
+// q(u,v) = t^T * p
+// t^T = (a,b,c,d,e,f)
+// p^T = (u^2, u*v, v^2, u, v, 1)
+// First goal approximate: 
+// residum r = Sum (over (u,v) w(u,v) * (q(u,v) - I(u,v))^2
+//
+std::vector<cv::Vec2d> ImageProcessing::findExtrema(
+    const std::vector<cv::Vec2d>& corners,
+    const cv::Mat& img,
+    const cv::Size& sz)
+{
+    CV_Assert(!corners.empty());
+    CV_Assert(std::all_of(corners.begin(), corners.end(),
+        [&img](const cv::Vec2d& vec) -> bool {
+            return ((vec[0] < img.rows) && (vec[1] < img.cols));
+        }));
+    CV_Assert(sz.height == sz.width);
+
+    // Build the gaussian window for weighting coords far from center differntly
+    cv::Mat gaussian1D = cv::getGaussianKernel(sz.height, 0, CV_64F);
+    cv::Mat gaussian = gaussian1D * gaussian1D.t();
+
+    for (const auto& corner : corners) {
+        
+        //define the coordinates we are looking at
+        double startRow = static_cast<double>(corner[0]) -
+            static_cast<double>(sz.height)/2.0;
+        double endRow = static_cast<double>(corner[0]) +
+            static_cast<double>(sz.height) / 2.0;
+
+        double startCols = static_cast<double>(corner[1]) -
+            static_cast<double>(sz.width) / 2.0;
+        double endCols = static_cast<double>(corner[1]) +
+            static_cast<double>(sz.width) / 2.0;
+        
+        // Iterate to get better approximation
+        cv::Mat coeffs(6, 1, CV_64F, cv::Scalar(1));
+        cv::Mat coords(6, 1, CV_64F);
+
+        //for (double row_img = startRow; row_img < endRow; ++row_img) {
+        //    for (double cols_img = startCols; cols_img < endCols; ++cols_img) {
+        //        // First we need to center the coordiantes. 
+        //        double& co1 = 
+        //        const double row_window = row_img - corner[0];
+        //        const double cols_window = cols_img - corner[1];
+        //        cv::Mat H(6, 6, CV_64F);
+        //        H = coeffs * coeffs.t();
+        //    }
+        //}
+        return {};
+
+    }
+    
+}
 
 // --- Build Jacobian to linearis the Problem
 // x = x_0 + t_x + u * cos(aplpha) - v*sin(alpha)
@@ -200,7 +390,7 @@ std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
     cv::Mat gaussian = gaussian1D * gaussian1D.t();
     
     // Just for testing just work with the frist found corner. 
-    std::vector<cv::Vec2d> corners_copy{ corners[0] };
+    std::vector<cv::Vec2d> corners_copy{ corners[10] };
     
     for (auto& corner : corners_copy) {
         cv::Size size = templ.size();
@@ -222,7 +412,7 @@ std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
 
         //Build here the iteration loop!!!
 
-        for (int iterations = 0; iterations < 50; ++iterations) {
+        for (int iterations = 0; iterations < 100; ++iterations) {
             cv::Mat H(3, 3, CV_64F, cv::Scalar(0.0));
             cv::Mat g(3, 1, CV_64F, cv::Scalar(0.0));
             for (int temp_row = startPointRow; temp_row <= stopPointRow; ++temp_row) {
@@ -267,13 +457,16 @@ std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
                     g += g_temp;
                 }
             }
-            const cv::Mat it = H.inv() * (-g);
-            const double* it_ptr = it.ptr<double>(0);
-            if (it.size().area() == 3) {
+            cv::Mat delta_sigma;
+            cv::solve(H, -g, delta_sigma, cv::DECOMP_CHOLESKY); 
+
+            const double* it_ptr = delta_sigma.ptr<double>(0);
+            if (delta_sigma.size().area() == 3) {
                 sigma.val[0] += it_ptr[0];
                 sigma.val[1] += it_ptr[1];
                 sigma.val[2] += it_ptr[2];
             }
+            if (cv::norm(delta_sigma) < 1e-6) break;
             else {
                 throw std::runtime_error("Return Vector of wrong dimension ");
             }
@@ -364,19 +557,25 @@ std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
 }
 
 
+
+
 std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
     const cv::Mat& img,
+    const cv::Mat& mask,
     const cv::Size& sz,
     const double k1,
     bool blur, 
     bool gaussian_window)
 {
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(mask.size() == img.size());
     CV_Assert(img.size().area() > 0);
     CV_Assert(sz.area() > 0 && sz.area() < 100);
     CV_Assert(sz.height == sz.width);
     CV_Assert(sz.height % 2);
     CV_Assert(k1 > 0);
     CV_Assert(img.channels() == 1);
+
 
     cv::Mat working = img.clone();
     if (blur) cv::GaussianBlur(working, working, { 3,3 }, 0);
@@ -411,16 +610,34 @@ std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
 
         std::vector<const double*> row_ptr_x;
         std::vector<const double*> row_ptr_y;
+        std::vector<const uchar*> mask_ptr;
         row_ptr_x.reserve(sz.height);
         row_ptr_y.reserve(sz.height);
+        mask_ptr.reserve(sz.height);
 
         for (int w_row = -half; w_row <= half; ++w_row) {
             row_ptr_x.push_back(img_x.ptr<double>(row + w_row));
             row_ptr_y.push_back(img_y.ptr<double>(row + w_row));
+            mask_ptr.push_back(mask.ptr<uchar>(row + w_row));
         }
 
-        for (int cols = half; cols < img.cols - half; ++cols) {   // <--- wichtig: < nicht <=
+        // Checks if we work with valid picture Points 
 
+        if (std::any_of(mask_ptr.begin(), mask_ptr.end(),
+            [&half](const uchar* mask_ptr) -> bool
+            {
+                bool valid = false;
+                for (int i = -half; i <= half; ++i) {
+                    if (mask_ptr[i] == 0) {
+                        valid = true;
+                        break;
+                    }
+                }
+                return valid;
+            })) continue;
+
+        for (int cols = half; cols < img.cols - half; ++cols) {   
+            
             double Sxx = 0.0, Syy = 0.0, Sxy = 0.0;
 
             for (std::size_t r = 0; r < row_ptr_x.size(); ++r) {
@@ -455,11 +672,12 @@ std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
                 return (a.first > b.first);
         });
 
+
     std::vector<cv::Vec2d> returnvec;
     double k_max = results.begin()->first;
     for (const std::pair<double, cv::Vec2d>& corner : results) {
         returnvec.push_back(corner.second);
-        if (corner.first < k_max * 0.9) return returnvec;
+        if (corner.first < k_max * 0.99) return returnvec;
     }
 
     std::cout << "We should never reach this path \n";
@@ -470,6 +688,7 @@ std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
 std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_calibration_Points(
     const std::vector<cv::Mat>& unwrapped,
     const cv::Mat& mask,
+    const cv::Vec2d& refPoint,
     const double wavelength,
     const int gridX,
     const int gridY,
@@ -483,6 +702,9 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
     CV_Assert(unwrapped[0].size() == mask.size());
     CV_Assert(gridX >= 0 && gridY >= 0);
     CV_Assert(screenWidth_mm > 0 && screenHeight_mm > 0);
+    CV_Assert((refPoint.val[0] > 0) && (refPoint.val[0] < unwrapped[0].rows));
+    CV_Assert((refPoint.val[1] > 0) && (refPoint.val[1] < unwrapped[1].cols));
+
 
     std::vector<cv::Vec2d> imagePoints;
     std::vector<cv::Vec3d> objectPoints;
@@ -497,34 +719,61 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
 
     cv::cvtColor(debug, debug, cv::COLOR_GRAY2BGR);
 
-    //Debug
-    double minX{}, minY{}, maxX{}, maxY{};
+    // --- Get the intenisty values at the reference point ---
+    const double phiRefX = bilinearInterpolation(unwrapped[0], refPoint);
+    const double phiRefY = bilinearInterpolation(unwrapped[1], refPoint);
+   
+    // Sanity check if ref is invalid, you can't anchor the coordinate system
+    CV_Assert(std::isfinite(phiRefX) && std::isfinite(phiRefY));
+    // Checks if the referencePoint is marked as valid on the mask  
+    cv::Mat mask64;
+    mask.convertTo(mask64, CV_64F);
+    CV_Assert(bilinearInterpolation(mask64, refPoint));
+
+    // --- Debug ---
+    double minX = std::numeric_limits<double>::infinity();
+    double minY = std::numeric_limits<double>::infinity();
+    double maxX = -std::numeric_limits<double>::infinity();
+    double maxY = -std::numeric_limits<double>::infinity();
 
     for (double rowd = 0; rowd < sz.height; rowd += step_Y) {
         int row = std::min(int(rowd), sz.height - 1);
         const double* x_ptr = unwrapped[0].ptr<double>(row);
         const double* y_ptr = unwrapped[1].ptr<double>(row);
         const uchar* mask_ptr = mask.ptr<uchar>(row);
+
         for (double colsd = 0; colsd < sz.width; colsd += step_X) {
             int cols = std::min(int(colsd), sz.width - 1);
             if (mask_ptr[cols] == 0) continue;
+
+            // --- This can propbaly be discarded --- 
             if (row < 0 || cols < 0) throw std::runtime_error("Index out of bounds: index < 0");
             if (row >= sz.height || cols >= sz.width) throw std::runtime_error("Index out of bounds : index > 0");
-
-            //double theoretical_limitX{ static_cast<double>(wavelength * sz.width) };
-            //double theoretical_limitY{ static_cast<double>(wavelength * sz.height) };
-            
+           
             double phaseValX = x_ptr[cols];
             double phaseValY = y_ptr[cols];
 
-            //Debug step not really clean !!! 
-            if ((phaseValX<=0) || (phaseValY<=0)) continue;
+            // --- do NOT discard negatives; just require finite ---
+            if (!std::isfinite(phaseValX) || !std::isfinite(phaseValY)) continue;
+
+            // --- anchor phases with respect to refPoint ---
+            const double dphiX = phaseValX - phiRefX;
+            const double dphiY = phaseValY - phiRefY;
+
+            // --- convert phase difference -> relativ to origin in the display center! ---
+            const double X_pixel_rel = (dphiX / CV_2PI) * wavelength;
+            const double Y_pixel_rel = (dphiY / CV_2PI) * wavelength;
+
+            // --- pixels -> mm ---
+            const double X_mm_rel = X_pixel_rel * pixe_pitch_mm;
+            const double Y_mm_rel = Y_pixel_rel * pixe_pitch_mm;
+
+            // --- shift the object points that the origin is the upper left corner ---
+            const double X_mm = X_mm_rel + (1920.0 / 2.0 * pixe_pitch_mm); //screenWidth_mm * 0.5;
+            const double Y_mm = Y_mm_rel + (1080.0 / 2.0 * pixe_pitch_mm); //screenHeight_mm * 0.5;
 
             double X_pixel = (phaseValX / CV_2PI) * wavelength;
             double Y_pixel = (phaseValY / CV_2PI) * wavelength;
-
-            double X_mm = X_pixel * pixe_pitch_mm;
-            double Y_mm = Y_pixel * pixe_pitch_mm;
             
             minX = std::min(minX, X_mm);
             minY = std::min(minY, Y_mm);
@@ -536,6 +785,7 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
                 
             /*std::cout << "ImagePoints: " << cv::Vec2d(cols, row) << '\n';
             std::cout << "ObjectPoints: " << cv::Vec3d(X_mm, Y_mm, 0) << '\n';*/
+
             cv::drawMarker(debug, cv::Point(cols, row), cv::Scalar(0, 255, 0), cv::MARKER_CROSS);
         }
     }
@@ -1235,7 +1485,7 @@ std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
     CV_Assert(wrapped[0].type() == contrast[0].type());
     CV_Assert(wrapped[0].size() == contrast[0].size());
 
-    cv::Mat mask = createMask(contrast, 0.3);
+    cv::Mat mask = createMask(contrast, 0.0);
 
     std::vector<cv::Mat> unwrapped_phase(2);
     for (auto& m : unwrapped_phase) { m = cv::Mat::zeros(wrapped[0].size(), CV_64F); }
@@ -1294,6 +1544,10 @@ cv::Mat ImageProcessing::createMask(
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
     cv::morphologyEx(maskbin, maskbin, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 2);
     cv::morphologyEx(maskbin, maskbin, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 2);
+
+    // Shrink the allowed values since we have a reference Point that is in the middle of the image.
+
+    cv::morphologyEx(maskbin, maskbin, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 4);
 
     //normalizeAndDisplay(maskbin);
     return maskbin;
@@ -2016,7 +2270,9 @@ std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
 // Converts every Img to CV64F. Take the man value of the vector and return a CV64F img. 
 cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
     CV_Assert(std::all_of(vec.begin(), vec.end(),
-        [](const cv::Mat& mat) {return mat.channels() == 1; }));
+        [](const cv::Mat& mat) -> bool 
+        { return mat.channels() == 1; }
+    ));
 
     if (vec.size() == 1) return vec[0];
 
