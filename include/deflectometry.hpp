@@ -58,10 +58,16 @@ public:
 	 //std::pair<double, double> fitLine1D(const std::vector<double>& y);
 	 //
 
+	 cv::Mat getMask(
+		 const std::vector<cv::Mat>&,
+		 const double thresh,
+		 const bool dilate
+	 );
+
 	 std::vector<cv::Vec2d> getReferencePoint(
 		 const std::vector<cv::Mat>& img,
 		 const ReferenceMode mode,
-		 const std::vector<cv::Mat>& contrast
+		 const cv::Mat& mask
 	 );
 
 	 cv::Mat undistortImageManuell(
@@ -109,7 +115,7 @@ public:
 
 	 std::vector<cv::Mat> do_unwrapped_phase(
 		 const std::vector<cv::Mat>& wrapped,
-		 const std::vector<cv::Mat>& contrast,
+		 const cv::Mat& mask,
 		 UnwrapMode mode,
 		 bool save,
 		 const std::string& save_path
@@ -119,7 +125,7 @@ public:
 
 	 std::vector<cv::Mat> do_reprojection(
 		 const std::vector<cv::Mat>& unwrapped,
-		 const std::vector<cv::Mat>& contrast, 
+		 const cv::Mat& mask, 
 		 const cv::Vec2d refPoint,
 		 const cv::Mat& cam_Matrix,
 		 const cv::Mat& dist_Coeffs,

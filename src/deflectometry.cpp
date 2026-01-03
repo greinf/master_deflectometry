@@ -273,7 +273,7 @@ std::vector<cv::Vec2d> Deflectometry::distortionPipelineTest(
 
 std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const std::vector<cv::Mat>& unwrapped,
-	const std::vector<cv::Mat>& contrast,
+	const cv::Mat& mask,
 	const cv::Vec2d refPoint,
 	const cv::Mat& cam_Matrix,
 	const cv::Mat& dist_Coeffs,
@@ -286,10 +286,9 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const double screen_width,
 	const double screen_height) 
 {
-	//cv::Mat mask = m_img_processing->createMask(contrast, 0.2);
 
 	// --- Set to 0 for debugging ---
-	cv::Mat mask = m_img_processing->createMask(unwrapped, 0.0);
+	//cv::Mat mask = m_img_processing->createMask(unwrapped, 0.0);
 
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
@@ -399,19 +398,10 @@ cv::Mat Deflectometry::generate_reference_Pattern(
 std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 	const std::vector<cv::Mat>& img,
 	const ReferenceMode mode,
-	const std::vector<cv::Mat>& contrastPhase)
+	const cv::Mat& mask)
 {
 	CV_Assert(!img.empty());
-	if (!contrastPhase.empty()) {
-		CV_Assert(std::all_of(contrastPhase.begin(), contrastPhase.end(), 
-			[&](const cv::Mat& contrast_img) ->bool {                       
-				return contrast_img.size() == img[0].size();
-			}
-		));
-	}
-
-	cv::Mat mask = m_img_processing->createMask(contrastPhase, 0.0);
-
+	
 	std::vector<cv::Vec2d> refPoint;
 	std::vector<cv::Vec2d> refinedPoint;
 	switch (static_cast<int>(mode)) {
@@ -634,13 +624,25 @@ bool Deflectometry::init() {
 	catch (std::exception& e) { std::cout << "EXCEPTION: " << e.what() << std::endl; return false; }
 }
 
+cv::Mat Deflectometry::getMask(
+	const std::vector<cv::Mat>& contrast,
+	const double thresh,
+	const bool dilate)
+{
+	CV_Assert(!contrast.empty());
+	CV_Assert(thresh > 0);
+	
+	return m_img_processing->createMask(contrast, thresh, dilate);
 
+}
 
 bool Deflectometry::disconnect() {
 	try {
-		m_acquisition_worker -> ~AcquisitionWorker();
 		m_acquisition_worker.reset();
+		m_acquisition_worker = nullptr;
 		m_acquisition_controller.reset();
+		m_acquisition_controller = nullptr;
+		
 		return true;
 	}
 	catch (std::exception& e) { std::cout << "EXCEPTION: " << e.what() << std::endl; return false; }
@@ -648,21 +650,21 @@ bool Deflectometry::disconnect() {
 
 std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 	const std::vector<cv::Mat>& wrapped_Phase,
-	const std::vector<cv::Mat>& contrast_Phase,
+	const cv::Mat& mask,
 	UnwrapMode mode,
 	bool save,
 	const std::string& save_path)
 {
-	CV_Assert(wrapped_Phase[0].size() == contrast_Phase[0].size());
-	CV_Assert(wrapped_Phase[0].type() == contrast_Phase[0].type());
+	CV_Assert(wrapped_Phase[0].size() == mask.size());
+	//CV_Assert(wrapped_Phase[0].type() == mask.type());
 	std::vector<cv::Mat> unwrappedPhase(2);
 	if (mode == UnwrapMode::manually) {
 		unwrappedPhase = 
-			m_img_processing -> manual_phaseUnwrap(wrapped_Phase, contrast_Phase);
+			m_img_processing -> manual_phaseUnwrap(wrapped_Phase, mask);
 	}
 	else if (mode == UnwrapMode::opencv) {
 		unwrappedPhase =
-			m_img_processing->unwrapped_phase(wrapped_Phase, contrast_Phase);
+			m_img_processing->unwrapped_phase(wrapped_Phase, mask);
 	}
 
 	for (const auto& img : unwrappedPhase) { m_img_store->add(FrameRole::UnwrappedPhase, img); }
@@ -700,7 +702,7 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 	int n_periods)
 {
 	// Fixed Destination of the Gray Calibration File
-	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23");
+	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-01-03FH-GrayValueLUT");
 	
 	m_pattern->generate_phaseShift(mode, n_periods);
 	if (!init()) {
@@ -912,7 +914,7 @@ bool Deflectometry::do_grayvalue_calibration(
 	//	m_img_processing->gray_value_calib(m_img_store->get(FrameRole::GrayCalibrationCam), n_pics_per_value, gray_steps);
 
 	//m_img_store->add(FrameRole::GrayLUT, std::move(LUT));
-	m_img_store->saveRole(FrameRole::GrayLUT, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23");
+	m_img_store->saveRole(FrameRole::GrayLUT, path);
 
 	return true;
 }

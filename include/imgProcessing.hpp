@@ -141,7 +141,8 @@ public:
 	// Output: CV_8U Picture, same size as Input
 	cv::Mat createMask(
 		const std::vector<cv::Mat>& vec,
-		double threshold);
+		double threshold,
+		bool dilate = false);
 
 	cv::Mat ImageProcessing::undistortImage(const cv::Mat& img,
 		const cv::Mat& K,
@@ -151,7 +152,7 @@ public:
 
 	std::vector<cv::Mat> unwrapped_phase(
 		const std::vector<cv::Mat>& wrapped_phase,
-		const std::vector<cv::Mat>& contrast);
+		const cv::Mat& mask);
 
 	void goldsteinUnwrap();
 
@@ -175,7 +176,7 @@ public:
 	// n_shifts = int Information how many Shifts per 
 	std::vector<cv::Mat> manual_phaseUnwrap(
 		const std::vector<cv::Mat>& wrapped,
-		const std::vector<cv::Mat>& contrast);
+		const cv::Mat& mask);
 
 
 	std::vector<double> ImageProcessing::extract_Column(const cv::Mat& picture, const cv::Mat& mask, int col = 0);

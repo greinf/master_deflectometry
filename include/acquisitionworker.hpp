@@ -15,7 +15,7 @@ public:
         std::shared_ptr<defl::AcquisitionController> controller,
         std::shared_ptr<ScreenDisplay> display = nullptr
         )
-        : m_camera(cam)
+        : m_camera(std::move(cam))
         , m_store(std::move(store))
         , m_display(std::move(display))
         , m_controller(std::move(controller))

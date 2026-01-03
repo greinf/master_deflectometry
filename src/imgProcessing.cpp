@@ -47,7 +47,7 @@ auto normalizeAndDisplay = [](const cv::Mat& img) -> void {
     cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
     cv::imshow("Normalized", norm);
     cv::waitKey(0);
-    //cv::destroyWindow("Normalized");
+    cv::destroyWindow("Normalized");
     };
 
 
@@ -156,7 +156,7 @@ std::vector<cv::Vec2d> ImageProcessing::refineCorner(
 
     for (auto& corner : corner_copy) {
         
-        for (int iteration = 0; iteration < 100; ++iteration) {
+        for (int iteration = 0; iteration < 1000; ++iteration) {
             cv::Mat G(2, 2, CV_64F, cv::Scalar(0)); // names as in the openCV documentation
             cv::Mat b(2, 1, CV_64F, cv::Scalar(0));
             // Iterating steps
@@ -623,21 +623,23 @@ std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
 
         // Checks if we work with valid picture Points 
 
-        if (std::any_of(mask_ptr.begin(), mask_ptr.end(),
-            [&half](const uchar* mask_ptr) -> bool
-            {
-                bool valid = false;
-                for (int i = -half; i <= half; ++i) {
-                    if (mask_ptr[i] == 0) {
-                        valid = true;
-                        break;
-                    }
-                }
-                return valid;
-            })) continue;
-
         for (int cols = half; cols < img.cols - half; ++cols) {   
-            
+
+            // Checks for allowed mask values 
+            if (std::any_of(mask_ptr.begin(), mask_ptr.end(),
+                [&half, &cols](const uchar* mask_ptr) -> bool
+                {
+                    bool invalid = false;
+                    for (int i = -half; i <= half; ++i) {
+                        if (mask_ptr[cols + i] == 0) {
+                            invalid = true;
+                            break;
+                        }
+                    }
+                    return invalid;
+                })) continue;
+
+
             double Sxx = 0.0, Syy = 0.0, Sxy = 0.0;
 
             for (std::size_t r = 0; r < row_ptr_x.size(); ++r) {
@@ -666,6 +668,12 @@ std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
             results.emplace_back(R, cv::Vec2d((double)row, (double)cols));
         }
     }
+
+    if (results.begin() == results.end()) {
+        std::cout << "Harris Corner detection did not find any valid values. \n";
+        return {};
+    }
+
     std::sort(results.begin(), results.end(),
         [](const std::pair<double, cv::Vec2d>& a,
             const std::pair<double, cv::Vec2d>& b) {
@@ -1003,12 +1011,12 @@ cv::Mat ImageProcessing::do_reprojection_error(
         std::cout << "In Reprojection: Use Undistort Pipeline \n";
         // --- DistortImagePoints --- 
         //undist = distortImagePoints(img_pts, caliMatrix, distCoeffs);
-        cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
+        //cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
         //undist = img_pts;
         //undistortion
-        /*for (const auto& vec : img_pts) {
+        for (const auto& vec : img_pts) {
             undist.emplace_back(undistortImagePts(vec, caliMatrix, distCoeffs));
-        }*/
+        }
     }
 
     else {
@@ -1479,13 +1487,12 @@ void ImageProcessing::unwrap_column(const cv::Mat& wrapped, cv::Mat& unwrapped, 
 
 std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
     const std::vector<cv::Mat>& wrapped,
-    const std::vector<cv::Mat>& contrast) 
+    const cv::Mat& mask) 
 {
-    CV_Assert(!wrapped.empty() && !contrast.empty());
-    CV_Assert(wrapped[0].type() == contrast[0].type());
-    CV_Assert(wrapped[0].size() == contrast[0].size());
+    CV_Assert(!wrapped.empty());
+    //CV_Assert(wrapped[0].type() == mask.type());
+    CV_Assert(wrapped[0].size() == mask.size());
 
-    cv::Mat mask = createMask(contrast, 0.0);
 
     std::vector<cv::Mat> unwrapped_phase(2);
     for (auto& m : unwrapped_phase) { m = cv::Mat::zeros(wrapped[0].size(), CV_64F); }
@@ -1521,7 +1528,8 @@ std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
 
 cv::Mat ImageProcessing::createMask(
     const std::vector<cv::Mat>& vec,
-    double threshold) 
+    double threshold,
+    bool dilate) 
 {
     cv::Mat maskbin, sum_contrast_n;
     CV_Assert(m_contrast[0].type() == CV_64F);
@@ -1539,17 +1547,17 @@ cv::Mat ImageProcessing::createMask(
     // Threshold
 
     cv::threshold(mask_8u, maskbin, threshold * data.maxval, 1, cv::THRESH_BINARY);
-    //normalizeAndDisplay(mask);
+    normalizeAndDisplay(maskbin);
     // Create Structuring Element for opening&closing
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
     cv::morphologyEx(maskbin, maskbin, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 2);
     cv::morphologyEx(maskbin, maskbin, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 2);
 
     // Shrink the allowed values since we have a reference Point that is in the middle of the image.
+    if(dilate) cv::morphologyEx(maskbin, maskbin, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 50);
+   
+    normalizeAndDisplay(maskbin);
 
-    cv::morphologyEx(maskbin, maskbin, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 4);
-
-    //normalizeAndDisplay(maskbin);
     return maskbin;
 }
 
@@ -2213,11 +2221,11 @@ void ImageProcessing::goldsteinUnwrap() {
 
 std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
     const std::vector<cv::Mat>& wrappedPhase,
-    const std::vector<cv::Mat>& contrast) 
+    const cv::Mat& mask) 
 {
     CV_Assert(wrappedPhase.size() == 2);
-    CV_Assert(contrast.size() == 2);
-    CV_Assert(wrappedPhase[0].size() == contrast[0].size());
+    //CV_Assert(contrast.size() == 2);
+    CV_Assert(wrappedPhase[0].size() == mask.size());
     CV_Assert(wrappedPhase[0].type() == CV_32F || wrappedPhase[0].type() == CV_64F);
 
     
@@ -2227,7 +2235,7 @@ std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
     wrappedPhase[0].convertTo(wX, CV_32F);
     wrappedPhase[1].convertTo(wY, CV_32F);
 
-    cv::Mat mask = { createMask(contrast, 0.5) };
+
     //normalizeAndDisplay(wX);
     std::vector<cv::Mat> unwrapped(2);
     unwrapped[0] = cv::Mat(sz, CV_64F);

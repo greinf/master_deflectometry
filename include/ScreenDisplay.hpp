@@ -78,12 +78,13 @@ private:
         cv::namedWindow("Processed", cv::WINDOW_NORMAL);
 
         cv::setWindowProperty("Camera", cv::WND_PROP_TOPMOST, 1);
+        
+        cv::moveWindow("Pattern", 1920, 0);
         cv::setWindowProperty(
             "Pattern",
             cv::WND_PROP_FULLSCREEN,
             cv::WINDOW_FULLSCREEN
         );
-        cv::moveWindow("Pattern", 1920, 0);
 
         while (m_running.load()) {
             cv::Mat cam, pat, proc;
