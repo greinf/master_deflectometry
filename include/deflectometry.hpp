@@ -22,8 +22,8 @@ class ImageStore;
 class ScreenDisplay;
 namespace defl {
 	class AcquisitionController;
-	class PhaseShiftConfig;
-	class CameraConfig;
+	struct PhaseShiftConfig;
+	struct CameraConfig;
 }
 
 class Deflectometry {

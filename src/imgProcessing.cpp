@@ -1010,13 +1010,13 @@ cv::Mat ImageProcessing::do_reprojection_error(
     if (dist_ptr[0] || dist_ptr[1] || dist_ptr[2] || dist_ptr[3]) {  // 
         std::cout << "In Reprojection: Use Undistort Pipeline \n";
         // --- DistortImagePoints --- 
-        //undist = distortImagePoints(img_pts, caliMatrix, distCoeffs);
+        undist = distortImagePoints(img_pts, caliMatrix, distCoeffs);
         //cv::undistortImagePoints(img_pts, undist, caliMatrix, distCoeffs);
         //undist = img_pts;
-        //undistortion
-        for (const auto& vec : img_pts) {
+        //undistortion The Wrong Direction here
+        /*for (const auto& vec : img_pts) {
             undist.emplace_back(undistortImagePts(vec, caliMatrix, distCoeffs));
-        }
+        }*/
     }
 
     else {

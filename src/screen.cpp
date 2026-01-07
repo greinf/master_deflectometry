@@ -472,8 +472,15 @@ void Pattern::generate_optimalPhase() {
 }
 
 //n_perdios_in_y defaulted to 10
-void Pattern::generate_phaseShift(Shift_mode mode, int n_periods_in_y) {
+void Pattern::generate_phaseShift(
+	Shift_mode mode, 
+	int n_periods_in_y, 
+	int pixelX,
+	int pixelY) {
+
 	m_numberPeriods = n_periods_in_y;
+	m_pixel_x = pixelX;
+	m_pixel_y = pixelY;
 
 	if (mode == Shift_mode::four_phase_shift) {
 		m_steps = 4;
@@ -539,7 +546,9 @@ void Pattern::logging() {
 		logging_ptr->lut_available = m_lut_ready;
 		logging_ptr->lut_data = m_sortedLUT;
 		logging_ptr->algorithm_name = std::to_string(m_steps) + " Shift Algorithm";
+		std::cout << *logging_ptr;
 		m_cfg.push_back(std::move(logging_ptr));
+		
 	}
 	else std::cout << "Logging class Generation failed\n";
 	m_numberPeriods = 0;

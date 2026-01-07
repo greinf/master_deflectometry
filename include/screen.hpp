@@ -43,7 +43,10 @@ public:
 	);
 
 	//void grayValueCalibration();
-	void generate_phaseShift(Shift_mode, int n_periods_y = 10);
+	void generate_phaseShift(Shift_mode,
+		int n_periods_y = 10,
+		int pixelX = 1920,
+		int pixelY = 1080);
 
 	std::vector<cv::Mat> generateGrayCalibrationSequence(int stepwidth);
 

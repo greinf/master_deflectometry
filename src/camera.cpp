@@ -1,5 +1,6 @@
 #include "camera.hpp"
-#include "flagHandler.hpp"
+#include "config/CameraConfig.hpp"
+
 
 namespace {
     void wait_for_enter()
@@ -11,7 +12,8 @@ namespace {
     }
 }
 
-Camera::Camera(std::size_t preferredIndex)
+Camera::Camera(std::size_t preferredIndex) : 
+    ICameraBackend{} // construct the base class 
 {
     peak::Library::Initialize();
 
@@ -25,9 +27,10 @@ Camera::Camera(std::size_t preferredIndex)
             std::cout << "No device found. Exiting program.\n";
             wait_for_enter();
             peak::Library::Close();
-            runtime_flags.set_stop_camera_running_flag();
             return;
         }
+        // If devices do exist a camera config file is created.
+        check_for_config(preferredIndex);
 
         const auto& devs = deviceManager.Devices();
         
@@ -70,7 +73,6 @@ Camera::Camera(std::size_t preferredIndex)
             m_devices.push_back(dev);
             m_nodeMaps.push_back(dev->RemoteDevice()->NodeMaps().at(0));
             m_activeDeviceIndex = 0;
-            runtime_flags.set_start_camera_running_flag();
         }
 
         // erste NodeMap
@@ -79,27 +81,11 @@ Camera::Camera(std::size_t preferredIndex)
         // Exposure-Time
         auto exposure_time =
             std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("ExposureTime"));
-        if (exposure_time) {
-            try {
-                runtime_flags.camera_data.exposure_time = exposure_time->Value();
-            }
-            catch (const std::exception& e) {
-                std::cout << "EXCEPTION (ExposureTime): " << e.what() << '\n';
-            }
-        }
-
+        
         // Frame Rate
         auto frame_rate =
             std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nm->FindNode("AcquisitionFrameRateConv"));
-        if (frame_rate) {
-            try {
-                runtime_flags.camera_data.frame_rate = frame_rate->Value();
-            }
-            catch (const std::exception& e) {
-                std::cout << "EXCEPTION (FrameRate): " << e.what() << '\n';
-            }
-        }
-
+        
         // Maximalauflösung
         int64_t w_max = nm->FindNode<peak::core::nodes::IntegerNode>("Width")->Maximum();
         int64_t h_max = nm->FindNode<peak::core::nodes::IntegerNode>("Height")->Maximum();
@@ -108,9 +94,33 @@ Camera::Camera(std::size_t preferredIndex)
     }
     catch (const std::exception& e) {
         std::cout << "EXCEPTION in Camera ctor: " << e.what() << '\n';
-        runtime_flags.set_stop_camera_running_flag();
     }
 }
+
+bool Camera::open(std::size_t prefferedIndex) 
+{   
+    try {
+        setUpAcquisition(prefferedIndex);
+    }
+    catch (std::exception& e) { 
+        std::cout << "EXCEPTION: " << e.what() << '\n';
+        return false;
+    }
+    return true;
+}
+
+void Camera::close(std::size_t prefferedIndex)
+{
+    try {
+        dataStream(prefferedIndex)->StopAcquisition();
+        nodeMap(prefferedIndex)->FindNode<peak::core::nodes::IntegerNode>("TLParamsLocked")->SetValue(0);
+        nodeMap(prefferedIndex)->FindNode<peak::core::nodes::CommandNode>("AcquisitionStop")->Execute();
+    }
+    //dataStream(prefferedIndex)->
+    catch (std::exception& e) { std::cout << "EXCEPTION: " << e.what() << '\n'; }
+}
+
+
 
 bool Camera::isacquisitionRunning(std::size_t deviceIndex ) {
     auto it = std::find_if(m_camera_data.begin(), m_camera_data.end(),
@@ -124,7 +134,6 @@ bool Camera::isacquisitionRunning(std::size_t deviceIndex ) {
         return (*it)->acquisition_mode_active;
     }
 }
-
 
 
 std::vector<std::shared_ptr<defl::CameraConfig>>::iterator 
@@ -142,22 +151,47 @@ std::vector<std::shared_ptr<defl::CameraConfig>>::iterator
 
 void Camera::logging_data(std::size_t camera_index)
 {
+    std::cout << "Loggin camera data \n";
     auto val_iterator = check_for_config(camera_index);
-    (*val_iterator)-> pixel_x = nodeMap(camera_index) -> 
-        FindNode<peak::core::nodes::IntegerNode>("Width")->Maximum();
-    (*val_iterator)-> pixel_y = nodeMap(camera_index) ->
-        FindNode<peak::core::nodes::IntegerNode>("Height")->Maximum();
-    (*val_iterator)->exposure_time = std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nodeMap(camera_index) ->
-        FindNode("ExposureTime"))->Value();
-    (*val_iterator)->frame_rate = std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nodeMap(camera_index) ->
-        FindNode("AcquisitionFrameRateConv"))->Value();
-    (*val_iterator)->gain = std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nodeMap(camera_index) ->
-        FindNode("Gain"))->Value();
-    if (dataStream(camera_index) != nullptr) (*val_iterator)->acquisition_mode_active = dataStream(camera_index)->IsGrabbing();
-    (*val_iterator)->active_device_index = camera_index;
-    (*val_iterator)->model_name = device(camera_index)->ModelName();
-    (*val_iterator)->version = device(camera_index)->ParentInterface()->ParentSystem()->Version();
-    (*val_iterator)->parent_system = device(camera_index)->ParentInterface()->ParentSystem()->DisplayName();
+    try {
+        (*val_iterator)->pixel_x = static_cast<int>(nodeMap(camera_index) ->
+            FindNode<peak::core::nodes::IntegerNode>("Width")->Maximum());
+        (*val_iterator)->pixel_y = static_cast<int>(nodeMap(camera_index) ->
+            FindNode<peak::core::nodes::IntegerNode>("Height")->Maximum());
+        (*val_iterator)->exposure_time = std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nodeMap(camera_index) ->
+            FindNode("ExposureTime"))->Value();
+        (*val_iterator)->frame_rate = std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nodeMap(camera_index) ->
+            FindNode("AcquisitionFrameRateConv"))->Value();
+        (*val_iterator)->gain = std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nodeMap(camera_index) ->
+            FindNode("Gain"))->Value();
+        if (dataStream(camera_index) != nullptr) (*val_iterator)->acquisition_mode_active = dataStream(camera_index)->IsGrabbing();
+        (*val_iterator)->active_device_index = camera_index;
+        (*val_iterator)->model_name = device(camera_index)->ModelName();
+        (*val_iterator)->version = device(camera_index)->ParentInterface()->ParentSystem()->Version();
+        (*val_iterator)->parent_system = device(camera_index)->ParentInterface()->ParentSystem()->DisplayName();
+        if (dataStream(camera_index)) (*val_iterator)->acquisition_mode_active =
+            dataStream(camera_index)->IsGrabbing();
+        else (*val_iterator)->acquisition_mode_active = false;
+
+        auto gainSelector =
+            std::dynamic_pointer_cast<peak::core::nodes::EnumerationNode>(nodeMap(camera_index)->FindNode("GainSelector"));
+
+        auto gain =
+            std::dynamic_pointer_cast<peak::core::nodes::FloatNode>(nodeMap(camera_index)->FindNode("Gain"));
+        gainSelector->SetCurrentEntry("Blue");
+        (*val_iterator)->gainB = gain->Value();
+        gainSelector->SetCurrentEntry("Green");
+        (*val_iterator)->gainG = gain->Value();
+        gainSelector->SetCurrentEntry("Red");
+        (*val_iterator)->gainR = gain->Value();
+        (*val_iterator)->pixel_format = nodeMap(camera_index)->
+            FindNode<peak::core::nodes::EnumerationNode>("PixelFormat")->
+            CurrentEntry()->Name();
+    }
+    catch (std::exception& e) { std::cout << "EXCEPTION: " << e.what() << '\n'; }
+
+    // defl::CameraConfig has overloaded << operator
+    std::cout << *(*val_iterator);
 }
 
 
@@ -176,6 +210,28 @@ Camera::~Camera() {
     peak::Library::Close();
 }
 
+cv::Mat Camera::grab(int timeout) {
+    CV_Assert(isRunning());
+    CV_Assert(timeout > 0);
+    auto ds = m_dataStreams[0];
+    auto buffer = ds->WaitForFinishedBuffer(timeout);
+    cv::Mat dummy;
+    if (!buffer) return dummy;
+    else {
+        cv::Mat view(static_cast<int>(buffer->Height()), static_cast<int>(buffer->Width()),
+            CV_8UC1, (void*)buffer->BasePtr(), static_cast<int>(buffer->Width()));
+        cv::Mat gray;
+
+        cv::rotate(view, gray, cv::ROTATE_180);
+
+        cv::cvtColor(gray, gray, cv::COLOR_BayerRG2GRAY);
+        ds->QueueBuffer(buffer);
+        return gray;
+        
+    }
+}
+
+
 bool Camera::adjustSettings(std::size_t i) {
     if (i >= m_nodeMaps.size()) return false;
     auto nm = m_nodeMaps.at(i);
@@ -185,28 +241,28 @@ bool Camera::adjustSettings(std::size_t i) {
     using namespace peak::core::nodes;
 
 
-    //// Small functionality to search for nodes 
-    //for (const auto& node : nm->Nodes()) {
-    //    const std::string name = node->Name();
+    // Small functionality to search for nodes 
+    for (const auto& node : nm->Nodes()) {
+        const std::string name = node->Name();
 
-    //    // case-insensitive search
-    //    auto contains = [&](const std::string& key) {
-    //        return std::search(
-    //            name.begin(), name.end(),
-    //            key.begin(), key.end(),
-    //            [](char a, char b) {
-    //                return std::tolower(a) == std::tolower(b);
-    //            }
-    //        ) != name.end();
-    //        };
+        // case-insensitive search
+        auto contains = [&](const std::string& key) {
+            return std::search(
+                name.begin(), name.end(),
+                key.begin(), key.end(),
+                [](char a, char b) {
+                    return std::tolower(a) == std::tolower(b);
+                }
+            ) != name.end();
+            };
 
-    //    if (contains("gain") || contains("exposure")) {
-    //        std::cout
-    //            << name
-    //            << ", readable=" << node->IsReadable()
-    //            << "]\n";
-    //    }
-    //}
+        if (contains("Acquisition")) { // || contains("gain") 
+            std::cout
+                << name
+                << ", readable=" << node->IsReadable()
+                << "]\n";
+        }
+    }
 
     auto gainSelector =
         std::dynamic_pointer_cast<peak::core::nodes::EnumerationNode>(nm->FindNode("GainSelector"));
@@ -297,7 +353,6 @@ bool Camera::adjustSettings(std::size_t i) {
         try {
             frame_rate->SetValue(2.5);
             std::cout << "Current Frame Rate " << frame_rate->Value() << '\n';
-            runtime_flags.camera_data.frame_rate = frame_rate->Value();
         }
         catch (const std::exception& e) {
             std::cout << "EXCEPTION (FrameRate): " << e.what() << '\n';
@@ -312,7 +367,6 @@ bool Camera::adjustSettings(std::size_t i) {
         try {
             exposure_time->SetValue(exposure_time->Maximum());
             std::cout << "Current exposure Time " << exposure_time->Value() << '\n';
-            runtime_flags.camera_data.exposure_time = exposure_time->Value();
         }
         catch (const std::exception& e) {
             std::cout << "EXCEPTION (ExposureTime): " << e.what() << '\n';
@@ -328,11 +382,11 @@ bool Camera::adjustSettings(std::size_t i) {
 
 bool Camera::PrepareAcquisition(std::size_t i) {
     try {
-        if (i >= m_devices.size()) return false;
+        if (i > m_devices.size()) return false;
         auto dataStreams = m_devices.at(i)->DataStreams();
         if (dataStreams.empty()) return false;
 
-        auto ds = dataStreams.at(0)->OpenDataStream();
+        auto ds = dataStreams.at(i)->OpenDataStream();
         m_dataStreams.push_back(ds);
         return true;
     }
@@ -367,9 +421,6 @@ bool Camera::SetRoi(int64_t x, int64_t y, int64_t width, int64_t height, std::si
         int64_t y_max = nodeOffsetY->Maximum();
         int64_t w_max = nodeWidth->Maximum();
         int64_t h_max = nodeHeight->Maximum();
-
-        runtime_flags.camera_data.pixel_x = w_max;
-        runtime_flags.camera_data.pixel_y = h_max;
 
         if ((x < x_min) || (y < y_min) ||
             (x > x_max) || (y > y_max))
@@ -411,7 +462,8 @@ bool Camera::AllocAndAnnounceBuffers(std::size_t i) {
         int64_t payloadSize =
             nm->FindNode<peak::core::nodes::IntegerNode>("PayloadSize")->Value();
 
-        int numBuffersMinRequired = ds->NumBuffersAnnouncedMinRequired();
+        int numBuffersMinRequired = 
+            static_cast<int>(ds->NumBuffersAnnouncedMinRequired());
 
         for (int n = 0; n < numBuffersMinRequired; ++n) {
             auto buffer = ds->AllocAndAnnounceBuffer(static_cast<size_t>(payloadSize), nullptr);
@@ -468,17 +520,17 @@ void Camera::setUpAcquisition(std::size_t i) {
 
 // Getter
 std::shared_ptr<peak::core::DataStream> Camera::dataStream(std::size_t i) const {
-    if (i >= m_dataStreams.size()) return {};
+    if (i >= m_dataStreams.size()) return { nullptr };
     return m_dataStreams.at(i);
 }
 
 std::shared_ptr<peak::core::NodeMap> Camera::nodeMap(std::size_t i) const {
-    if (i >= m_nodeMaps.size()) return {};
+    if (i >= m_nodeMaps.size()) return { nullptr };
     return m_nodeMaps.at(i);
 }
 
 std::shared_ptr<peak::core::Device> Camera::device(std::size_t i) const {
-    if (i >= m_devices.size()) return {};
+    if (i >= m_devices.size()) return { nullptr };
     return m_devices.at(i);
 }
 

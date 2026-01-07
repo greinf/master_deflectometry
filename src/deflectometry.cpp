@@ -3,7 +3,6 @@
 #include "acquisitionworker.hpp"
 #include "cassert"
 #include "enums.hpp"
-//#include "flagHandler.hpp"
 #include "imgProcessing.hpp"
 #include "camera_calib.hpp"
 #include <fstream>
@@ -16,6 +15,7 @@
 #include "config/CameraConfig.hpp"
 #include "config/PhaseShiftConfig.hpp"
 #include "algorithm"
+#include "CameraNew.hpp"
 
 
 // ****Just for Fun ****
@@ -406,10 +406,12 @@ std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 	std::vector<cv::Vec2d> refinedPoint;
 	switch (static_cast<int>(mode)) {
 	case(static_cast<int>(ReferenceMode::cross)):
+	{
 		std::cout << "Not implemented Path !!";
 		return {};
+	}
 	case(static_cast<int>(ReferenceMode::checkerboard)):
-
+	{
 		// --- Start with first detecting rough position of possible corners ---
 		refPoint = m_img_processing->harrisCornerDetection(img, mask, { 5,5 });
 
@@ -432,7 +434,7 @@ std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 		std::vector<cv::Vec2d> refinedCorner =
 			m_img_processing->refineCorner(img, refPoint, { 21,21 }, 1E-9);
 
-		
+
 		cv::Mat color;
 		cv::Mat check;
 		cv::normalize(img[0], check, 0, 255, cv::NORM_MINMAX, CV_8U);
@@ -440,11 +442,17 @@ std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 
 		cv::Point point(refinedCorner[0][1], refinedCorner[0][0]);
 		cv::drawMarker(color, point, cv::Scalar(255, 0, 0), 0, 100);
-		
+
 		cv::imshow("checking", color);
 		cv::waitKey(0);
 
 		return refinedCorner;
+	}
+	default:
+	{
+		std::cout << "Invalid Value for refine corner. Return empty Vector \n";
+		return {};
+	}
 	}
 }
 
@@ -552,7 +560,7 @@ cv::Mat Deflectometry::distortImage_manual(
 {
 	CV_Assert(img.rows > 2 && img.cols > 2);
 	CV_Assert(dist_Coeffs.rows > 0);
-	CV_Assert(cam_Matrix.rows == 3, cam_Matrix.cols == 3);
+	CV_Assert(cam_Matrix.rows == 3 && cam_Matrix.cols == 3);
 	cv::Mat mapx(img.size(), CV_64F, cv::Scalar(0)), mapy(img.size(), CV_64F, cv::Scalar(0));
 
 	for (int row = 0; row < img.rows; ++row) {
@@ -605,13 +613,14 @@ cv::Mat Deflectometry::get_difference_debug(const cv::Mat& mat1, const cv::Mat& 
 
 bool Deflectometry::init() {
 	try {
-		std::shared_ptr<Camera> m_camera = std::make_shared<Camera>();
-		m_camera->setUpAcquisition();
+		std::shared_ptr<CameraN> m_camera = std::make_shared<CameraN>(CameraN::Backend::VIMBA);
+		m_camera->open();
 
 		m_acquisition_controller = std::make_shared<defl::AcquisitionController>();
-		m_acquisition_controller->acquisition_active = m_camera->isacquisitionRunning();
-
-		m_camera_config = (m_camera->getCameraConfig());
+		
+		m_acquisition_controller->acquisition_active = m_camera->isRunning();
+		if (!m_acquisition_controller->acquisition_active) throw std::runtime_error("Camera Acuqisition not active \n");
+		m_camera_config = (m_camera->getCamConfig());
 
 		m_acquisition_worker = std::make_shared<AcquisitionWorker>(
 			std::move(m_camera),
@@ -630,7 +639,7 @@ cv::Mat Deflectometry::getMask(
 	const bool dilate)
 {
 	CV_Assert(!contrast.empty());
-	CV_Assert(thresh > 0);
+	CV_Assert(thresh >= 0);
 	
 	return m_img_processing->createMask(contrast, thresh, dilate);
 
@@ -642,6 +651,7 @@ bool Deflectometry::disconnect() {
 		m_acquisition_worker = nullptr;
 		m_acquisition_controller.reset();
 		m_acquisition_controller = nullptr;
+	    
 		
 		return true;
 	}
@@ -705,6 +715,7 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-01-03FH-GrayValueLUT");
 	
 	m_pattern->generate_phaseShift(mode, n_periods);
+
 	if (!init()) {
 		std::cerr << "Init Method failed. Stop Meassurment \n"; 
 		return {};
@@ -929,7 +940,7 @@ std::vector<cv::Mat> Deflectometry::getFrames(
 
 std::vector<cv::Mat> Deflectometry::getFrames(FrameRole role) {
 	if (!init()) {
-		std::cerr << "Init failed. Aborting camera calibration.\n";
+		std::cerr << "Init failed. Aborte ...\n";
 		return {};
 	}
 

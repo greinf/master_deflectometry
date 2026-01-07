@@ -38,8 +38,11 @@ namespace defl {
 
         static PhaseShiftConfig load_from_XML(const std::string& path);
 
+        friend std::ostream& operator<<(std::ostream& out, const defl::PhaseShiftConfig& conf) {
+            conf.print();
+            return out;
+        }
     };
-
 
     void inline PhaseShiftConfig::print() const {
         std::cout << "----- PhaseShiftConfig -----\n"

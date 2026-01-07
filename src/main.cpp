@@ -8,6 +8,8 @@
 #include "acquisitionworker.hpp"
 #include <filesystem>
 
+
+
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
     {
         CV_Assert(img.type() == CV_64FC2);
@@ -65,17 +67,18 @@ auto show1to1 = [](const cv::Mat& img) {
 
 int main()
 {
+    
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-03RealMeassure" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-12-17SyntheticPattern" };
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_out_camera_data_First_real_calib.xml" };
 
     Deflectometry meassure{};
-    
+
     // meassure.do_grayvalue_calibration(5, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-01-03FH-GrayValueLUT");
 
-    /*
+    
     // White balance 
     std::vector<cv::Mat> frames =
         meassure.getFrames(FrameRole::Debug);
@@ -87,7 +90,7 @@ int main()
     for (const auto& val : gain) {
         std::cout << val << '\n';
     }
-    */
+    
 
     /*meassure.load(FrameRole::PatternDouble, path);
     std::vector<cv::Mat> pattern = meassure.get(FrameRole::PatternDouble);
