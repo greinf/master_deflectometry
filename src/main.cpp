@@ -10,6 +10,8 @@
 
 
 
+
+
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
     {
         CV_Assert(img.type() == CV_64FC2);
@@ -67,66 +69,84 @@ auto show1to1 = [](const cv::Mat& img) {
 
 int main()
 {
-    
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-12-17SyntheticPattern" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09Mako-WithGray4Shift" };
 
-    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-12_out_camera_data_First_real_calib.xml" };
+    std::string path_gray_sections{ "C:/Users/grein/Desktop/2026-01-19_GrayCalibSections2.csv" };
+    //Path to IDS calibration: Blende geschlossen. 
+    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09MAKO.xml" };
 
     Deflectometry meassure{};
 
-    // meassure.do_grayvalue_calibration(5, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-01-03FH-GrayValueLUT");
+    std::vector<cv::Mat> real_pattern = 
+        meassure.createSyntheticalImages();
 
+    for (const auto& img : real_pattern) {
+        showNormalized(img);
+    }
+
+    meassure.calc_response_curve_sections(1, 1, true, path_gray_sections, 8, 6);
     
-    // White balance 
-    std::vector<cv::Mat> frames =
+
+    //meassure.do_camera_calibration();
+
+    //meassure.do_grayvalue_calibration(5, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09BMZGrayValMako");
+
+
+    // White balance
+    /* std::vector<cv::Mat> frames =
         meassure.getFrames(FrameRole::Debug);
 
-    std::array<double, 3> gain = meassure.doWhiteBalance(frames);
+    std::array<double, 3> gain = meassure.doWhiteBalance(frames);*/
 
-    meassure.saveSingleImage(FrameRole::Debug, frames[0], true, "C:/Users/grein/Desktop/Master");
-    std::cout << "Gain values ";
-    for (const auto& val : gain) {
-        std::cout << val << '\n';
-    }
+    //meassure.saveSingleImage(FrameRole::Debug, frames[0], true, "C:/Users/grein/Desktop/Master");
+    //std::cout << "Gain values ";
+    //for (const auto& val : gain) {
+    //    std::cout << val << '\n';
+    //}
     
-
     /*meassure.load(FrameRole::PatternDouble, path);
-    std::vector<cv::Mat> pattern = meassure.get(FrameRole::PatternDouble);
+    std::vector<cv::Mat> pattern = meassure.get(FrameRole::PatternDouble);*/
+    
+    /*meassure.load(FrameRole::Contrast, path);
+    std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
 
-    showNormalized(pattern[0]);*/
+    meassure.load(FrameRole::ReprojectionY, path);
+    std::vector<cv::Mat> repro = meassure.get(FrameRole::ReprojectionY);
+
+    cv::Mat mask000 = meassure.getMask(contrast, 0.3, true);
+
+    cv::Mat subtracted =
+        meassure.subtractSurface(contrast[0], mask000, true);*/
 
     std::vector<cv::Mat> raw_input =
-        meassure.do_phase_measurement(Shift_mode::four_phase_shift, 5, false, path, 10);
+        meassure.do_phase_measurement(Shift_mode::four_phase_shift, 5, true, path, 10);
 
     std::vector<cv::Mat> wrappedPhase =
-        meassure.do_wrapped_phase(raw_input, 5, 4, false, path);
+        meassure.do_wrapped_phase(raw_input, 5, 4, true, path);
     
     meassure.load(FrameRole::Contrast, path);
     std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
 
-    cv::Mat mask = meassure.getMask(contrastPhase, 0.2, false);
+    cv::Mat mask = meassure.getMask(contrastPhase, 0.3, false);
 
     std::vector<cv::Mat> unwrappedPhase =
-        meassure.do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::manually, false, path);
+        meassure.do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::manually, true, path);
 
     cv::Mat reference_img = meassure.generate_reference_Pattern(ReferenceMode::checkerboard, (int)4, true, path);
 
     std::vector<cv::Mat> reference =
         meassure.getFrames(FrameRole::Debug, reference_img);
 
-    mask = meassure.getMask(contrastPhase, 0.2, true);
+    mask = meassure.getMask(contrastPhase, 0.3, true);
 
     std::vector<cv::Vec2d> ref_point =
         meassure.getReferencePoint(reference, ReferenceMode::checkerboard, mask);
 
-    /*meassure.do_camera_calibration();*/
-
-    //std::vector<cv::Mat> dummy = meassure.generatePattern(true, path);
 
     // Method for projecting the reference pattern and getting camera images.
-    /*std::vector<cv::Mat> cam_pattern =
+    /*std::vector<cv::Mat> cam_pattern 
         meassure.getFrames(FrameRole::all, pattern);*/
 
     //show1to1(pattern);
@@ -180,18 +200,6 @@ int main()
 
     /*cv::Mat coordinateimg = meassure.generateCoordinateImg(true, path);*/
 
-    /*std::vector<cv::Mat> rawPhase{ cartesian };*/
-
-    // Expect values between 0 - 111.64
-    /*double min, max;
-
-    cv::minMaxLoc(rawPhase[0], &min, &max);
-    std::cout << "min " << min << '\n' << "max " << max << '\n';
-    showNormalized(rawPhase[0]);*/
-    /*std::vector<cv::Mat> pattern_distorted;
-    for (auto& img : pattern) {
-        pattern_distorted.emplace_back(meassure.distortImage_manual(img, cam_Matrix, dist_coeffs));
-    }*/
     
     /*meassure.load(FrameRole::WrappedPhase, path);
     std::vector<cv::Mat> wrappedPhase = meassure.get(FrameRole::WrappedPhase);*/
@@ -232,9 +240,6 @@ int main()
 
     meassure.saveSingleImage(FrameRole::DistortErrX, distortionError2, true, path);*/
 
-    //showNormalized(rawPhase[0]);
-    //showNormalized(pattern_distorted[0]);
-
     //dist_coeffs[0] = cv::Mat(5, 1, CV_64FC1, cv::Scalar(0));
 
     mask = meassure.getMask(contrastPhase, 0.3, true);
@@ -248,30 +253,12 @@ int main()
         108.0,
         unwrappedPhase[0].cols,
         unwrappedPhase[0].rows,
-        0.277, //PixelPitch  FH     BMZ: 0.2745
+        0.2745, //PixelPitch  FH 0.277    BMZ: 
         true,
         path,
         532, //Dispaly Width  FH    BMZ: 527.04
         299.2 //Dispaly Height FH:      BMZ: 296.46
     );
-
-    //meassure.saveSingleImage(FrameRole::DistortErrX, distorted, true, path);
-
-   /* cv::Mat undistorted =
-        meassure.undistortImage(img, cam_Matrix, dist_coeffs);
-
-    cv::Mat undistortionError =
-        meassure.calcDistortionError(undistorted);
-
-    meassure.saveSingleImage(FrameRole::DistortErrX, undistortionError, true, path);
-
-    cv::Mat distorted =
-        meassure.distortImage_manual(undistorted, cam_Matrix, dist_coeffs);
-
-    cv::Mat distortionError =
-        meassure.calcDistortionError(distorted);
-
-    meassure.saveSingleImage(FrameRole::DistortErrX, distortionError, true, path);*/
 
     /*cv::Mat distortionError =
         meassure.calcDistortionError(distorted);
@@ -283,137 +270,7 @@ int main()
 
     meassure.saveSingleImage(FrameRole::DistortErrX, undistortionError, true, path);*/
 
-   /* showNormalized2Channel(distorted);
-
-    showNormalized2Channel(undistorted);*/
-
-
-    
-
-    
-   
-    
 
     //meassure.loadPhaseConfig("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23/0.xml");
 
-    /*meassure.load(FrameRole::Contrast, path);
-    std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);*/
-
-    /*meassure.load(FrameRole::UnwrappedPhase, path);
-    std::vector<cv::Mat> unwrapped = meassure.get(FrameRole::UnwrappedPhase);*/
 }
-
-
-
-/*
-std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23" };
-    //std::vector<cv::Mat> raw_phase = 
-    //    meassure.do_phase_measurement(Shift_mode::four_phase_shift, 5, true, path, 10);
-
-    meassure.load(FrameRole::RawPhase, path);
-    std::vector<cv::Mat> RawPhase = meassure.get(FrameRole::RawPhase);
-
-    std::vector<cv::Mat> groundTruth;
-    
-    for (const auto& m : RawPhase) {
-        int i{ 0 };
-        cv::Mat out(m.rows, m.cols, CV_64F);
-
-        for (int r = 0; r < m.rows; ++r) {
-            for (int c = 0; c < m.cols; ++c) {
-
-                double a = m.at<double>(r, c);
-                double wrapped = std::fmod(a, CV_2PI);
-                if (wrapped > CV_PI) wrapped -= CV_2PI;
-                out.at<double>(r, c) = wrapped;
-            }
-        }
-        groundTruth.push_back(out);
-    }
-    cv::Mat GT8U1;
-    cv::Mat GT8U2;
-    cv::normalize(groundTruth[0], GT8U1, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::normalize(groundTruth[1], GT8U2, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::imshow("GT1", GT8U1);
-    cv::imshow("GT2", GT8U2);
-    cv::waitKey(0);
-
-    double min1, max1;
-    cv::minMaxLoc(groundTruth[0], &min1, &max1);
-    	std::cout << "Raw Ground Truth PHase \n" << "Minimal value: " << min1 <<
-    		"\nMaxvalue: " << max1 << '\n';
-
-    // Calibrated Gray Value 4 Phase Shift - 
-    meassure.load(FrameRole::PatternDouble, path);
-    std::vector<cv::Mat> gtpattern = meassure.get(FrameRole::PatternDouble);
-    double min3, max3;
-    cv::minMaxLoc(gtpattern[0], &min3, &max3);
-    std::cout << "Raw ptPattern information \n" << "Minimal value: " << min3 <<
-        "\nMaxvalue: " << max3 << '\n';
-
-    std::vector<cv::Mat> wrappedPhase =
-        meassure.do_wrapped_phase(gtpattern, 1, 4, false, path);
-
-    double min2, max2;
-    cv::minMaxLoc(wrappedPhase[0], &min2, &max2);
-    std::cout << "Raw wrapped PHase \n" << "Minimal value: " << min2 <<
-        "\nMaxvalue: " << max2 << '\n';
-    
-    cv::Mat unwrappedErr1, unwrappedErr2;
-
-    unwrappedErr1 = wrappedPhase[0] - groundTruth[0];
-
-    double min4, max4;
-    cv::minMaxLoc(unwrappedErr1, &min4, &max4);
-    std::cout << "Raw Ground Truth PHase \n" << "Minimal value: " << min4 <<
-        "\nMaxvalue: " << max4 << '\n';
-
-
-    for (int r = 0; r < unwrappedErr1.rows; ++r) {
-        for (int c = 0; c < unwrappedErr1.cols; ++c) {
-
-            double a = unwrappedErr1.at<double>(r, c);
-            double wrapped = std::fmod(a, CV_2PI);
-            if (wrapped > CV_PI) wrapped -= CV_2PI;
-
-            unwrappedErr1.at<double>(r, c) = wrapped;
-        }
-    }
-
-    double min5, max5;
-    cv::minMaxLoc(unwrappedErr1, &min5, &max5);
-    std::cout << "Error Ground Truth \n" << "Minimal value: " << min5 <<
-        "\nMaxvalue: " << max5 << '\n';
-
-    cv::Mat unwrappedErr1U8;
-    cv::normalize(unwrappedErr1, unwrappedErr1U8, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::imshow("ErrorU8", unwrappedErr1U8);
-    cv::waitKey(0);
-
-    cv::imwrite("C:/Users/grein/Desktop/UnwrapError1.png", unwrappedErr1U8);
-
-    meassure.load(FrameRole::Contrast, path);
-    std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
-
-    std::vector<cv::Mat> unwrappedPhase =
-        meassure.do_unwrapped_phase(wrappedPhase, contrastPhase, UnwrapMode::manually, true, path);
-
-    meassure.load(FrameRole::RawPhase, path);
-    std::vector<cv::Mat> rawPhase = meassure.get(FrameRole::RawPhase);
-
-    cv::Mat error1, error2, error1U8, error2U8;
-    error1 = unwrappedPhase[0] - rawPhase[0];
-    error2 = unwrappedPhase[1] - rawPhase[1];
-
-    double min7, max7;
-    cv::minMaxLoc(error1, &min7, &max7);
-    std::cout << "Raw Ground Truth PHase \n" << "Minimal value: " << min7 <<
-        "\nMaxvalue: " << max7 << '\n';
-
-    cv::normalize(error1, error1U8, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::normalize(error2, error2U8, 0, 255, cv::NORM_MINMAX, CV_8U);
-
-    cv::imshow("er1", error1U8);
-    cv::imshow("er2", error2U8);
-    cv::waitKey(0);
-    */

@@ -68,7 +68,7 @@ add_executable (${PROJECT_NAME}
     src/deflectometry.cpp
     src/imgProcessing.cpp
     src/imageStore.cpp
- "src/cameraN.cpp" "src/VimbaBackend.cpp")
+ "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp")
 
 # Find packages
 if (NOT TARGET ids_peak)
@@ -144,9 +144,9 @@ endif()
 
 
 
-# Set C++ standard to 14 (required for ids_peak)
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
-    #CXX_STANDARD 14
+     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS NO
 )

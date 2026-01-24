@@ -2,6 +2,7 @@
 #define CAMERACONFIG_H
 #include <chrono>
 #include <string>
+#include <opencv2/opencv.hpp>
 
 
 namespace defl {
@@ -58,6 +59,43 @@ namespace defl {
                 "Pixel Format: " << pixel_format << '\n' <<
                 "----------------------------\n";
         
+        }
+
+        bool inline save_to_XML(const std::string& path) const {
+            try {
+                cv::FileStorage fs(path, cv::FileStorage::WRITE);
+
+                if (!fs.isOpened()) {
+                    std::cerr << "Error: Could not open file for writing: " << path << "\n";
+                    return false;
+                }
+
+                fs << "CameraConfig" << "{";
+                fs << "pixel_x" << pixel_x;
+                fs << "pixel_y" << pixel_y;
+                fs << "Exposure Time: " << exposure_time;
+                fs << "Frame Rate: " << frame_rate;
+                if (gainR || gainG || gainB) {
+                    fs << "Gain R: " << gainR;
+                    fs << "Gain B: " << gainB;
+                    fs << "Gain G: " << gainG;
+                }
+                else fs << "Gain: " << gain << '\n';
+                fs << "Acquisition mode " << (acquisition_mode_active ? "is active\n" : "is not active \n");
+                fs << "Model Name: " << model_name;
+                fs << "Version: " << version;
+                fs << "Parent: " << parent_system;
+                fs << "Pixel Format: " << pixel_format;
+                
+                fs << "}";  // Ende des Blocks
+
+                fs.release();
+                return true;
+            }
+            catch (const cv::Exception& e) {
+                std::cerr << "OpenCV Exception in save_to_XML: " << e.what() << "\n";
+                return false;
+            }
         }
 
         friend std::ostream& operator<<(std::ostream& out, const defl::CameraConfig& val);

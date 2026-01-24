@@ -2,6 +2,7 @@
 #define PHASESHIFTCONFIG_H
 #include <chrono>
 #include <filesystem>
+#include <opencv2/opencv.hpp>
 
 
 namespace defl {
@@ -17,11 +18,8 @@ namespace defl {
 
 
         // --- Optional Parameter ---
-        double amplitude = 127.5;
-        double mean_value = 127.5;
-
-        bool lut_available = false;
-        std::vector<std::pair<double, double>> lut_data{};
+        double amplitude = 0.0;
+        double mean_value = 0.0;
 
         // --- Metadata ---
         std::string algorithm_name { "FourPhaseShift" };
@@ -52,7 +50,6 @@ namespace defl {
             << "Wavelength: " << wavelength << "\n"
             << "Shift length: " << shift_length << "\n"
             << "Amplitude / Mean: " << amplitude << " / " << mean_value << "\n"
-            << "LUT available: " << (lut_available ? "yes" : "no") << "\n"
             << "Algorithm: " << algorithm_name << "\n"
             << "----------------------------\n";
     }
@@ -75,7 +72,6 @@ namespace defl {
             fs << "shift_length" << shift_length;
             fs << "amplitude" << amplitude;
             fs << "mean_value" << mean_value;
-            fs << "lut_available" << lut_available;
 
             fs << "}";  // Ende des Blocks
 
@@ -111,10 +107,7 @@ namespace defl {
             n["shift_length"] >> cfg.shift_length;
             n["amplitude"] >> cfg.amplitude;
             n["mean_value"] >> cfg.mean_value;
-            n["lut_available"] >> cfg.lut_available;
             n["algorithm_name"] >> cfg.algorithm_name;
-
-       
 
             return cfg;
 

@@ -16,6 +16,11 @@
 #include "config/PhaseShiftConfig.hpp"
 #include "algorithm"
 #include "CameraNew.hpp"
+// Response in Section
+#include "GrayCalibVector.hpp"
+// Gray Calib class
+#include "GrayCalibration.hpp"
+#include "RowPolicy.hpp"
 
 
 // ****Just for Fun ****
@@ -122,7 +127,6 @@ decltype(auto) apply(F&& f, Tuple&& t)
 }
 
 */
-
 cv::Mat rotImage180(const cv::Mat&);
 
 cv::Mat showRawMaxValred(const cv::Mat& mat) {
@@ -133,33 +137,16 @@ cv::Mat showRawMaxValred(const cv::Mat& mat) {
 	return color;
 }
 
-//void Deflectometry::loadPhaseConfig(const std::string& path) {
-//	m_pattern_config.push_back(
-//		std::make_shared<defl::PhaseShiftConfig>(defl::PhaseShiftConfig::load_from_XML(path)));
-//}
-
-
-//void Deflectometry::calc_reproject_error(bool visualizing, bool saving, const std::string& path) {
-//	//Be carefull here hardcoded the shift Mode.
-//	//m_screen->generate_phaseShift(Shift_mode::four_phase_shift);
-//	m_img_processing->calc_reproject_error(visualizing);
-//	//std::vector<cv::Mat> reprojection_error(std::move(m_img_processing->m_reprojection_error_img));
-//	if (saving) {
-//		m_img_processing->saveImages(path);
-//		m_img_processing->saveImages_png(path);
-//		m_img_processing->save_Reprodata(path);
-//	}
-//}
 
 Deflectometry::Deflectometry() {
-	m_img_store = std::make_shared<ImageStore>();
+	m_img_store = std::make_unique<ImageStore>();
 	// For now imageProcessing Strays in constructor
-	m_img_processing = std::make_shared<ImageProcessing>(double (5), m_img_store);
-	m_screenDisplay = std::make_shared<ScreenDisplay>();
+	m_img_processing = std::make_unique<ImageProcessing>(*m_img_store);
+	m_screenDisplay = std::make_unique<ScreenDisplay>();
 	
 }
 
-
+Deflectometry::~Deflectometry() = default;
 
 auto nearly_equal = [&](double a, double b) {
 	double eps = 1e-9;
@@ -190,7 +177,10 @@ std::vector<cv::Mat> Deflectometry::generateCartesian(
 {
 	CV_Assert((gridX > 0) && (gridY > 0));
 	CV_Assert(!path.empty());
-	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", false);
+	setupPattern(*m_img_store);
+
+	setupCalibration(CalibrationMethod::None, "");
+
 	cv::Mat cartesian = m_pattern->generateCartesian(gridX, gridY);
 
 	m_img_store->add(FrameRole::GridPattern, cartesian);
@@ -204,7 +194,10 @@ std::vector<cv::Mat> Deflectometry::generateCartesian(
 }
 
 cv::Mat Deflectometry::generateCoordinateImg(bool save, const std::string& path) {
-	setupPattern();
+	setupPattern(*m_img_store);
+
+	setupCalibration(CalibrationMethod::None, "");
+
 	cv::Mat coordinateImg = m_pattern->generatecoordianteImg();
 	m_img_store->add(FrameRole::DistortionCalib, coordinateImg);
 	if (save) {
@@ -224,7 +217,6 @@ std::vector<cv::Vec2d> Deflectometry::distortionPipelineTest(
 	CV_Assert(!img_pts.empty());
 	CV_Assert(mat.size() == cv::Size(3, 3));
 	
-	//These two are doing essentially the SAME :(((((((((((
 	std::vector<cv::Vec2d> distorted;
 	for (const auto& vec : img_pts) {
 		distorted.push_back(m_img_processing->newtonSolverdistort(vec, mat, dist));
@@ -432,7 +424,7 @@ std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 		// --- Own Implementatoin of refine Croner ---
 		// methods works directly with cv::Vec2d (y,x) 
 		std::vector<cv::Vec2d> refinedCorner =
-			m_img_processing->refineCorner(img, refPoint, { 21,21 }, 1E-9);
+			m_img_processing->refineCorner(img, refPoint, { 21,21 }, 1E-10);
 
 
 		cv::Mat color;
@@ -440,7 +432,9 @@ std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 		cv::normalize(img[0], check, 0, 255, cv::NORM_MINMAX, CV_8U);
 		cv::cvtColor(check, color, cv::COLOR_GRAY2BGR);
 
-		cv::Point point(refinedCorner[0][1], refinedCorner[0][0]);
+		cv::Point point(
+			static_cast<int>(refinedCorner[0][1]),
+			static_cast<int>(refinedCorner[0][0]));
 		cv::drawMarker(color, point, cv::Scalar(255, 0, 0), 0, 100);
 
 		cv::imshow("checking", color);
@@ -598,9 +592,6 @@ cv::Mat Deflectometry::distortImage_manual(
 }
 
 
-
-
-
 cv::Mat Deflectometry::get_difference_debug(const cv::Mat& mat1, const cv::Mat& mat2, bool save)
 {
 	cv::Mat difference = mat1 - mat2;
@@ -613,20 +604,27 @@ cv::Mat Deflectometry::get_difference_debug(const cv::Mat& mat1, const cv::Mat& 
 
 bool Deflectometry::init() {
 	try {
+		// This should be at one time changed to unqiue Ptr
 		std::shared_ptr<CameraN> m_camera = std::make_shared<CameraN>(CameraN::Backend::VIMBA);
-		m_camera->open();
 
-		m_acquisition_controller = std::make_shared<defl::AcquisitionController>();
+		m_camera->open();
+		
+		m_acquisition_controller = std::make_unique<defl::AcquisitionController>();
 		
 		m_acquisition_controller->acquisition_active = m_camera->isRunning();
 		if (!m_acquisition_controller->acquisition_active) throw std::runtime_error("Camera Acuqisition not active \n");
-		m_camera_config = (m_camera->getCamConfig());
 
-		m_acquisition_worker = std::make_shared<AcquisitionWorker>(
-			std::move(m_camera),
-			m_img_store,
-			m_acquisition_controller,
-			m_screenDisplay
+		if (!m_camera_config.empty()) throw std::runtime_error("A camera Config is already loaded \n");
+
+		for (const auto& cfg : m_camera->getCamConfig()) {
+			m_camera_config.push_back(std::make_unique<defl::CameraConfig>(cfg));
+		}
+		
+		m_acquisition_worker = std::make_unique<AcquisitionWorker>(
+			std::move(m_camera), // moves pointer pointer to Acquisitionworker
+			*m_img_store,
+			*m_acquisition_controller,
+			*m_screenDisplay
 			);
 		return true;
 	}
@@ -688,12 +686,157 @@ std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 	return unwrappedPhase;
 }
 
-std::vector<cv::Mat> Deflectometry::generatePattern(bool save, const std::string& path) {
-	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", false);
-	m_pattern->generate_phaseShift(Shift_mode::four_phase_shift, 10);
+std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
+	const double image_height,  // Mirror circumference  
+	const int dest_width,      // Mako G-507-B width
+	const int dest_height,     // Mako G-507-B height
+	const double dispaly_pixel_pitch,
+	const Shift_mode mode,
+	const CalibrationMethod method,
+	const int display_pixel_x,
+	const int display_pixel_y,
+	const int n_periods_in_y,
+	const double aperture_number,
+	const double distance,     // f = 1600 distance 2*f
+	const double object_height, // 2/3" Sensor 8,8 * 6,6 
+	const RoiBorders<double> homography_points)
+{
+	CV_Assert(display_pixel_x > 0 && display_pixel_y > 0);
+	CV_Assert(aperture_number >= 0 && n_periods_in_y > 0);
+	CV_Assert(distance >= 0 && object_height > 0);
+	CV_Assert(image_height >= 0);
+	CV_Assert(dest_width >= 0 && dest_height >= 0);
 
-	std::vector<cv::Mat> pattern_double = m_img_store->get(FrameRole::PatternDouble);
-	if (save) {
+	setupPattern(*m_img_store);
+
+	std::vector<cv::Mat> pattern =
+		m_pattern->generate_phaseShift(
+			mode,
+			10,
+			127.5,
+			127.5,
+			1920,
+			1080,
+			UniformRowsCols{});
+
+	/*for (const auto& imga : pattern) {
+		cv::Mat img;
+		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::imshow("pattern", img);
+		cv::waitKey(0);
+		cv::destroyWindow("pattern");
+	}*/
+
+	std::vector<cv::Mat> pattern_realistic;
+
+	
+	for (const auto& img : pattern) {
+		pattern_realistic.emplace_back(createRealisticFromPattern(
+			img,
+			aperture_number,
+			dispaly_pixel_pitch,
+			distance,
+			object_height,
+			image_height,
+			dest_width,      
+			dest_height,    
+			homography_points));
+	}
+
+	for (const auto& imga : pattern_realistic) {
+		cv::Mat img;
+		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::namedWindow("Pattern", cv::WINDOW_NORMAL);
+
+		cv::resizeWindow("Pattern", 1500, 1000);
+		cv::imshow("Pattern", img);
+		cv::waitKey(0);
+		cv::destroyWindow("Pattern");
+	}
+
+}
+
+// If no smoothing should be done set Image height to zero!
+// // If no homogrpahy should be done. set destWidth or destheight to zero!
+cv::Mat Deflectometry::createRealisticFromPattern(
+	const cv::Mat& pattern,
+	const double aperture_number,
+	const double dispaly_pixel_pitch,
+	const double distance,   
+	const double object_height, 
+	const double image_height, 
+	const int dest_width , 
+	const int dest_height,   
+	const RoiBorders<double> destination)
+{
+	CV_Assert(aperture_number >= 0 && image_height >= 0);
+	CV_Assert(distance >= 0 && object_height > 0);
+	CV_Assert(dest_width >= 0 && dest_height >= 0);
+
+	const double scale = object_height/image_height;
+	const double focal_length = distance * scale / (scale + 1); // g = (m+1)/m * f
+	const double circ_entrance_pupil = focal_length / aperture_number; // f# = f/D -> D = entrance pupil 
+	cv::Mat smoothed, warped;
+	cv::Size output_size{ dest_width, dest_height };
+
+	// Smoothing 
+	if (image_height) {
+		const int n_pixel_diameter =
+			static_cast<int>(std::ceil(circ_entrance_pupil / dispaly_pixel_pitch));
+		cv::Mat circular_binary = m_img_processing->createCirculeBinaryMask(n_pixel_diameter / 2);
+		double sum = cv::sum(circular_binary)[0];
+		circular_binary /= sum;
+		cv::filter2D(pattern, smoothed, CV_64F, circular_binary);
+	}
+	else smoothed = pattern;
+	
+	// Warp the image 
+	if (dest_height && dest_width) {
+		RoiBorders<int> source{
+			{0,0},
+			{pattern.cols - 1, 0},
+			{0, pattern.rows - 1},
+			{pattern.cols - 1, pattern.rows - 1}
+
+		};
+
+		const cv::Mat homography =
+			m_img_processing->getHomographyMat(source, destination);
+
+		cv::warpPerspective(pattern, warped, homography, output_size);
+	}
+	else warped = smoothed;
+
+	return warped;
+}
+
+std::vector<cv::Mat> Deflectometry::generatePattern(
+	const Shift_mode mode,
+	const CalibrationMethod method,
+	const std::string& calib_path,
+	const FrameRole dst,
+	bool save_frames,
+	const std::string& path)
+{
+	if (save_frames) CV_Assert(!path.empty());
+
+	setupPattern(*m_img_store);
+	
+	setupCalibration(method, calib_path);
+
+	std::vector<cv::Mat> pattern_double = 
+		m_pattern->generate_phaseShift(
+			mode, 
+			127.5,
+			127.5,
+			10,
+			1920,
+			1080,
+			UniformRowsCols{});
+
+	//std::vector<cv::Mat> pattern_double = m_img_store->get(FrameRole::PatternDouble);
+
+	if (save_frames) {
 		m_img_store->saveRoleXML(FrameRole::PatternDouble, path);
 		m_img_store->saveRoleXML(FrameRole::RawPhase, path);
 	}
@@ -712,22 +855,34 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 	int n_periods)
 {
 	// Fixed Destination of the Gray Calibration File
-	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-01-03FH-GrayValueLUT");
+	setupPattern(*m_img_store);
+
+	setupCalibration(CalibrationMethod::None, "");
 	
-	m_pattern->generate_phaseShift(mode, n_periods);
+	std::vector<cv::Mat> pattern = 
+		m_pattern->generate_phaseShift(
+			mode, 
+			127.5,
+			127.5,
+			n_periods,
+			1920,
+			1080,
+			UniformRowsCols{});
+
+
 
 	if (!init()) {
 		std::cerr << "Init Method failed. Stop Meassurment \n"; 
 		return {};
 	}
-	std::vector<std::shared_ptr<defl::PhaseShiftConfig>> m_pattern_config =
-		m_pattern->getPhaseConfig();
 
-	int counter{ 0 };
-	for (const auto& cfg : m_pattern_config) {
-		std::string phase_config{ save_path + "/" + std::to_string(counter++) + ".xml" };
-		cfg->save_to_XML(phase_config);
+	if (!m_pattern_config.empty()) throw std::runtime_error("m_pattern_config does already contain data \n");
+
+	for (const auto& cfg : m_pattern->getPhaseConfig()) {
+		m_pattern_config.emplace_back(std::make_unique<defl::PhaseShiftConfig>(cfg));
 	}
+	
+	logging(save_path);
 
 	int expected_patterns{ 0 };
 	for (const auto& m : m_pattern_config) {
@@ -761,10 +916,10 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 			if (iter == end_iter) {throw std::runtime_error("Iterator is not in boundaries \n"); }
 			m_screenDisplay->showPattern(*iter);
 			for (int x = 0; x < n_pics_per; ++x) {
-				if(!x) std::this_thread::sleep_for(std::chrono::milliseconds(500));
+				if(!x) std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 				m_acquisition_worker->requestSave();
 				m_acquisition_controller->cv.wait(img_save_lock);
-				std::this_thread::sleep_for(std::chrono::milliseconds(200));
+				std::this_thread::sleep_for(std::chrono::milliseconds(600));
 			}
 			iter++;
 		}
@@ -836,48 +991,89 @@ std::vector<cv::Mat> Deflectometry::do_wrapped_phase(
 	return std::vector<cv::Mat>(wrapped_phase_out.begin(), std::next(wrapped_phase_out.begin(), 2));
 }
 
-// Does create a new instance of Pattern and tries to load the LUT for Gray Value calibration
-// This function defines the size of all the ouput pictures through initialization
-// Is Set to 1080, 1920
-void Deflectometry::setupPattern(std::string path, bool useLUT, int pixelX, int pixelY) {
-	m_pattern = std::make_shared<Pattern>(pixelY, pixelX, m_img_store);
-	m_img_store->loadRoleXML(FrameRole::GrayLUT, path);
-	std::vector<std::pair<double, double>> Lut = m_img_store->getLut();
-	if (!Lut.empty() && useLUT) {
-		m_pattern->load_gray_calib_data(std::move(Lut));
+
+
+bool Deflectometry::setupCalibration(
+	const CalibrationMethod method,
+	const std::string& path)
+{
+	CV_Assert(m_pattern != nullptr);
+	CV_Assert(m_img_processing != nullptr);
+
+	if (m_calibration == nullptr) {
+		m_calibration = std::make_unique<GrayCalibration>(*m_img_store);
+	}
+
+	switch (method) {
+	case(CalibrationMethod::None):
+		std::cout << "No calibration Mode selected !\n";
+		break;
+	case(CalibrationMethod::Lut): {
+		std::cout << "Calibratio via Lut selected \n" << "Try loading LUT... \n";
+		CV_Assert(!path.empty());
+		m_img_store->loadRoleXML(FrameRole::GrayLUT, path);
+		m_calibration->setupCalibrationMethod(
+			gr_calib::LUTCalibration{}, m_img_store->getLut());
 		std::cout << "LUT loaded and ready \n";
+		break;
 	}
-	else {
-		std::cout << "Work without Grayvalue calibration \n";
+	case(CalibrationMethod::Active): {
+		std::cout << "Active Calibration selected \n" << "Try loading images ... \n";
+		CV_Assert(!path.empty());
+		m_img_store->loadRoleXML(FrameRole::AcitveGrayCalib, path);
+		std::vector<cv::Mat> active_gray = m_img_store->get(FrameRole::AcitveGrayCalib);
+		CV_Assert(!active_gray.empty());
+
+		std::cout << "This path is not implemented at this point ";
+		throw std::runtime_error("This path must be terminated \n");
+		break;
 	}
-	
+	case(CalibrationMethod::Passive):
+		std::cout << "Passive Calibration iselected \n" << "Try loading images ... \n";
+		CV_Assert(!path.empty());
+		m_img_store->loadRoleXML(FrameRole::PassiveGrayCalib, path);
+		std::vector<cv::Mat> passive_gray = m_img_store->get(FrameRole::PassiveGrayCalib);
+		CV_Assert(!passive_gray.empty());
+
+		std::cout << "This path is not implemented at this point ! \n";
+		throw std::runtime_error("Not implemente ");
+		break;
+	}
+	return true;
 }
 
-bool Deflectometry::do_grayvalue_calibration(
-	int n_pics_per_value,
-	std::string path)
+
+void Deflectometry::setupPattern(
+	ImageStore& img_store,
+	int pixelX,
+	int pixelY) 
 {
-	int gray_steps{ 1 };
-	// 1) Pattern-Generator: 256 Graustufen
-	
-	setupPattern("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22", false);
-	m_pattern->generateGrayCalibrationSequence(gray_steps);
+	//CV_Assert(!path.empty());
+	CV_Assert(pixelX >= 1);
+	CV_Assert(pixelY >= 1);
+
+	if (m_pattern != nullptr) {
+		return;
+	}
+	m_pattern = std::make_unique<Pattern>(img_store);
+}
+
+std::vector<cv::Mat> Deflectometry::acquire_img(
+	const std::vector<cv::Mat>& src,
+	const FrameRole dst,
+	const int n_pics_per_value)
+{
+	CV_Assert(n_pics_per_value >= 1);
 
 	if (!init()) {
 		std::cerr << "Init Method failed. Stop GrayValueCalibration\n";
-		return false;
+		return {};
 	}
 
-	// 2) Alle Grauwert-Bilder holen
-	std::vector<cv::Mat> gray_patterns =
-		m_img_store->get(FrameRole::GrayCalibrationGT);
+	auto iter = src.cbegin();
+	auto iter_end = src.cend();
 
-	//m_img_store->show(FrameRole::GrayCalibrationGT);
-
-	auto iter = gray_patterns.cbegin();
-	auto iter_end = gray_patterns.cend();
-
-	m_acquisition_controller->mode = FrameRole::GrayCalibrationCam;
+	m_acquisition_controller->mode = dst;              // FrameRole::GrayCalibrationCam;
 
 	m_screenDisplay->assignCameraPreProcessing(showRawMaxValred);
 	m_screenDisplay->start();
@@ -890,7 +1086,7 @@ bool Deflectometry::do_grayvalue_calibration(
 	std::unique_lock lk(m_acquisition_controller->mtx);
 
 	// 3) Für jeden Grauwert
-	for (size_t gray = 0; gray < gray_patterns.size(); ++gray)
+	for (size_t gray = 0; gray < src.size(); ++gray)
 	{
 		if (iter == iter_end)
 			throw std::runtime_error("Pattern iterator out of bounds!");
@@ -918,17 +1114,293 @@ bool Deflectometry::do_grayvalue_calibration(
 	m_screenDisplay->stop();
 	disconnect();
 
-	//m_img_store->show(FrameRole::GrayCalibrationCam);
-	//std::cout << m_img_store->count(FrameRole::GrayCalibrationCam) << '\n';
+	return m_img_store->get(dst);
+}
 
-	//std::vector<std::pair<double,double>> LUT = 
-	//	m_img_processing->gray_value_calib(m_img_store->get(FrameRole::GrayCalibrationCam), n_pics_per_value, gray_steps);
 
-	//m_img_store->add(FrameRole::GrayLUT, std::move(LUT));
-	m_img_store->saveRole(FrameRole::GrayLUT, path);
+std::vector<cv::Mat> Deflectometry::acquire_img(
+	const FrameRole src,
+	const FrameRole dst,
+	const int n_pics_per_value) 
+{
+	CV_Assert(n_pics_per_value >= 1);
+
+	if (!init()) {
+		std::cerr << "Init Method failed. Stop GrayValueCalibration\n";
+		return {};
+	}
+
+	// 2) Alle Grauwert-Bilder holen
+	std::vector<cv::Mat> gray_patterns =
+		m_img_store->get(src);
+
+	return acquire_img(gray_patterns, dst, n_pics_per_value);
+}
+
+bool Deflectometry::logging(
+	const std::string& path)
+{
+	CV_Assert(!path.empty());
+	CV_Assert(std::filesystem::exists(std::filesystem::path(path)));
+	bool sucess{ true };
+
+	// Camera Config
+	if (m_camera_config.empty()) {
+		std::cout << "No camera config available \n";
+		sucess = false;
+	}
+	else {
+		int counter{};
+		for (const auto& cfg : m_camera_config) {
+			std::string camera_config{ path + "/" + "CameraConfig" + std::to_string(counter++) + ".xml" };
+			cfg->save_to_XML(camera_config);
+		}
+	}
+
+	// Phase Config
+	if (m_pattern_config.empty() && (m_pattern != nullptr)) {
+		for (const auto& cfg : m_pattern->getPhaseConfig()) {
+			m_pattern_config.emplace_back(std::make_unique<defl::PhaseShiftConfig>(cfg));
+		}
+	}
+	{
+		int counter{};
+		for (const auto& cfg : m_pattern_config) {
+			std::string camera_config{ path + "/" + "PatternConfig" + std::to_string(counter++) + ".xml" };
+			cfg->save_to_XML(camera_config);
+		}
+	}
+	// Gray Calibration Config
+
+
+
+	return sucess;
+}
+
+GrayCalibVector Deflectometry::calc_response_curve_sections(
+	const int n_pics_per_value,
+	const int n_steps,
+	bool save,
+	const std::string& save_path,
+	const int sections_x,
+	const int sections_y)
+{
+	CV_Assert(n_pics_per_value >= 1);
+	CV_Assert(n_steps >= 1);
+	if (save) CV_Assert(!save_path.empty());
+	CV_Assert(sections_x >= 1);
+	CV_Assert(sections_y >= 1);
+
+	// Creates patter instance
+	setupPattern(*m_img_store);
+
+	setupCalibration(CalibrationMethod::None, "");
+
+	if (init()) {
+		std::cout << "Hardware connection failed. \nReturn to Caller\n";
+		return {};
+	}
+
+	// Creates the pattern
+	std::vector<cv::Mat> gray_calibGT =
+		m_pattern->generateGrayCalibrationSequence(n_steps);
+
+	std::vector<cv::Mat> gray_calib = acquire_img(
+		gray_calibGT,
+		FrameRole::GrayCalibrationCam,
+		n_pics_per_value);
+
+	CV_Assert(!gray_calib.empty());
+
+	GrayCalibVector borders = borderPoints_gray_val(1920, 1080, sections_x, sections_y);
+	
+	m_img_processing->getResponseCurve_perSection(
+		gray_calib,
+		borders,
+		n_pics_per_value,
+		n_steps);
+
+	if (save) {
+		borders.save(save_path);
+	}
+
+	return borders;
+}
+
+bool Deflectometry::do_grayvalue_calibration(
+	const int n_pics_per_value,
+	const int n_steps,
+	bool save,
+	const std::string& path)
+{
+	CV_Assert(n_pics_per_value >= 1);
+	CV_Assert(n_steps >= 1);
+	if (save) CV_Assert(!path.empty());
+	
+	// Creates patter instance
+	setupPattern(*m_img_store);
+
+	setupCalibration(CalibrationMethod::None, "");
+
+	// Creates the pattern
+	std::vector<cv::Mat> gray_calibGT =
+		m_pattern->generateGrayCalibrationSequence(n_steps);
+
+	std::vector<cv::Mat> gray_calib = acquire_img(
+		gray_calibGT,
+		FrameRole::GrayCalibrationCam,
+		n_pics_per_value);
+
+	CV_Assert(!gray_calib.empty());
+
+	std::vector<std::pair<double,double>> LUT = 
+		m_img_processing->gray_value_calib(gray_calib, n_pics_per_value, n_steps);
+
+	m_img_store->add(FrameRole::GrayLUT, std::move(LUT));
+	if(save)
+		m_img_store->saveRole(FrameRole::GrayLUT, path);
 
 	return true;
 }
+
+GrayCalibVector Deflectometry::borderPoints_gray_val(
+	const int pixel_x,
+	const int pixel_y,
+	const int sections_x,
+	const int sections_y)
+{
+	assert(pixel_x > 0 && pixel_y > 0);
+	assert(sections_x >= 0 && sections_y >= 0);
+	if (bool(sections_x) != bool(sections_y)) {
+		std::cout << "Invalid Input in boderPoints_gray_val() \n" <<
+			"Return to caller \n";
+		return {};
+	}
+		
+	int n_sections{}, rect_length_x{}, rect_length_y{};
+	GrayCalibVector border_sections{};
+	int area = pixel_x * pixel_y;
+	
+	if (sections_x && sections_y) {
+		double pix_per_sec_x = static_cast<double>(pixel_x) /
+			static_cast<double>(sections_x);
+		rect_length_x = static_cast<int>(std::ceil(pix_per_sec_x));
+		double pix_per_sec_y = static_cast<double>(pixel_y) /
+			static_cast<double>(sections_y);
+		rect_length_y = static_cast<int>(std::ceil(pix_per_sec_y));
+		n_sections = sections_x * sections_y;
+	}
+	else {
+		rect_length_x = rect_length_y = std::gcd(pixel_y, pixel_x);
+		n_sections = area / (rect_length_x*rect_length_y);
+	}
+	
+	border_sections.reserve(static_cast<std::size_t>(n_sections));
+	
+	std::pair<int, int> upper_left_corner{ 0,0 }; // x,y
+	std::pair<int, int> shift_right{ rect_length_x, 0 };
+	std::pair<int, int> shift_down{ 0, rect_length_y };
+
+	for (std::size_t i = 0; i < static_cast<std::size_t>(n_sections); ++i) {
+		std::pair<int, int> upper_right_corner = upper_left_corner + shift_right;
+		if (upper_right_corner.first >= pixel_x) upper_right_corner.first = pixel_x;
+		std::pair<int, int> down_left_corner = upper_left_corner + shift_down;
+		if (down_left_corner.second >= pixel_y) down_left_corner.second = pixel_y;
+		std::pair<int, int> down_right_corner{ upper_right_corner.first, down_left_corner.second };
+		
+		Gray_section_data data{};
+		data.roi_img.left_up_corner = upper_left_corner;
+		data.roi_img.right_up_corner = upper_right_corner;
+		data.roi_img.left_down_corner = down_left_corner;
+		data.roi_img.right_down_corner = down_right_corner;
+		border_sections.push_back(data);
+		if (upper_right_corner.first < pixel_x) upper_left_corner = upper_right_corner;
+		else {
+			upper_left_corner = std::pair<int, int>(0, down_right_corner.second);
+		}
+	}
+	// Debug
+	cv::Mat dummy = cv::Mat::zeros(pixel_y, pixel_x, CV_8U);
+	for (const auto& border : border_sections) {
+		cv::Point point{border.roi_img.left_up_corner.first, border.roi_img.left_up_corner.second };
+		cv::drawMarker(dummy, point, cv::Scalar(255));
+	}
+	cv::imshow("Debug", dummy);
+	cv::waitKey(0);
+	cv::destroyWindow("Debug");
+
+	return border_sections;
+}
+
+std::vector<std::pair<double,double>> Deflectometry::findParallelogramCorners(const cv::Mat& bin) {
+	CV_Assert(!bin.empty());
+	CV_Assert(bin.type() == CV_8U);
+	return m_img_processing->find_ParallelogramCorners(bin);
+}
+
+cv::Mat Deflectometry::get_Homogrpahy_mat(
+	const std::vector<std::pair<int, int>>& src,
+	const std::vector<std::pair<double, double>>& dst,
+	const int method
+)
+{
+	CV_Assert(src.size() == dst.size());
+	CV_Assert(!src.empty() && !dst.empty());
+
+	std::vector<cv::Vec2d> src_n;
+	std::vector<cv::Vec2d> dst_n;
+	for (const auto& s_pts : src) {
+		src_n.emplace_back(cv::Vec2d(s_pts.first, s_pts.second));
+	}
+	for (const auto& d_pts : dst) {
+		dst_n.emplace_back(cv::Vec2d(d_pts.first, d_pts.second));
+	}
+
+	return get_Homogrpahy_mat(src_n, dst_n);
+}
+
+cv::Mat Deflectometry::get_Homogrpahy_mat(
+	const std::vector<cv::Vec2d>& srcPts,
+	const std::vector<cv::Vec2d>& dstPts,
+	const int method)
+{
+	CV_Assert(srcPts.size() == dstPts.size());
+	return m_img_processing->getHomographyMat(srcPts, dstPts, method);
+}
+
+cv::Vec2d Deflectometry::projectPoint_homography(
+	const cv::Vec2d& img,
+	const cv::Mat& homography) 
+{
+	CV_Assert(!homography.empty());
+	return m_img_processing->projectPoint_homography(img, homography);
+}
+
+cv::Mat Deflectometry::subtractSurface(
+	const cv::Mat& img,
+	const cv::Mat& mask,
+	bool show_subtracted)
+{
+	CV_Assert(img.channels() == 1 && mask.channels() ==1);
+	CV_Assert(img.size() == mask.size());
+	CV_Assert(img.type() == CV_64F);
+	CV_Assert(mask.type() == CV_8U);
+	
+	cv::Mat out, norm;
+	cv::Mat surface = 
+		m_img_processing->fitSurface(img, mask);
+
+	cv::subtract(img, surface, out, mask);
+
+	if (show_subtracted) {
+		cv::normalize(out, norm, 0, 255, cv::NORM_MINMAX, CV_8U, mask);
+		cv::imshow("Surface subtrakt", norm);
+		cv::waitKey(0);
+	}
+
+	return surface;
+}
+
 
 std::vector<cv::Mat> Deflectometry::getFrames(
 	FrameRole role,
@@ -1019,8 +1491,9 @@ std::array<double, (std::size_t)3> Deflectometry::doWhiteBalance(
 
 bool Deflectometry::do_camera_calibration()
 {
+	std::string calibpath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-08MAKOCalibration" };
 	std::vector<cv::Mat> checkerboard = getFrames(FrameRole::Calibration);
-	m_img_store->saveRole(FrameRole::Calibration, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/COLOR_BayerBG2BGR");
+	m_img_store->saveRole(FrameRole::Calibration, calibpath);
 
 	// Save Path for Calibration in settings path
 	std::array<std::vector<cv::Mat>, 2> camera = runCameraCalibration(checkerboard, true,
@@ -1030,125 +1503,75 @@ bool Deflectometry::do_camera_calibration()
 		m_img_store->add(FrameRole::CalibImages, m);
 	}
 
-	m_img_store->saveRole(FrameRole::CalibImages, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23");
+	m_img_store->saveRole(FrameRole::CalibImages, calibpath);
 	return true;
 }
 
 
-//
-////Just a small helper function that the shift parameters are available for later processing.
 
-//
-//// Shows RawFrames runtime_flags.n_pictures_per_pattern * pattern * 2
-//// Takes directly the frames stored in Acquisistionworker and Dispalys them 
-//void Deflectometry::show_acquistion() {
-//	std::cout << m_acquisition_worker->m_frames.size() << std::endl;
-//	for (const auto& frame : m_acquisition_worker->m_frames) {
-//		cv::namedWindow("Raw Phase", cv::WINDOW_NORMAL);
-//		cv::setWindowProperty("Raw Phase", cv::WINDOW_NORMAL, cv::WINDOW_FREERATIO);
-//		cv::imshow("Raw Phase", frame);
-//		cv::waitKey(0);
-//	}
-//	cv::destroyWindow("Raw Phase");
-//}
+// build function E(a,b)= sum 0...N-1 (y_i -(a*x_i+b^))^2
+// optamisation challenge for a and b ...
+// dE/da = sum 2(y_i+a*x_i-b)(-x_i)
+// sum(x_i*y_i) - a*sum(x_i^2) -b*sum(x_i) = 0
+// dE/db = sum2(y_i - a*x_i -b)(-1)
+// sum(y_i) - a * sum(x_i) - b*N = 0
+// = build LGS aA + b*B = C a*B+b*N = D
+// A = sum(x_i)^2 B= sum(x_i) c = sum(x_i*y_i) D= sum (y_i)
+std::pair<double, double> Deflectometry::fitLine1D(const std::vector<double>& y) {
+	const int N = static_cast<int>(y.size());
+	double sumx = 0.0, sumy = 0.0, sumxx = 0.0, sumxy = 0.0;
 
-////Returns true if path exists, false if created new directory
-//auto check_create_dir = [&](auto&& p) -> bool {
-//	return std::filesystem::exists(p)
-//		? (std::cout << "Path exists!\n", true)
-//		: (std::filesystem::create_directory(p), false);
-//	};
-//
-//
-//void Deflectometry::save_frames(std::string& path) {
-//	m_img_processing->saveImages(path);
-//}
-//
-//void Deflectometry::load_frames(const std::string& path) {
-//	m_img_processing->load_frames(path);
-//}
-//
-//void Deflectometry::manual_phaseUnwrap() {
-//	m_img_processing->manual_phaseUnwrap();
-//}
-//
+	for (int i = 0; i < N; ++i) {
+		double x = static_cast<double>(i);
+		double v = y[i];
+		sumx += x;
+		sumy += v;
+		sumxx += x * x;
+		sumxy += x * v;
+	}
 
 
-//
+	double denom = N * sumxx - sumx * sumx;
+	double a = (N * sumxy - sumx * sumy) / denom;
+	double b = (sumy - a * sumx) / N;
 
-//
-//void Deflectometry::load_calib(std::string path) {
-//	m_img_processing->load_calib(path);
-//}
-//
-//
-//// build function E(a,b)= sum 0...N-1 (y_i -(a*x_i+b^))^2
-//// optamisation challenge for a and b ...
-//// dE/da = sum 2(y_i+a*x_i-b)(-x_i)
-//// sum(x_i*y_i) - a*sum(x_i^2) -b*sum(x_i) = 0
-//// dE/db = sum2(y_i - a*x_i -b)(-1)
-//// sum(y_i) - a * sum(x_i) - b*N = 0
-//// = build LGS aA + b*B = C a*B+b*N = D
-//// A = sum(x_i)^2 B= sum(x_i) c = sum(x_i*y_i) D= sum (y_i)
-//std::pair<double, double> Deflectometry::fitLine1D(const std::vector<double>& y) {
-//	const int N = static_cast<int>(y.size());
-//	double sumx = 0.0, sumy = 0.0, sumxx = 0.0, sumxy = 0.0;
-//
-//	for (int i = 0; i < N; ++i) {
-//		double x = static_cast<double>(i);
-//		double v = y[i];
-//		sumx += x;
-//		sumy += v;
-//		sumxx += x * x;
-//		sumxy += x * v;
-//	}
-//
-//
-//	double denom = N * sumxx - sumx * sumx;
-//	double a = (N * sumxy - sumx * sumy) / denom;
-//	double b = (sumy - a * sumx) / N;
-//
-//
-//	return { a, b };
-//}
-//
-//void Deflectometry::saveSliceToCSV(const std::string& filename,
-//	const std::vector<double>& unwrap, 
-//	const std::pair<double, double>& unwrapFit,// regressions a,b unwrap
-//	const std::vector<double>& repro, 
-//	const std::pair<double, double>& reproFit)//regression a,b repro
-//{
-//	std::ofstream file(filename);
-//	if (!file.is_open()) {
-//		std::cerr << "Could not open CSV file: " << filename << "\n";
-//		return;
-//	}
-//
-//	file << "index,unwrap,unwrap_fit,unwrap_residual,repro,repro_fit,repro_residual\n";
-//
-//	int N = std::min((int)unwrap.size(), (int)repro.size());
-//	for (int i = 0; i < N; ++i) {
-//
-//		double unwrap_fit = unwrapFit.first * i + unwrapFit.second;
-//		double unwrap_residual = unwrap[i] - unwrap_fit;
-//
-//		double repro_fit = reproFit.first * i + reproFit.second;
-//		double repro_residual = repro[i] - repro_fit;
-//
-//		file << i << ","
-//			<< unwrap[i] << ","
-//			<< unwrap_fit << ","
-//			<< unwrap_residual << ","
-//			<< repro[i] << ","
-//			<< repro_fit << ","
-//			<< repro_residual << "\n";
-//
-//	}
-//
-//	file.close();
-//	std::cout << "CSV saved to " << filename << "\n";
-//}
-//
-//
 
-//
+	return { a, b };
+}
+
+void Deflectometry::saveSliceToCSV(const std::string& filename,
+	const std::vector<double>& unwrap, 
+	const std::pair<double, double>& unwrapFit,// regressions a,b unwrap
+	const std::vector<double>& repro, 
+	const std::pair<double, double>& reproFit)//regression a,b repro
+{
+	std::ofstream file(filename);
+	if (!file.is_open()) {
+		std::cerr << "Could not open CSV file: " << filename << "\n";
+		return;
+	}
+
+	file << "index,unwrap,unwrap_fit,unwrap_residual,repro,repro_fit,repro_residual\n";
+
+	int N = std::min((int)unwrap.size(), (int)repro.size());
+	for (int i = 0; i < N; ++i) {
+
+		double unwrap_fit = unwrapFit.first * i + unwrapFit.second;
+		double unwrap_residual = unwrap[i] - unwrap_fit;
+
+		double repro_fit = reproFit.first * i + reproFit.second;
+		double repro_residual = repro[i] - repro_fit;
+
+		file << i << ","
+			<< unwrap[i] << ","
+			<< unwrap_fit << ","
+			<< unwrap_residual << ","
+			<< repro[i] << ","
+			<< repro_fit << ","
+			<< repro_residual << "\n";
+
+	}
+
+	file.close();
+	std::cout << "CSV saved to " << filename << "\n";
+}

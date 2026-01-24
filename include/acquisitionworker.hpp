@@ -10,15 +10,16 @@
 
 class AcquisitionWorker {
 public:
-    AcquisitionWorker(std::shared_ptr<CameraN> cam,
-        std::shared_ptr<ImageStore> store,
-        std::shared_ptr<defl::AcquisitionController> controller,
-        std::shared_ptr<ScreenDisplay> display = nullptr
+    AcquisitionWorker(
+        std::shared_ptr<CameraN> cam, // for now fine
+        ImageStore& store,
+        defl::AcquisitionController& controller,
+        ScreenDisplay& display 
         )
         : m_camera(std::move(cam))
-        , m_store(std::move(store))
-        , m_display(std::move(display))
-        , m_controller(std::move(controller))
+        , m_store(store)
+        , m_display(display)
+        , m_controller(controller)
     {
     }
 
@@ -54,10 +55,10 @@ public:
     }
 
 private:
-    std::shared_ptr<CameraN> m_camera;
-    std::shared_ptr<ImageStore> m_store;
-    std::shared_ptr<ScreenDisplay> m_display;
-    std::shared_ptr<defl::AcquisitionController> m_controller;
+    std::shared_ptr<CameraN> m_camera; // fine for now
+    ImageStore& m_store;
+    ScreenDisplay& m_display;
+    defl::AcquisitionController& m_controller;
 
     std::thread m_thread;
     std::atomic<bool> m_running{ false };
@@ -81,17 +82,18 @@ private:
                 //m_store->add(FrameRole::RawFrame, gray);
 
                 // Show live preview
-                if (m_display)
-                    m_display->showCamera(view);
+                
+                m_display.showCamera(view);
 
                 // === NEW: SAVE REQUEST LOGIC ===
                 int saveNow = m_pendingSaves.load();
                 if (saveNow > 0) {
-                    std::unique_lock m_img_save (m_controller->mtx);
+                    //std::this_thread::sleep_for(std::chrono::milliseconds(800));
+                    std::unique_lock m_img_save (m_controller.mtx);
                     m_pendingSaves.fetch_sub(1);
-                    m_store->add(m_controller->mode, view.clone());
+                    m_store.add(m_controller.mode, view.clone());
                     m_img_save.unlock();
-                    m_controller->cv.notify_one();
+                    m_controller.cv.notify_one();
                 }
             }
             catch (...) {

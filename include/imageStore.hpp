@@ -9,6 +9,7 @@
 #include <string>
 
 
+
 // What type of image is stored?
 enum class FrameRole {
     Pattern,           // Pattern generated in Pattern()
@@ -35,7 +36,9 @@ enum class FrameRole {
     DistortErrX,       // Picture that showcases the ammount of Distortion in the X component
     DistortErrY,       // Picture that showcases the ammount of Distortion in the Y component
     UndistortErrX,     // Picture that showscases the ammount of Distortion after the undistortion in the X compoment.
-    UndistortErrY,      // Picture that showcases the ammound of Distortion after the undistortion in the Y compoment. 
+    UndistortErrY,     // Picture that showcases the ammound of Distortion after the undistortion in the Y compoment. 
+    PassiveGrayCalib,  // Holds 2 Images where the parameters for passive calibration are stored
+    AcitveGrayCalib,   // Holds 2 Images where the parameters for active calibratino are stored
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -47,6 +50,7 @@ public:
     // Add image to store under a specific role
     void add(FrameRole role, const cv::Mat& img);
     void add(FrameRole role, const std::vector<std::pair<double, double>>&&);
+    void add(FrameRole role, const std::vector<cv::Mat>& images);
 
     // Access images by category
     std::vector<cv::Mat> get(FrameRole role) const;
@@ -103,7 +107,8 @@ private:
         "BaseIntensity", "UnwrappedPhase","CalibrationImg", "CalibrationMatrix", 
         "DistortionCoefficients", "CalibrationImagesMarked", "ReprojectionX",
         "ReprojectionY", "Debug", "All", "GridPattern", "DistortionCalib", "DistortErrX",
-        "DistortErrY", "UndistortErrX", "UndistortErrY"
+        "DistortErrY", "UndistortErrX", "UndistortErrY", "Passive Calibration" ,
+        "Acitve Calibration"
     } };
     
 };

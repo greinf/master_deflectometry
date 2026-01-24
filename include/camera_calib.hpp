@@ -316,7 +316,7 @@ array<vector<Mat>, 2> runCameraCalibration(vector<Mat>& frames,
     
 
 
-    s.nrFrames = frames.size();
+    s.nrFrames = static_cast<int>(frames.size());
     fs.release();                                         // close Settings file
     //! [file_read]
 

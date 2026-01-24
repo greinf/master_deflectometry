@@ -17,8 +17,9 @@ public:
     virtual void close(std::size_t) = 0;
 
     virtual bool isRunning(std::size_t) = 0;
-
-    virtual std::vector<std::shared_ptr<defl::CameraConfig>> getCameraConfig() = 0;
+    
+    // not implemented in Vimba path
+    virtual std::vector<defl::CameraConfig> getCameraConfig() = 0;
 
     // Blocking grab. Returns empty on timeout/error.
     virtual cv::Mat grab(int timeout_ms) = 0;

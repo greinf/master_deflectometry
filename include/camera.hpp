@@ -55,8 +55,17 @@ public:
 
     // return the hole camera config. This vector should normale have size() = 1 
     // If multiple camera from the same manufacturer are used this could be > 1.
-    std::vector<std::shared_ptr<defl::CameraConfig>>
-        getCameraConfig() override { return m_camera_data; }
+
+    std::vector<defl::CameraConfig>
+        getCameraConfig() override
+    {
+        std::vector<defl::CameraConfig> config_vec;
+        for (const auto& cfg : m_camera_data) {
+            // Creates a copy of each instance of m_camera_data (porpably only one)
+            config_vec.emplace_back(*cfg);
+        }
+        return config_vec;
+    }
 
     cv::Mat grab(int timeout);
 
@@ -104,6 +113,9 @@ private:
     std::vector<std::shared_ptr<peak::core::DataStream>> m_dataStreams;
     std::vector<std::shared_ptr<peak::core::NodeMap>>  m_nodeMaps;
 
+
+    // Propably bad decission at the start but ok for now to make this shared ptr. 
+    // The return value for when getting a config is copy of the instance and not a shared ptr
     std::vector<std::shared_ptr<defl::CameraConfig>> m_camera_data;
 
     // Welches Device ist „aktiv“

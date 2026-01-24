@@ -13,7 +13,7 @@
 #include <thread>
 #include <mutex>
 #include "RingBuffer.hpp"
-
+#include <atomic>
 
 
 class VimbaBackend : public ICameraBackend
@@ -29,14 +29,18 @@ public:
 	void close(std::size_t i = 0) override;
 	
 	bool isRunning(std::size_t i) override;
-	std::vector<std::shared_ptr<defl::CameraConfig>> getCameraConfig() override;
+	std::vector<defl::CameraConfig> getCameraConfig() override;
 	cv::Mat grab(int timeout_ms) override;
 
 private:
-	// std::vector<VmbCPP::SharedPtr<Camera>> m_cameras;
-	//VmbCPP::CameraPtrVector m_cameras;
-	std::thread m_running_thread;
 	std::mutex m_mut;
+	
+	std::vector<defl::CameraConfig> m_camera_data{};
+
+	void logging(const std::size_t camera_index);
+
+	std::atomic<bool> m_stopping{ false };
+	std::atomic<int>  m_callbacksInFlight{ 0 };
 
 	// if multiple camera are used this would not work
 	bool m_running{ false };
@@ -136,9 +140,15 @@ private:
 class FrameObserver : public VmbCPP::IFrameObserver
 {
 public:
-	FrameObserver(VmbCPP::CameraPtr pCamera, RingBuffer* buffer)
+	FrameObserver(VmbCPP::CameraPtr pCamera, 
+		RingBuffer* buffer, 
+		std::atomic<bool>* stopping,
+		std::atomic<int>* callbacks
+	)
 		: VmbCPP::IFrameObserver(pCamera)
 		, m_buffer{buffer}
+		, m_stopping{stopping}
+		, m_callbacksInFlight{callbacks}
 	{}
 	
 	void FrameReceived(const VmbCPP::FramePtr pFrame) override {
@@ -146,10 +156,20 @@ public:
 			std::cerr << "No buffer Assigned in Frame Observer \n";
 			throw std::runtime_error("No Buffer Assigned in Frame Observer");
 		}
-		std::unique_lock<std::mutex> lock(m_tx);
+		// mark callback in flight
+		m_callbacksInFlight->fetch_add(1, std::memory_order_acq_rel);
+
+		// if stopping, don't touch camera, don't requeue
+		if (m_stopping->load(std::memory_order_relaxed)) {
+			m_callbacksInFlight->fetch_sub(1, std::memory_order_acq_rel);
+			return;
+		}
+
+		//std::unique_lock<std::mutex> lock(m_tx);
 		m_buffer->getFrame(pFrame);
-		lock.unlock();
+		//lock.unlock();
 		m_pCamera->QueueFrame(pFrame);
+		m_callbacksInFlight->fetch_sub(1, std::memory_order_acq_rel);
 	}
 
 	~FrameObserver() override = default;
@@ -158,6 +178,8 @@ private:
 	std::mutex m_tx;
 	// pointer to static RingBufferObject
 	RingBuffer* m_buffer = nullptr;
+	std::atomic<bool>* m_stopping = nullptr;
+	std::atomic<int>* m_callbacksInFlight = nullptr;
 };
 
 

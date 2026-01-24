@@ -11,6 +11,20 @@ void ImageStore::add(FrameRole role, const cv::Mat& img) {
     storage_[role].push_back(img.clone());   // ensure deep copy
 }
 
+void ImageStore::add(
+    FrameRole role,
+    const std::vector<cv::Mat>& images)
+{
+    if (has(role) && !images.empty()) {
+        std::cout << "WARNING: The Category aleady holds images. \n" <<
+            "The images will be appended \n";
+    }
+    for (const auto& img : images) {
+        add(role, img);
+    }
+}
+
+
 void ImageStore::add(FrameRole role, const std::vector<std::pair<double, double>>&& LUT) {
     std::scoped_lock lock(mtx_);
     LUT_Gray = LUT;

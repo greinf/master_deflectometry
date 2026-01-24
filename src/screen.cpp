@@ -1,56 +1,18 @@
 ﻿#include "screen.hpp" // Be carefull renamed to Pattern
 #include "enums.hpp"
-#include "imageHandler.hpp"
 #include <algorithm>
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include "imageStore.hpp"
 #include <opencv2/core.hpp>
+#include "config/PhaseShiftConfig.hpp"
+#include "RowPolicy.hpp"
 
 
-Pattern::Pattern(int heigth, int width, std::shared_ptr<ImageStore> img_store) :
-	m_pixel_y{ heigth },
-	m_pixel_x{ width },
-	m_img_store { std::move(img_store) }
+Pattern::Pattern(ImageStore& img_store) :
+	m_img_store { img_store }
 {  }
 
-
-
-//void Pattern::gray_value_calib() {
-//	// Sets flags
-//	runtime_flags.set_finished_fringe_Iteration_false();
-//	runtime_flags.set_stop_fringe_projection_flag_false();
-//	// Allocate memory for array
-//	cv::Mat gray_image(runtime_flags.disp.height, runtime_flags.disp.width, CV_8UC1);
-//	assert(runtime_flags.calib.stepwidth && "Stepwidth is not defined \n");
-//	for (size_t counter = 0; counter <= std::numeric_limits<uchar>::max(); counter += runtime_flags.calib.stepwidth ) {
-//		//std::this_thread::sleep_for(std::chrono::milliseconds(500));
-//		std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
-//
-//		// linearisatoin of gray value if m_LUT got value
-//		if (m_LUT.has_value()) {
-//			gray_image.setTo(linear_gray(static_cast<double>(counter)));
-//		}
-//		else { gray_image.setTo(cv::Scalar(static_cast<int>(counter))); }
-//		imgHandler.imshow_Pattern(gray_image);
-//		
-//		if (runtime_flags.get_stop_fringe_projection_flag()) {
-//			runtime_flags.set_stop_fringe_projection_flag_false();
-//			std::cout << "Gray value projection interrupted\n";
-//			lk_pattern.unlock();
-//			runtime_flags.cv.notify_all();
-//			return;
-//		}
-//		//unlocks the std::mutex and notify the controller automatic thread. 
-//		lk_pattern.unlock();
-//		runtime_flags.cv.notify_one();
-//		std::cout << "Pattern Screen function " << counter << "\n";
-//		// Reset flag and continue
-//	}
-//	std::cout << "Reached last gray value\n";
-//	runtime_flags.set_finished_fringe_Iteration_true();
-//	return;
-//}
 
 // n_checkersize in pixel
 cv::Mat Pattern::generateCheckerboard(
@@ -106,8 +68,6 @@ cv::Mat Pattern::generateCheckerboard(
 }
 
 
-
-
 cv::Mat Pattern::generateCross(
 	const int pixel_x,
 	const int pixel_y,
@@ -124,11 +84,11 @@ cv::Mat Pattern::generateCross(
 	CV_Assert(thickness > 1);
 	
 	int x_start, x_end, y_start, y_end;
-	x_start = std::ceil(mid_x - (thickness/2.0));
-	x_end = std::floor(mid_x + (thickness / 2.0));
+	x_start = static_cast<int>(std::ceil(mid_x - (thickness/2.0)));
+	x_end = static_cast<int>(std::floor(mid_x + (thickness / 2.0)));
 
-	y_start = std::ceil(mid_y - (thickness / 2.0));
-	y_end = std::floor(mid_y + (thickness / 2.0));
+	y_start = static_cast<int>(std::ceil(mid_y - (thickness / 2.0)));
+	y_end = static_cast<int>(std::floor(mid_y + (thickness / 2.0)));
 
 	cv::Mat pattern(pixel_y, pixel_x, CV_64F, cv::Scalar(0));
 	for (int row = 0; row < pattern.rows; ++row) {
@@ -146,32 +106,30 @@ cv::Mat Pattern::generateCross(
 	return pattern;
 }
 
-std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(int stepwidth)
+std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(
+	const int stepwidth,
+	const int pixel_x,
+	const int pixel_y)
 {
+	CV_Assert(stepwidth >= 1);
+	CV_Assert(pixel_x >= 1);
+	CV_Assert(pixel_y >= 1);
 	std::vector<cv::Mat> grayFrames;
 	grayFrames.reserve(256);     // worst case
 
-	int H = m_pixel_y;
-	int W = m_pixel_x;
-
-	if (stepwidth <= 0) {
-		throw std::runtime_error("Gray-value calibration stepwidth not defined.");
-	}
+	int H{}, W{};
+	
+	(pixel_x != m_pixel_x) ? (W = pixel_x) : (W = m_pixel_x);
+	(pixel_y != m_pixel_y) ? (H = pixel_y) : (H = m_pixel_y);
 
 	for (int val = 0; val <= 255; val += stepwidth)
 	{
 		cv::Mat frame(H, W, CV_8UC1);
 
-		if (m_LUT.has_value() && m_lut_ready) {
-			double linear_val = linear_gray(static_cast<double>(val));
-			frame.setTo(static_cast<uchar>(linear_val));
-		}
-		else {
-			frame.setTo(static_cast<uchar>(val));
-		}
+		frame.setTo(static_cast<uchar>(val));
 
 		// store in ImageStore
-		m_img_store->add(FrameRole::GrayCalibrationGT, frame);
+		m_img_store.add(FrameRole::GrayCalibrationGT, frame);
 
 		grayFrames.push_back(frame);
 	}
@@ -186,6 +144,7 @@ cv::Mat Pattern::generateCartesian(int gridX, int gridY) {
 	cv::Mat cartesian = createCartesian(m_pixel_y, m_pixel_x, gridY, gridX);
 	return cartesian;
 }
+
 
 cv::Mat Pattern::createCartesian(
 	const int pixelY,
@@ -227,7 +186,9 @@ cv::Mat Pattern::createCoordinateImg(int pixel_x, int pixel_y) {
 	return coord;
 }
 
-cv::Mat Pattern::generatecoordianteImg() {
+cv::Mat Pattern::generatecoordianteImg(
+	const int pixel_x, 
+	const int pixel_y) {
 	cv::Mat coordImg = createCoordinateImg(m_pixel_x, m_pixel_y);
 	return coordImg;
 }
@@ -263,10 +224,6 @@ bool Pattern::prepareShiftParameters(int n_periods_in_y, int steps) {
 		m_steps = steps;
 		m_wavelength = static_cast<double>(m_pixel_y) / static_cast<double>(n_periods_in_y); //Number of periods is bound to the y-Axis here! 
 		m_shift_length = ((CV_2PI) / static_cast<double>(steps));
-		
-		////runtime_flags Shoudl Be deleted in short time !!!!!
-		//runtime_flags.disp.wavelength = m_wavelength;
-		//runtime_flags.phase_shift.n_shifts = steps;
 	}
 	catch (std::exception& e) {
 		std::cout << e.what() << " Parameter generation failed \n ";
@@ -277,22 +234,23 @@ bool Pattern::prepareShiftParameters(int n_periods_in_y, int steps) {
 //m_patterns.reserve(2 * 4);
 
 
-std::vector<cv::Mat> Pattern::generatePhase(int pixel_x, int pixel_y, double wavelength) {
+std::vector<cv::Mat> Pattern::generatePhase(
+	int pixel_x, 
+	int pixel_y, 
+	double wavelength) 
+{
 	try {
 		CV_Assert(wavelength > 0);
 
 		cv::Mat row = generateRowPhase(pixel_x, wavelength);       // 1 × pixel_x
-		cv::Mat col = generateColumnPhase(pixel_y, wavelength);    // 1 × pixel_y
+		cv::Mat col = generateColumnPhase(pixel_y, wavelength);    // pixely x 1
 
 		// Now repeat to 2D
 		std::vector<cv::Mat> phase;
 		phase.emplace_back(cv::repeat(row, pixel_y, 1));  // horizontal
 		phase.emplace_back(cv::repeat(col, 1, pixel_x));  // vertical
 
-		//Store the files in Image_storage File
-		m_img_store->add(FrameRole::RawPhase, phase[0]);
-		m_img_store->add(FrameRole::RawPhase, phase[1]);
-
+		CV_Assert(phase[0].size() == phase[1].size());
 		return phase;
 	}
 	catch (std::exception& e) {
@@ -301,25 +259,31 @@ std::vector<cv::Mat> Pattern::generatePhase(int pixel_x, int pixel_y, double wav
 	}
 }
 
-
-
 std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 	const std::vector<cv::Mat>& phaseMaps,
 	int steps,
 	double amplitude,
-	double mean_value
-)
+	double mean_value,
+	bool uniformRow_Cols)
 {
 	assert(phaseMaps.size() == 2);
 	assert(phaseMaps[0].size() == phaseMaps[1].size());
 	assert(steps > 0);
+	CV_Assert(phaseMaps[0].type() == CV_64F);
+	CV_Assert((amplitude + mean_value) < 256);
+	
+	m_amplitude = amplitude;
+	m_mean_value = mean_value;
 
 	std::vector<cv::Mat> outPatterns;
 	outPatterns.reserve(phaseMaps.size() * steps);
 
 	double shift_step = CV_2PI / static_cast<double>(steps);
 
-	for (const auto& phi : phaseMaps) {
+	shift_axis axis;
+	for (std::size_t i = 0; i < phaseMaps.size(); ++i) {
+		axis = (i == 0) ? shift_axis::horizontal : shift_axis::vertikal;
+		cv::Mat phi = phaseMaps[i];
 
 		for (int k = 0; k < steps; ++k) {
 			double phase_shift = k * shift_step;
@@ -330,35 +294,60 @@ std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 
 			cv::Mat cosine(shifted.size(), CV_64F);
 
-			for (int y = 0; y < shifted.rows; ++y) {
-				const double* src = shifted.ptr<double>(y);
-				double* dst = cosine.ptr<double>(y);
-
-				for (int x = 0; x < shifted.cols; ++x) {
-					dst[x] = std::cos(src[x]);
+			// Much cheaper to caclulate
+			if (uniformRow_Cols) {
+				cv::Mat working;
+				switch (axis) {
+				case(shift_axis::horizontal): {
+					working.create(cv::Size(shifted.cols, 1), CV_64F);
+					double* dst = working.ptr<double>(0);
+					double* src = shifted.ptr<double>(shifted.rows / 2);
+					for (int cols = 0; cols < shifted.cols; ++cols) {
+						dst[cols] = std::cos(src[cols]);
+					}
+					cosine = cv::repeat(working, shifted.rows, 1);
+					break;
+				}
+				case(shift_axis::vertikal): {
+					working.create(cv::Size(1, shifted.rows), CV_64F);
+					//double* dst = working.ptr<double>(0);
+					for (int rows = 0; rows < shifted.rows; ++rows) {
+						*(working.ptr<double>(rows)) = std::cos(shifted.ptr<double>(rows)[shifted.cols / 2]);
+					}
+					cosine = cv::repeat(working, 1, shifted.cols);
+					break;
+				}
 				}
 			}
-			
-			double mean = mean_value / amplitude;
-			pattern = mean * (1.0 + cosine);
-			pattern *= amplitude;
-			if (m_LUT.has_value()) {
-				cv::parallel_for_(cv::Range(0, pattern.rows),
-					[&](const cv::Range& r) {
-						for (int y = r.start; y < r.end; ++y) {
-							double* ptr = pattern.ptr<double>(y);
-							for (int x = 0; x < pattern.cols; ++x) {
-								ptr[x] = Pattern::linear_gray(ptr[x]);
+
+			else {
+				// Very expensive computation. 
+				// This could be done for only one row and reapeated over the image
+				// This approach was taken to allow that rows may differ
+				cv::parallel_for_(cv::Range(0, shifted.rows),
+					[&](const cv::Range& range) {
+						for (int row = range.start; row < range.end; ++row) {
+							const double* src = shifted.ptr<double>(row);
+							double* dst = cosine.ptr<double>(row);
+
+							for (int x = 0; x < shifted.cols; ++x) {
+								dst[x] = std::cos(src[x]);
 							}
 						}
-					});
+					}
+				);
 			}
-			m_img_store->add(FrameRole::PatternDouble, pattern.clone());
-			pattern.convertTo(pattern, CV_8UC1);
-			outPatterns.push_back(pattern);
-			m_img_store->add(FrameRole::Pattern, pattern);
-			m_mean_value = mean;
-			m_amplitude = amplitude;
+
+			// cosine contains cos(phi + shift) in [-1,1]
+			cv::Mat pattern64 = mean_value + amplitude * cosine;  // range [mean-ampl, mean+ampl]
+
+			m_img_store.add(FrameRole::PatternDouble, pattern64.clone());
+			cv::Mat pattern8;
+			//cv::normalize(pattern64, pattern8, 0, 255, cv::NORM_MINMAX, CV_8U);
+			pattern64.convertTo(pattern8, CV_8U, 1.0, 0.0);
+			outPatterns.push_back(pattern8);
+			m_img_store.add(FrameRole::Pattern, pattern8);
+
 		}
 	}
 	return outPatterns;
@@ -382,6 +371,7 @@ cv::Mat Pattern::generateColumnPhase(int pixel_y, double wave_length) {
 	}
 	catch (std::exception& e) {
 		std::cout << "EXCEPTION: " << e.what() << " in Columnphase generation \n";
+		return {};
 	}
 }
 
@@ -403,67 +393,8 @@ cv::Mat Pattern::generateRowPhase(int pixel_x, double wave_length) {
 	}
 	catch (std::exception& e) {
 		std::cout << "EXCEPTION: " << e.what() << " in Rowphase generation \n";
+		return {};
 	}
-
-}
-
-
-double Pattern::linear_gray(double s)
-{
-	if (!m_lut_ready || m_sortedLUT.empty())
-		return s; // fallback: no LUT active
-
-	// transform 0..255 range into LUT-range
-	double target = s * m_lut_scale_factor + m_lut_offset;
-
-	// binary search on "second" values
-	auto it = std::lower_bound(
-		m_sortedLUT.begin(),
-		m_sortedLUT.end(),
-		target,
-		[](const auto& a, double val) {
-			return a.second < val;
-		}
-	);
-
-	if (it == m_sortedLUT.begin())
-		return it->first;
-
-	if (it == m_sortedLUT.end())
-		return std::prev(it)->first;
-
-	// choose closer of the two neighbors
-	double hi_dist = std::abs(it->second - target);
-	double lo_dist = std::abs(std::prev(it)->second - target);
-
-	if (lo_dist < hi_dist)
-		return std::prev(it)->first;
-	else
-		return it->first;
-}
-
-
-void Pattern::prepareLUT()
-{
-	if (!m_LUT.has_value()) {
-		m_lut_ready = false;
-		return;
-	}
-
-	m_sortedLUT = m_LUT.value();
-	std::sort(m_sortedLUT.begin(), m_sortedLUT.end(),
-		[](auto& a, auto& b) { return a.second < b.second; });
-
-	double minv = m_sortedLUT.front().second;
-	double maxv = m_sortedLUT.back().second;
-
-	double range = maxv - minv;
-	double range_safety = range * 0.9;      // keep 10% margin
-
-	m_lut_scale_factor = range_safety / 255.0;
-	m_lut_offset = minv + range * 0.05;
-
-	m_lut_ready = true;
 }
 
 void Pattern::generate_optimalPhase() {
@@ -471,35 +402,46 @@ void Pattern::generate_optimalPhase() {
 	
 }
 
-//n_perdios_in_y defaulted to 10
-void Pattern::generate_phaseShift(
+
+std::vector<cv::Mat> Pattern::generate_phaseShift(
 	Shift_mode mode, 
 	int n_periods_in_y, 
+	double mean,
+	double ampl,
 	int pixelX,
-	int pixelY) {
-
+	int pixelY,
+	bool uniformRow)
+{
 	m_numberPeriods = n_periods_in_y;
 	m_pixel_x = pixelX;
 	m_pixel_y = pixelY;
+	m_mean_value = mean;
+	m_amplitude = ampl;
 
 	if (mode == Shift_mode::four_phase_shift) {
 		m_steps = 4;
 
 		if (!prepareShiftParameters(n_periods_in_y, m_steps)) {
 			std::cout << "Parameter generation failed.\n";
-			return;
+			return{};
 		}
 
 		auto phaseMaps = generatePhase(m_pixel_x, m_pixel_y, m_wavelength);
-		auto patterns = generateSinusPatternFromPhase(phaseMaps, m_steps);
-		/*for (const auto& m : phaseMaps) {
-			cv::Mat norm;
-			cv::normalize(m, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
-			cv::imshow("norm", norm);
-			cv::waitKey(0);
-		}*/
+		
+		auto patterns = generateSinusPatternFromPhase(
+			phaseMaps,
+			m_steps,
+			127.5,
+			127.5,
+			uniformRow);
+		
+		//Store the files in Image_storage File
+		m_img_store.add(FrameRole::RawPhase, phaseMaps);
+		m_img_store.add(FrameRole::RawPhase, patterns);
 
 		logging();
+
+		return patterns;
 	}
 	else if (mode == Shift_mode::user_defined) {
 		std::cout << "Enter an integer for the amount of shifts (4 < x <= 100)\n";
@@ -517,19 +459,31 @@ void Pattern::generate_phaseShift(
 		m_steps = steps;
 		if (!prepareShiftParameters(n_periods_in_y, m_steps)) {
 			std::cout << "Parameter generation failed.\n";
-			return;
+			return{};
 		}
 
 		auto phaseMaps = generatePhase(m_pixel_x, m_pixel_y, m_wavelength);
 		auto patterns = generateSinusPatternFromPhase(phaseMaps, m_steps);
 
+		//Store the files in Image_storage File
+		m_img_store.add(FrameRole::RawPhase, phaseMaps);
+		m_img_store.add(FrameRole::RawPhase, patterns);
+
 		logging();
-		
-	}
-	else {
-		std::cout << "Not implemented\n";
+
+		return patterns;
 	}
 }
+
+std::vector<defl::PhaseShiftConfig> Pattern::getPhaseConfig() const
+{
+	std::vector<defl::PhaseShiftConfig> config;
+	for (const auto& cfg : m_cfg) {
+		config.push_back(*cfg);
+	}
+	return config;
+}
+
 
 void Pattern::logging() {
 	std::shared_ptr<defl::PhaseShiftConfig> logging_ptr = std::make_shared<defl::PhaseShiftConfig>();
@@ -538,13 +492,11 @@ void Pattern::logging() {
 		logging_ptr->pixel_x = m_pixel_x;
 		logging_ptr->pixel_y = m_pixel_y;
 		logging_ptr->steps = m_steps;
-		logging_ptr->periods_in_y = m_numberPeriods;
+		logging_ptr->periods_in_y = static_cast<int>(m_numberPeriods);
 		logging_ptr->wavelength = m_wavelength;
 		logging_ptr->shift_length = m_wavelength / m_steps;
 		logging_ptr->amplitude = m_amplitude;
 		logging_ptr->mean_value = m_mean_value;
-		logging_ptr->lut_available = m_lut_ready;
-		logging_ptr->lut_data = m_sortedLUT;
 		logging_ptr->algorithm_name = std::to_string(m_steps) + " Shift Algorithm";
 		std::cout << *logging_ptr;
 		m_cfg.push_back(std::move(logging_ptr));
@@ -555,56 +507,4 @@ void Pattern::logging() {
 	m_steps = 0;
 	m_wavelength = 0;
 }
-//
-//void Pattern::displayPatterns_single_thread() {
-//	cv::namedWindow("PhaseShift", cv::WINDOW_NORMAL);
-//	cv::setWindowProperty("PhaseShift", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//	std::cout << "Press P for next Image. \n";
-//	std::vector<cv::Mat> pattern = m_img_store->get(FrameRole::Pattern);
-//	for (const auto& m_pattern : pattern) {
-//		while (true) {
-//			cv::imshow("PhaseShift", m_pattern);
-//			int key = cv::waitKey(50); // Poll every 20 ms to keep window responsive
-//
-//			if (key == 'p' || key == 'P') {
-//				break;  // show next image
-//			}
-//			else if (key == 27) { // ESC
-//				std::cout << "Display interrupted by user.\n";
-//				return;  // exit the function early
-//			}
-//		}
-//	}
-//}
-//
-//
-//void Pattern::displayPatterns_multi_thread() {
-//	runtime_flags.set_finished_fringe_Iteration_false();
-//	runtime_flags.set_stop_fringe_projection_flag_false();
-//	assert(runtime_flags.phase_shift.n_pics_per_Phase && "n_pics is not defined \n");
-//	int count{};
-//	std::vector<cv::Mat> pattern = m_img_store->get(FrameRole::Pattern);
-//	for (const auto& m_pattern : pattern) {
-//		std::cout << "Fringe pattern: " << count++ << "\n";
-//		std::unique_lock<std::mutex> lk_pattern(runtime_flags.pattern_mutex);
-//		runtime_flags.next_fringe_process_finished_true();
-//		imgHandler.imshow_Pattern(m_pattern);
-//
-//		if (runtime_flags.get_stop_fringe_projection_flag()) {
-//			runtime_flags.set_stop_fringe_projection_flag_false();
-//			std::cout << "Gray value projection interrupted\n";
-//			lk_pattern.unlock();
-//			runtime_flags.cv.notify_all();
-//			return;
-//		}
-//
-//		lk_pattern.unlock();
-//		runtime_flags.cv.notify_one();
-//
-//	}
-//	std::cout << "Reaches last pattern \n";
-//	runtime_flags.set_finished_fringe_Iteration_true();
-//	return;
-//	
-//}
 

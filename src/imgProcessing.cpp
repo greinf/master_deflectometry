@@ -3,7 +3,6 @@
 #include <opencv2/opencv.hpp>
 #include <cassert>
 #include <math.h>
-#include <imageHandler.hpp>
 #include <opencv2/phase_unwrapping/histogramphaseunwrapping.hpp>
 #include "GoldsteinWrapper.hpp"
 #include <filesystem>
@@ -19,28 +18,9 @@
 #include <numeric>
 #include <algorithm>
 #include <cmath>
+#include "GrayCalibVector.hpp"
+#include "utils.hpp"
 
-
-//Allocator!!!! must be fixed 
-//
-//template <typename T, std::size_t Alignment = 32>
-//struct AlignedAllocator {
-//    using value_type = T;
-//
-//    AlignedAllocator() noexcept = default;
-//    template<class U> AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
-//
-//    T* allocate(std::size_t n) {
-//        void* ptr = nullptr;
-//        if (posix_memalign(&ptr, Alignment, n * sizeof(T)) != 0)
-//            throw std::bad_alloc();
-//        return reinterpret_cast<T*>(ptr);
-//    }
-//
-//    void deallocate(T* p, std::size_t) noexcept {
-//        free(p);
-//    }
-//};
 
 auto normalizeAndDisplay = [](const cv::Mat& img) -> void {
     cv::Mat norm;
@@ -253,8 +233,8 @@ double ImageProcessing::bilinearInterpolation(
         return val;
     }
 
-    const double* floor_row = img.ptr<double>(floorY);
-    const double* ceil_row = img.ptr<double>(ceilY);
+    const double* floor_row = img.ptr<double>(static_cast<int>(floorY));
+    const double* ceil_row = img.ptr<double>(static_cast<int>(ceilY));
 
     first[0] = floor_row[static_cast<int>(floorX)];
     first[1] = ceil_row[static_cast<int>(floorX)];
@@ -390,17 +370,21 @@ std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
     cv::Mat gaussian = gaussian1D * gaussian1D.t();
     
     // Just for testing just work with the frist found corner. 
-    std::vector<cv::Vec2d> corners_copy{ corners[10] };
+    std::vector<cv::Vec2d> corners_copy{ corners[0] };
     
     for (auto& corner : corners_copy) {
         cv::Size size = templ.size();
 
         // define the starting points in the image plane
         // since templ.size() must be odd we do integer divition with 2 so the middle point is zero.
-        const int startPointRow = corner[0] - size.height / 2;
-        const int startPointCols = corner[1] - size.width / 2;
-        const int stopPointRow = corner[0] + size.height / 2;
-        const int stopPointCols = corner[1] + size.width / 2;
+        const int startPointRow = static_cast<int>(corner[0])
+            - size.height / 2;
+        const int startPointCols = static_cast<int>(corner[1])
+            - size.width / 2;
+        const int stopPointRow = static_cast<int>(corner[0])
+            + size.height / 2;
+        const int stopPointCols = static_cast<int>(corner[1])
+            + size.width / 2;
 
         
         cv::Vec3d sigma(0, 0, 0);
@@ -419,8 +403,8 @@ std::vector<cv::Vec2d> ImageProcessing::doTemplateMatching(
                 for (int temp_cols = startPointCols; temp_cols <= stopPointCols; ++temp_cols) {
 
                     // shifted coordinates here coordinates U V are centered around the given Point we want to evaluate
-                    const int v = temp_row - (corner[0]);
-                    const int u = temp_cols - (corner[1]);
+                    const int v = temp_row - (static_cast<int>(corner[0]));
+                    const int u = temp_cols - (static_cast<int>(corner[1]));
 
                     cv::Mat J = (cv::Mat_<double>(2, 3) <<
                         1.0, 0.0, -u * std::sin(alpha) - v * std::cos(alpha),
@@ -962,7 +946,109 @@ std::pair<double, double> ImageProcessing::fitLine1D(const std::vector<double>& 
     double b = (sumy - a * sumx) / N;
     
     return { a, b };
+}
+
+std::vector<std::pair<double,double>> ImageProcessing::find_ParallelogramCorners(const cv::Mat& bin)
+{
+    CV_Assert(bin.type() == CV_8U);
+    CV_Assert(!bin.empty());
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(bin.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    if (contours.empty()) throw std::runtime_error("no contour");
+
+    // größte Kontur
+    auto it = std::max_element(contours.begin(), contours.end(),
+        [](auto& a, auto& b) { return cv::contourArea(a) < cv::contourArea(b); });
+    const auto& c = *it;
+
+    // approx
+    double peri = cv::arcLength(c, true);
+    std::vector<cv::Point> poly;
+    // epsilon je nach Bildqualität anpassen (typisch 0.5% bis 3% vom Umfang)
+    cv::approxPolyDP(c, poly, 0.02 * peri, true);
+
+    // Wenn nicht genau 4, versuche epsilon zu variieren oder fallback
+    if (poly.size() != 4) {
+        throw std::runtime_error("We need four Points try to variate the epsion in approxPolyDP");
     }
+
+    // Debug
+    cv::Mat drawing = bin.clone();
+    /*cv::drawContours(drawing, contours, 0, cv::Scalar(125), 10);*/
+    for (const auto& pt : poly) {
+        cv::drawMarker(drawing, pt, cv::Scalar(125));
+    }
+    cv::imshow("Contour", drawing);
+    cv::waitKey(0);
+
+    std::vector<std::pair<double, double>> pts_;
+
+    for (const auto& pt : poly) {
+        pts_.push_back(std::pair<double, double>(pt.x, pt.y));
+    }
+    
+    std::vector<std::pair<double, double>> pts{ orderTLTRBRBL_sumdiff(pts_) };
+
+    return pts;
+}
+
+
+std::vector<std::pair<double, double>> ImageProcessing::orderTLTRBRBL_sumdiff(const std::vector<std::pair<double, double>>& p)
+{
+    auto sum = [](const std::pair<double, double>& q) { return q.first + q.second; };
+    auto diff = [](const std::pair<double, double>& q) { return q.first - q.second; };
+
+    std::vector<std::pair<double, double>> out(4);
+
+    out[0] = *std::min_element(p.begin(), p.end(),
+        [&](const std::pair<double, double>& a, const std::pair<double, double>& b) { return sum(a) < sum(b); }); // TL
+    out[3] = *std::max_element(p.begin(), p.end(),
+        [&](const std::pair<double, double>& a, const std::pair<double, double>& b) { return sum(a) < sum(b); }); // BR
+    out[2] = *std::min_element(p.begin(), p.end(),
+        [&](const std::pair<double, double>& a, const std::pair<double, double>& b) { return diff(a) < diff(b); }); // TR
+    out[1] = *std::max_element(p.begin(), p.end(),
+        [&](const std::pair<double, double>& a, const std::pair<double, double>& b) { return diff(a) < diff(b); }); // BL
+
+    return out;
+}
+
+cv::Vec2d ImageProcessing::projectPoint_homography(
+    const cv::Vec2d& img,
+    const cv::Mat& homography)
+{
+    CV_Assert(homography.size() == cv::Size(3, 3));
+
+    cv::Mat H(homography.size(), CV_64F);
+    if (homography.type() != CV_64F) homography.convertTo(H, CV_64F);
+    else H = homography;
+    double x = H.at<double>(0, 0) * img[0] + H.at<double>(0, 1) * img[1] + H.at<double>(0, 2);
+    double y = H.at<double>(1, 0) * img[0] + H.at<double>(1, 1) * img[1] + H.at<double>(1, 2);
+    double w = H.at<double>(2, 0) * img[0] + H.at<double>(2, 1) * img[1] + H.at<double>(2, 2);
+
+    return { static_cast<double>(x / w),
+             static_cast<double>(y / w) };
+}
+
+// (srcPts, dstPts, method)
+cv::Mat ImageProcessing::getHomographyMat(
+    const std::vector<cv::Vec2d>& srcPts,
+    const std::vector<cv::Vec2d>& dstPts,
+    const int method)
+{
+    CV_Assert(srcPts.size() == dstPts.size());
+    CV_Assert(srcPts.size() >= 4);
+
+    std::vector<cv::Point2f> srcPtsFloat, dstPtsFloat;
+    srcPtsFloat.reserve(srcPts.size());
+    dstPtsFloat.reserve(dstPts.size());
+
+    for (const auto& p : srcPts) srcPtsFloat.emplace_back((float)p[0], (float)p[1]);
+    for (const auto& p : dstPts) dstPtsFloat.emplace_back((float)p[0], (float)p[1]);
+
+    return cv::findHomography(srcPtsFloat, dstPtsFloat, method);
+}
+
 
 cv::Mat ImageProcessing::do_reprojection_error(
     const std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>>& caliPoints,
@@ -1093,7 +1179,7 @@ std::vector<cv::Vec2d> ImageProcessing::distortImagePoints(
     CV_Assert(!distcoeffs.empty());
     CV_Assert(!imgPts.empty());
 
-    cv::Range range(0, imgPts.size());
+    cv::Range range(0, static_cast<int>(imgPts.size()));
     std::vector<cv::Vec2d> distorted(imgPts.size());
 
     cv::parallel_for_(range,
@@ -1106,10 +1192,346 @@ std::vector<cv::Vec2d> ImageProcessing::distortImagePoints(
     return distorted;
 }
 
+void ImageProcessing::getResponseCurve_perSection(
+    const std::vector<cv::Mat>& gray_images,
+    GrayCalibVector& borders,
+    const int n_pics_perVal,
+    const int n_steps)
+{
+    CV_Assert(!gray_images.empty());
+    
+    // if m_sections_img is empty no boundary were set
+    CV_Assert(!borders.m_sections_img.empty());
+    CV_Assert(n_pics_perVal >= 1);
+    CV_Assert(n_steps >= 1);
+    CV_Assert(gray_images.size() == 255 * n_pics_perVal / n_steps);
+
+    std::vector<cv::Mat> mean_gray;
+    
+    if (n_pics_perVal > 1) {
+        std::vector<cv::Mat>::const_iterator start = gray_images.begin();
+        while (start != gray_images.end()) {
+            if(std::distance(start, gray_images.end()) < n_pics_perVal) {
+                throw std::runtime_error("Iterator out of bounds, getResponseCurve_perSection \n");
+            }
+            std::vector<cv::Mat>::const_iterator end = std::next(start, n_pics_perVal);
+            mean_gray.emplace_back(mean(std::vector<cv::Mat>(start, end)));
+            start = end;
+        }
+    }
+    else {
+        for (const auto& img : gray_images) {
+            cv::Mat img64;
+            img.convertTo(img64, CV_64F);
+            mean_gray.push_back(img64);
+        }
+    }
+
+    CV_Assert(!mean_gray.empty());
+
+    // Mask from first and last gray image
+    std::vector<cv::Mat> getMask{ mean_gray[0], mean_gray[mean_gray.size() - 1] };
+    cv::Mat mask = grayCalibMask(getMask);
+
+    normalizeAndDisplay(mask);
+
+    std::vector<std::pair<double, double>> mask_corners = find_ParallelogramCorners(mask);
+    if (mask_corners.size() != 4) {
+        std::cout << "There must be 4 Corners for the Parallelogram \n";
+        throw std::runtime_error("There must be 4 Corners for the Parallelogram \n");
+    }
+
+    std::vector<std::pair<int, int>> img_borderPts = borders.getFullBorders_img();
+
+    cv::Mat homography_Mat = getHomographyMat(img_borderPts, mask_corners);
+
+    cv::parallel_for_(cv::Range(0, static_cast<int>(borders.m_sections_img.size())),
+        [&](const cv::Range& range) {
+            for (int i = range.start; i < range.end; ++i) {
+                Gray_section_data& data = borders.m_sections_img[i];
+                evaluateSection_gray(mean_gray, data, homography_Mat, mask);
+            }
+        }
+    );
+
+    /*for (std::size_t i = 0; i < borders.m_sections_img.size(); ++i) {
+        Gray_section_data& data = borders.m_sections_img[i];
+        
+        evaluateSection_gray(mean_gray, data, homography_Mat, mask);
+        std::cout << "Finished Sections " << i << "/" << borders.m_sections_img.size() << std::endl;
+    }*/
+}
+
+void ImageProcessing::evaluateSection_gray(
+    const std::vector<cv::Mat>& images,
+    Gray_section_data& data_out,
+    const cv::Mat& homography,
+    const cv::Mat& mask)
+{
+    CV_Assert(!images.empty());
+    CV_Assert(data_out.gray_val.empty());
+    CV_Assert(!homography.empty());
+    CV_Assert(!mask.empty());
+    CV_Assert(images[0].type() == CV_64F);
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(std::all_of(images.begin(), images.end(), [&](const cv::Mat& img) {
+        return img.size() == mask.size();
+        }));
+
+    // The datapoints are stored as (x,y) 
+    int start_col = data_out.roi_img.left_up_corner.first;
+    int end_col = data_out.roi_img.right_up_corner.first;
+    int start_row = data_out.roi_img.left_up_corner.second;
+    int end_row = data_out.roi_img.left_down_corner.second;
+
+    std::vector<double> means;
+    std::vector<double> stdevs;
+    means.reserve(images.size());
+    stdevs.reserve(images.size());
+
+    // bilinear Interpolation expects CV_64F images. 
+    cv::Mat mask64F;
+    mask.convertTo(mask64F, CV_64F);
+
+    for (const auto& img : images) {
+        double mean = 0.0;
+        double M2 = 0.0;
+        int n = 0;
+
+        for (int col = start_col; col < end_col; ++col) {
+            for (int row = start_row; row < end_row; ++row) {
+
+                cv::Vec2d p_img(
+                    static_cast<double>(col),
+                    static_cast<double>(row));
+
+                cv::Vec2d p_proj = projectPoint_homography(p_img, homography);
+
+                // bilinear expects (y, x)
+                cv::Vec2d p_yx(p_proj[1], p_proj[0]);
+
+                if (p_yx[0] >= img.rows || p_yx[1] >= img.cols || p_yx[0]< 0 || p_yx[1] < 0) {
+                    continue; 
+                }
+
+                double val = bilinearInterpolation(img, p_yx);
+
+                double val_mask = bilinearInterpolation(mask64F, p_yx);
+                
+                if (val_mask < 0.5) {
+                    //checkHomogrpahy(img, homography, p_img);
+                    continue;
+                }
+                ++n;
+                double delta = val - mean;
+                mean += delta / n;
+                double delta2 = val - mean;
+                M2 += delta * delta2;
+            }
+        }
+
+        double variance = (n > 1) ? (M2 / (n - 1)) : 0.0;
+        double stdev = std::sqrt(variance);
+
+        means.push_back(mean);
+        stdevs.push_back(stdev);
+    }
+    data_out.gray_val = means;
+    data_out.s_deviation = stdevs;
+}
+
+void ImageProcessing::checkHomogrpahy(
+    const cv::Mat& img,
+    const cv::Mat& homography,
+    const cv::Vec2d& coord) 
+{
+    CV_Assert(!img.empty() || !homography.empty());
+    CV_Assert(img.type() == CV_64F);
+
+    cv::Vec2d projected = projectPoint_homography(coord, homography);
+    cv::Mat dummy_display(img.size(), CV_8U, cv::Scalar(0));
+    cv::Mat camera64 = img.clone();
+    cv::Mat camera;
+    cv::normalize(camera64, camera, 0, 255, cv::NORM_MINMAX, CV_8U);
+    cv::drawMarker(dummy_display, cv::Point(coord[0], coord[1]), cv::Scalar(255), 0, 50);
+    cv::drawMarker(camera, cv::Point(projected[0], projected[1]), cv::Scalar(255), 0, 50);
+    cv::imshow("Dispaly", dummy_display);
+    cv::imshow("Projected", camera);
+    cv::waitKey(0);
+   
+}
+
+cv::Mat ImageProcessing::createCirculeBinaryMask(
+    const double radius)
+{
+    CV_Assert(radius > 0);
+    int r = static_cast<double>(std::ceil(radius));
+    int k = 2 * r + 1;
+    cv::Mat se(k, k, CV_8U, cv::Scalar(0));
+
+    for (int y = 0; y < k; ++y) {
+        for (int x = 0; x < k; ++x) {
+            double dx = x - r; // Shift origin in the middle 
+            double dy = y - r;
+            if (dx * dx + dy * dy <= r)
+                se.at<uint8_t>(y, x) = 1; // oder 255
+        }
+    }
+    return se;
+}
+
+
+cv::Mat ImageProcessing::getHomographyMat(
+    const RoiBorders<int> src,
+    const RoiBorders<double> dst,
+    const int method ) 
+{
+    // source Imagepoints
+    std::vector<std::pair<int, int>> source{};
+    source.push_back(src.left_up_corner);
+    source.push_back(src.right_up_corner);
+    source.push_back(src.left_down_corner);
+    source.push_back(src.right_down_corner);
+
+    // destination Objectpoints
+
+    std::vector<std::pair<double, double>> destination{};
+    destination.push_back(dst.left_up_corner);
+    destination.push_back(dst.right_up_corner);
+    destination.push_back(dst.left_down_corner);
+    destination.push_back(dst.right_down_corner);
+
+    return getHomographyMat(source, destination, method);
+}
+
+
+
+cv::Mat ImageProcessing::getHomographyMat(
+    const std::vector<std::pair<int, int>>& src,
+    const std::vector<std::pair<double, double>>& dst,
+    const int method
+)
+{
+    CV_Assert(src.size() == dst.size());
+    CV_Assert(!src.empty() && !dst.empty());
+
+    std::vector<cv::Vec2d> src_n;
+    std::vector<cv::Vec2d> dst_n;
+    std::cout << "Image Points for Homography: \n" << "Must ge Left to right, up -> down\n";
+    for (const auto& s_pts : src) {
+        src_n.emplace_back(cv::Vec2d(s_pts.first, s_pts.second));
+        std::cout << "x: " << s_pts.first << "y: " << s_pts.second << '\n';
+    }
+    std::cout << "Object Point for Homography: \n" << "Must be left to right and up to down \n";
+    for (const auto& d_pts : dst) {
+        dst_n.emplace_back(cv::Vec2d(d_pts.first, d_pts.second));
+        std::cout << "x: " << d_pts.first << "y: " << d_pts.second << '\n';
+    }
+
+    return getHomographyMat(src_n, dst_n);
+}
+
+
+cv::Mat ImageProcessing::grayCalibMask(const std::vector<cv::Mat>& img) {
+    CV_Assert(!img.empty());
+    CV_Assert(img.size() == 2);
+
+    std::vector<cv::Mat> img64;
+    if (img[0].type() != CV_64F) {
+        for (const auto& image : img) {
+            cv::Mat mat64F;
+            image.convertTo(mat64F, CV_64F);
+            img64.push_back(mat64F);
+        }
+    }
+    else img64 = img;
+
+    cv::Mat mask = img64[1] - img64[0];
+    cv::Mat mask8u;
+    cv::normalize(mask, mask8u, 0, 255, cv::NORM_MINMAX, CV_8U);
+    
+    cv::threshold(mask8u, mask8u, 255 * 0.4, 255, CV_8U);
+    return mask8u;
+}
+
+
+// Create Matrix A (x,y,1) for z(x,y) = a*x+b*x+c
+// so the best fit shoud be 0 = z(x,y) - (a*x+b*y+c) for all points
+// Therefor we try to solve for a,b,c
+// We build a A as a Nx3 matrix (N points in ROI)
+// Z(x,y) as the values in the real image 
+cv::Mat ImageProcessing::fitSurface(
+    const cv::Mat& img,
+    const cv::Mat& mask)
+{
+    CV_Assert(img.size() == mask.size());
+    CV_Assert(img.type() == CV_64F);
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(img.channels() == 1 && mask.channels() == 1);
+
+    int n_points = cv::countNonZero(mask);
+    CV_Assert(n_points > 0 && n_points <= img.size().area());
+    cv::Mat A, b, y, out;
+    out = cv::Mat::zeros(img.size(), CV_64F);
+
+    A.create(n_points, 3, CV_64F);
+    b.create(3, 1, CV_64F);
+    y.create(n_points, 1, CV_64F);
+
+    cv::Moments mask_moments = cv::moments(mask, true);
+    int origin_x = static_cast<int>(
+        std::round(mask_moments.m10 / mask_moments.m00));
+    int origin_y = static_cast<int>(
+        std::round(mask_moments.m01 / mask_moments.m00));
+
+    
+    int point_counter{ 0 };
+    for (int row = 0; row < img.rows; ++row) {
+        const uchar* mask_ptr = mask.ptr<uchar>(row);
+        const double* img_ptr = img.ptr<double>(row);
+       
+        for (int cols = 0; cols < img.cols; ++cols) {
+            if (!mask_ptr[cols]) continue;
+            double* a_ptr = A.ptr<double>(point_counter);
+            double* y_ptr = y.ptr<double>(point_counter);
+            int A_row[3] = { 
+                row - origin_y,
+                cols - origin_x,
+                1 
+            };
+            for (int i = 0; i < 3; ++i) {
+                a_ptr[i] = static_cast<double>(A_row[i]);
+            }
+            *y_ptr = img_ptr[cols];
+            ++point_counter;
+        }
+    }
+
+    // A(y,x,1)
+    // Solve least squares: A * b = y
+    cv::solve(A, y, b, cv::DECOMP_QR);
+
+    const double a = b.at<double>(0);
+    const double c = b.at<double>(1);
+    const double d = b.at<double>(2);
+
+    for (int row = 0; row < img.rows; ++row) {
+        double* out_ptr = out.ptr<double>(row);
+        const uchar* mask_ptr = mask.ptr<uchar>(row);
+        for (int col = 0; col < img.cols; ++col) {
+            if (!mask_ptr[col]) continue;
+            out_ptr[col] = a * (row - origin_y) + c * (col - origin_x) + d;
+        }
+    }
+
+    //normalizeAndDisplay(out);
+    return out;
+}
 
 cv::Mat ImageProcessing::calcDistortionError(const cv::Mat& img) {
     CV_Assert(!img.empty());
     CV_Assert(img.type() == CV_64FC2);
+
     cv::Mat error_img(img.size(), CV_64FC2);
     for (int row = 0; row < img.rows; ++row) {
         const double* pic = img.ptr<double>(row);
@@ -1119,9 +1541,6 @@ cv::Mat ImageProcessing::calcDistortionError(const cv::Mat& img) {
             error_pic[cols * 2 + 1] = pic[cols * 2 + 1] - static_cast<double>(row);
         }
     }
-
-    /*minmaxloc data{ get_minmaxloc(error_img) };
-    std::cout << data;*/
 
     return error_img;
 }
@@ -1532,7 +1951,6 @@ cv::Mat ImageProcessing::createMask(
     bool dilate) 
 {
     cv::Mat maskbin, sum_contrast_n;
-    CV_Assert(m_contrast[0].type() == CV_64F);
     CV_Assert(vec.size() == 2);
 
     if (threshold == 0.0) {
@@ -1547,7 +1965,7 @@ cv::Mat ImageProcessing::createMask(
     // Threshold
 
     cv::threshold(mask_8u, maskbin, threshold * data.maxval, 1, cv::THRESH_BINARY);
-    normalizeAndDisplay(maskbin);
+    //normalizeAndDisplay(maskbin);
     // Create Structuring Element for opening&closing
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
     cv::morphologyEx(maskbin, maskbin, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 2);
@@ -1615,65 +2033,6 @@ cv::Mat ImageProcessing::applyMask(const cv::Mat& mask, const cv::Mat& img, floa
     return result;
 }
 
-// Shifts all valid pixels by the given shift value (IMG(x,y) -= shift_value).
-// Sets all invalid (masked-out) pixels to -10.0 (float) or -10.0 (double).
-void ImageProcessing::shiftStartPhasetoZero(const cv::Mat& mask, cv::Mat& img, float shift_value) {
-    assert(mask.size() == img.size());
-    assert((img.type() == CV_32FC1 || img.type() == CV_64FC1) && "Expected float or double image");
-
-    switch (static_cast<int>(current_type)) {
-    case 1: { // float_t
-        for (int row = 0; row < img.rows; ++row) {
-            float* pImg = img.ptr<float>(row);
-            const uchar* pMask = mask.ptr<uchar>(row);
-
-            for (int col = 0; col < img.cols; ++col) {
-                if (pMask[col] == 0.0f)
-                    pImg[col] = -10.0f;
-                else
-                    pImg[col] -= shift_value;
-            }
-        }
-        break;
-    }
-
-    case 2: { // double_t
-        for (int row = 0; row < img.rows; ++row) {
-            double* pImg = img.ptr<double>(row);
-            const uchar* pMask = mask.ptr<uchar>(row);
-
-            for (int col = 0; col < img.cols; ++col) {
-                if (pMask[col] == 0.0)
-                    pImg[col] = -10.0;
-                else
-                    pImg[col] -= static_cast<double>(shift_value);
-            }
-        }
-        break;
-    }
-
-    default:
-        throw std::runtime_error("Unknown current_type in shiftStartPhasetoZero()");
-    }
-}
-
-
-//
-////Just a small example code to do generic programming with iterators
-//template <class InputIt>
-//typename std::iterator_traits<InputIt>::difference_type
-//distance(InputIt first, InputIt last) {
-//    using category = typename std::iterator_traits<InputIt>::iterator_category;
-//
-//    if constexpr (std::is_same_v<category, std::random_access_iterator_tag>)
-//        return last - first;     // fast O(1)
-//    else {
-//        typename std::iterator_traits<InputIt>::difference_type n = 0;
-//        for (; first != last; ++first) ++n;   // slow O(n)
-//        return n;
-//    }
-//}
-
 
 //typename std::iterator_traits<iterator>::iterator_category 
 // I first had the above as datatype. but the return type is of type std::iterator_traits<...>::iterator_category
@@ -1726,6 +2085,8 @@ ImageProcessing::gray_value_calib(const std::vector<cv::Mat>& vec, int pics_per_
 
     // Subtrakt the first image (black) from the brightest (white) the difference is hopefully a usable mask;
     cv::Mat mask = mean_vec.back() - mean_vec.front();
+    cv::Mat structur = cv::getStructuringElement(cv::MORPH_RECT, { 5,5 });
+    cv::erode(mask, mask, structur, cv::Point(-1, -1), 10);
     cv::normalize(mask, mask, 0, 255, cv::NORM_MINMAX, CV_8U);
     minmaxloc mask_info{ get_minmaxloc(mask) };
     cv::threshold(mask, mask, mask_info.maxval * 0.5, 255, cv::THRESH_BINARY);
@@ -1734,319 +2095,29 @@ ImageProcessing::gray_value_calib(const std::vector<cv::Mat>& vec, int pics_per_
     std::vector<cv::Scalar_<double>> mean_values;
 
     for (std::size_t i = 0; i < mean_vec.size(); ++i) {
-        double GTgray_val = i * stepwidth;
+        double GTgray_val = static_cast<double>(i * stepwidth);
         double meassure_gray_val = cv::norm(cv::mean(mean_vec[i], mask));
         LUT.push_back(std::pair<double, double>(GTgray_val, meassure_gray_val));
     }
-
-
-    // --- This part old. Should be DELETED (save pictures within class) 
-    for (const auto& mean_img : mean_vec) {
-        mean_values.push_back(cv::mean(mean_img, mask));
-    }
-    m_mean_grayValues = std::move(mean_values);
 
     return LUT;
 }
 
 
-/*
-// This is the first implementation of a template elipsis. The function takes a arbitrary ammount of cv::MAts and a function pointer. 
-// Becasue the cv::Mat datatype can not be decued at compile time this functions template calls a second inner function where, 
-// for the datatypes it is differntiatied. 
-template<typename func, typename... Mats>
-auto ImageProcessing::forEachPixel(func, Mats&&... mats) {
-    static_assert(sizeof...(mats) > 0, "Need at least one matrix."); //compile time check
-    auto first = std::get<0>(std::forward_as_tuple(std::forward<Mats>(mats)));
-    const cv::Size size = first.size();
-    const int type = first.type();
-    (assert(size == mats.size() && type == mats.type()), ...); //compiler expands at compile time, checkupt at runtime.
-    // giving a conditional datatype back, std::is_same<>::value is static function
-    // if condition is true give back the first datatype, if false give back the second datatype 
-    // But mats.size() and mats.type() are runtime functions, therefore static assert does not work. 
-    
-    // This line does not work becasue in decltype it is assumed that .at<float> for each datatype
-    // This line typename std::conditional -> typename is necessary to tell the compiler that a type is named. not a value. wihtout std::conditional<...>::type could be interpreted as static
-    // typenmae std::remove_reference -> the function itself is template class and ::type nested type alias. 
-    // Whenever <T>::type (or something) is used and it is not a static member function we have to use typename becasue the comiler can not now. 
-    // using T = typename std::conditional<
-    //    std::is_same<Func, float(*)(float,float) >>::value, float, typename std::remove_reference<decltype(first.at<float>(0, 0))>::type>::type;
-    
-    // typenabhängiger Name. 
-    int type = mat.type();           
-    int depth = CV_MAT_DEPTH(type);  //Macros to extract depth (datatype)
-    int channels = CV_MAT_CN(type);  //Macros to define extract how manc channels are there
-    
-    // type dependend name here, therefore "typename" before. Also this line does not work. becasue type is runtime constant at the 
-    // template deduction would hapen at comile time the value is not available when the programm runs. 
-    //using T = typename CvDepthTraits<CV_MAT_DEPTH(type)>::value_type;
-
-    switch (depth) {
-    case CV_8U:  return forEachPixelImpl<CV_8U>(func, std::forward<Mats>(mats)...);
-    case CV_8S:  return forEachPixelImpl<CV_8S>(func, std::forward<Mats>(mats)...);
-    case CV_16U: return forEachPixelImpl<CV_16U>(func, std::forward<Mats>(mats)...);
-    case CV_16S: return forEachPixelImpl<CV_16S>(func, std::forward<Mats>(mats)...);
-    case CV_32S: return forEachPixelImpl<CV_32S>(func, std::forward<Mats>(mats)...);
-    case CV_32F: return forEachPixelImpl<CV_32F>(func, std::forward<Mats>(mats)...);
-    case CV_64F: return forEachPixelImpl<CV_64F>(func, std::forward<Mats>(mats)...);
-    default:
-        throw std::runtime_error("Unsupported depth.");
-    }
-}
-
-
-template<int Depth, typename Func, typename... Mats>
-cv::Mat ImageProcessing::forEachPixelImpl(const Func& func, Mats&&... mats) {
-    using T = typename CvDepthTraits<Depth>::value_type;   //again typename necessary because of ...<dependen>::...
-    auto&& first = std::get<0>(std::forward_as_tuple(mats...));
-
-    cv::Mat result(first.size(), first.type());
-
-    for (int y = 0; y < result.rows; ++y) {
-        for (int x = 0; x < result.cols; ++x) {
-            result.at<T>(y, x) = func(mats.at<T>(y, x)...);
-        }
-    }
-    return result;
-}
-*/
-
-
-////Try to write first allcoator
-//template <typename T, std::size_t Alignment = 32>
-//struct AlignedAllocator {
-//    using value_type = T;
-//
-//    AlignedAllocator() noexcept = default;
-//    template<class U> AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
-//
-//    T* allocate(std::size_t n) {
-//        void* ptr = nullptr;
-//        if (ptr = std::aligned_alloc() != 0)
-//            throw std::bad_alloc();
-//        return reinterpret_cast<T*>(ptr);
-//    }
-//
-//    void deallocate(T* p, std::size_t) noexcept {
-//        free(p);
-//    }
-//};
-
-template <typename T>
-using decay_all_t = typename std::remove_cv<typename std::remove_reference<typename std::remove_pointer<T>::type>::type>::type;
-
-
-void ImageProcessing::calc_reproject_error(bool visualizing) {
-    assert(runtime_flags.disp.wavelength && "Parameters of the phase pattern are not available. Call generatePattern() before \n");
-    
-    //m_mask = { createMask() };
-    cv::Mat unwrap1_masked, unwrap2_masked;
-    
-    unwrap1_masked = applyMask(m_mask, m_unwrapped_phase[0]);
-    unwrap2_masked = applyMask(m_mask, m_unwrapped_phase[1]);
-    minmaxloc masked_unwrap1{ get_minmaxloc(unwrap1_masked) };
-    minmaxloc masked_unwrap2{ get_minmaxloc(unwrap2_masked) };
-    std::cout << "Horizontal unwrap " << masked_unwrap1 << '\n' <<
-        "Vertical unwrap " << masked_unwrap2 << '\n';
-
-    //Not valid pixels at -10 
-    shiftStartPhasetoZero(m_mask, unwrap1_masked, masked_unwrap1.minval);
-    shiftStartPhasetoZero(m_mask, unwrap2_masked, masked_unwrap2.minval);
-
-    switch (static_cast<int>(current_type)) {
-    case(1): {
-        //auto calibPoints1 = generateCalibrationPoints<float>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength);
-        auto caliPoints = generateCalibrationPoints<float>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength,
-            runtime_flags.camera_data.pixel_x, runtime_flags.camera_data.pixel_y);
-        cv::Mat rvec, tvec;
-        bool ok = cv::solvePnP(caliPoints.objectPoints, caliPoints.imagePoints,
-                m_calib_data.cameraMatrix, m_calib_data.distCoeffs, rvec, tvec,
-                false, 
-                cv::SOLVEPNP_ITERATIVE);   
-        if (!ok) throw std::runtime_error("solvePnP failed.");
-        std::cout << "Translation vec " << cv::norm(tvec) << '\n';
-        
-
-        //auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
-        //    m_calib_data.distCoeffs, rvec, tvec);
-
-        std::cout << "Caluculated the float path \n";
-        // Stored as std::variants< ... <float>, ... <double>>
-        m_calib_points = caliPoints;
-        //m_repro_error = repro2to3error;
-        break;
-    }
-    case(2): {
-        //std::cout << "float " << CV_32F << "\n" << "double" << CV_64F << '\n' <<
-        //    "unwrap1_masked: " << unwrap1_masked.type() << '\n' <<
-        //    "unwrap2_masked: " << unwrap2_masked.type() << '\n';
-        //auto calibPoints1 = generateCalibrationPoints<double>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength);
-        auto caliPoints = generateCalibrationPoints<double>(unwrap1_masked, unwrap2_masked, runtime_flags.disp.wavelength,
-            runtime_flags.camera_data.pixel_x, runtime_flags.camera_data.pixel_y);
-        cv::Mat rvec, tvec;
-        // get types
-        auto* ptr1 = caliPoints.imagePoints.data();
-        using type1 = decay_all_t<decltype(ptr1)>;
-        //typeid() return a std::typeinfo object. This has method .name()
-        std::cerr << "Type of image Points after decay " << typeid(type1).name() << '\n';
-
-        auto* ptr2 = caliPoints.objectPoints.data();
-        using type2 = decay_all_t<decltype(ptr2)>;
-        std::cerr << "Type of object points after decay " << typeid(type2).name() << '\n';
-        std::cout << "Size obejct points " << caliPoints.objectPoints.size() << '\n' <<
-            "size image point " << caliPoints.imagePoints.size() << '\n';
-
-        bool ok = cv::solvePnP(caliPoints.objectPoints, caliPoints.imagePoints,
-            m_calib_data.cameraMatrix, m_calib_data.distCoeffs, rvec, tvec,
-            false,
-            cv::SOLVEPNP_ITERATIVE);
-        if (!ok) throw std::runtime_error("solvePnP failed.");
-        std::cout << "Translation vec " << cv::norm(tvec) << '\n';
-        
-        //auto repro2to3error = project2to3d(caliPoints, m_calib_data.cameraMatrix,
-        //    m_calib_data.distCoeffs, rvec, tvec);
-
-        std::cout << "Caluculated the double path \n";
-        // Stored as std::variants< ... <float>, ... <double>>
-        m_calib_points = caliPoints;
-        //m_repro_error = repro2to3error;
-        break;
-    }
-    default:
-        throw std::runtime_error("Unknown current_type in shiftStartPhasetoZero()");
-    }
-}
-
-
-void ImageProcessing::save_Reprodata(const std::string& path) {
-    try {
-        //if (std::holds_alternative<ReprojectionError<double>>(m_repro_error)) {
-        //    auto& repro_error_typed{ std::get<ReprojectionError<double>>(&m_repro_error) };
-        //    repro_error_typed -> 
-        //}
-
-        auto* ptr1 = std::get_if<ReprojectionError<double>>(&m_repro_error);
-        auto* ptr2 = std::get_if<ReprojectionError<float>>(&m_repro_error);
-        std::string final(path + "/ReprojectionError.xml");
-        std::filesystem::path final_path(final);
-        if (std::filesystem::exists(final_path)) {
-            std::cout << "File for reprojection Error does already exist \n" << "Possible override. Do you want to proceed? \n [Y/N]";
-            char c;
-            bool cond{ true };
-            do {
-                std::cin >> c;
-                if (!std::cin.fail()) {
-                    std::cin.clear();
-                    std::cin.ignore(100, '\n');
-                }
-                if (std::toupper(c) == 'N') {
-                    return;
-                }
-                if (std::toupper(c) == 'Y') {
-                    cond = false;
-                }
-            } while (cond);
-        }
-
-        if (ptr1) {
-            cv::FileStorage fs(final, cv::FileStorage::WRITE);
-            if (fs.isOpened()) {
-                fs.write(m_reprojection_error_string[0], ptr1->sqrt_Error_x);
-                fs.write(m_reprojection_error_string[1], ptr1->sqrt_Error_y);
-                fs.write(m_reprojection_error_string[2], ptr1->median_x);
-                fs.write(m_reprojection_error_string[3], ptr1->median_y);
-                fs.write(m_reprojection_error_string[4], ptr1->max_Error_x);
-                fs.write(m_reprojection_error_string[5], ptr1->max_Error_y);
-                //Here also save the median of the error.
-            }
-        }
-        else if (ptr2) {
-            cv::FileStorage fs(final, cv::FileStorage::WRITE);
-            if (fs.isOpened()) {
-                fs.write(m_reprojection_error_string[0], ptr2->sqrt_Error_x);
-                fs.write(m_reprojection_error_string[1], ptr2->sqrt_Error_y);
-                fs.write(m_reprojection_error_string[2], ptr2->median_x);
-                fs.write(m_reprojection_error_string[3], ptr2->median_y);
-                fs.write(m_reprojection_error_string[4], ptr2->max_Error_x);
-                fs.write(m_reprojection_error_string[5], ptr2->max_Error_y);
-                //Here also save the median of the error.
-            }
-        }
-    }
-    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }
-}
-
-
-void ImageProcessing::load_calib(std::string path) {
-    m_calib_data = getfromFile(path);
-}
-
-
-// carefull && binds tighter than ||
-void ImageProcessing::load_frames(const std::string& path) {
-    try {
-        //Checks only for the first element in arrays. It is assumed when the first is empty the second one must be to. 
-        if ((m_baseIntensity[0].empty() || cv::norm(cv::sum(m_baseIntensity[0])) == 0.0) &&
-            (m_contrast[0].empty() || cv::norm(cv::sum(m_contrast[0])) == 0.0) &&
-            (m_wrapped_phase[0].empty() || cv::norm(cv::sum(m_wrapped_phase[0])) == 0.0) &&
-            (m_unwrapped_phase[0].empty() || cv::norm(cv::sum(m_unwrapped_phase[0])) == 0.0))
-        {
-            //create();
-            cv::FileStorage fs(path, cv::FileStorage::READ);
-            if (fs.isOpened()) {
-                fs[m_save_keys[0]] >> m_wrapped_phase[0];
-                fs[m_save_keys[1]] >> m_wrapped_phase[1];
-                fs[m_save_keys[2]] >> m_contrast[0];
-                fs[m_save_keys[3]] >> m_contrast[1];
-                fs[m_save_keys[4]] >> m_baseIntensity[0];
-                fs[m_save_keys[5]] >> m_baseIntensity[1];
-                fs[m_save_keys[6]] >> m_unwrapped_phase[0];
-                fs[m_save_keys[7]] >> m_unwrapped_phase[1];
-            }
-            fs.release();
-            //normalizeAndDisplay(m_wrapped_phase[0]);
-        }
-        else { throw std::runtime_error("The image container already have data in it. This is not allowed. \n"); }
-
-    }
-    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what(); }
-}
-
-
-void ImageProcessing::create() {
-    for (auto& m : m_s1) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_s2) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_s3) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_baseIntensity) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_contrast) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_wrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_unwrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-}
-
-// create() initializes the arrays for the processing. This methods needs to be called one time before further processsing. 
-void ImageProcessing::create(std::vector<cv::Mat>& vec) {
-    for (size_t i = 1; i < vec.size(); ++i) {
-        if (vec[i].size() != vec[0].size() || vec[i].type() != vec[0].type()) {
-            std::cerr << "All pictures must be same kind and type. \n";
-            throw std::runtime_error("All pictures must be same kind and type. \n");
-        }
-    }
-    for (auto& m : m_s1) m = cv::Mat(vec.at(0).size(), CV_32F, cv::Scalar(0.0));
-    for (auto& m : m_s2) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_s3) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_baseIntensity) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_contrast) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_wrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-    for (auto& m : m_unwrapped_phase) m = cv::Mat::zeros(runtime_flags.pixel_y, runtime_flags.pixel_x, CV_32F);
-}
-
-void ImageProcessing::bayerToGray()
+std::vector<cv::Mat> ImageProcessing::bayerToGray(
+    const std::vector<cv::Mat>& img)
 {
-    for (const auto& frame : m_phase) {
-		cv::cvtColor(frame, frame, cv::COLOR_BayerRG2GRAY);
+    CV_Assert(std::all_of(img.begin(), img.end(), [](const cv::Mat& img)
+        {
+            return img.type() == CV_8U;
+        }));
+
+    std::vector<cv::Mat> gray(img.size());
+
+    for (std::size_t i = 0; i < img.size(); ++i) {
+		cv::cvtColor(img[i], gray[i], cv::COLOR_BayerRG2GRAY);
     }
+    return gray;
 }
 
 auto normalize = [](const cv::Mat& pic) -> cv::Mat_<uchar> {
@@ -2056,108 +2127,12 @@ auto normalize = [](const cv::Mat& pic) -> cv::Mat_<uchar> {
     return dest;
     };
 
-/*
-auto save_png = [](const std::filesystem::path& path, const std::vector<cv::Mat>& vec) -> void {
-    for (std::size_t i{ 0 }; i < vec.size(); ++i) {
-        cv::imwrite((path / std::to_string(i) / ".png").string(), normalize(vec[i]));
-    }
-    };
 
-auto save_png = [](const std::filesystem::path& path, const std::array<cv::Mat, 2>& arr) -> void {
-    for (std::size_t i{ 0 }; i < arr.size(); ++i) {
-        cv::imwrite((path / std::to_string(i) / ".png").string(), normalize(arr[i]));
-    }
-    };
-*/
-
-
-void ImageProcessing::saveImages_png(const std::string& path_s) {
-    std::filesystem::path path{ path_s };
-    if (!std::filesystem::exists(path)) {
-        if (!std::filesystem::create_directory(path)) std::cerr << "Creating the directory failed. \n";
-        std::cout << "Created Directory for the .png files \n";
-    }
-    else {
-        std::cout << "Directory for .png files already exists \n" << "Possible override. Do you want to proceed? \n [Y/N]";
-        char c;
-        bool cond{ true };
-        do {
-            std::cin >> c;
-            if (!std::cin.fail()) {
-                std::cin.clear();
-                std::cin.ignore(100, '\n');
-            }
-            if (std::toupper(c) == 'N') {
-                return;
-            }
-            if (std::toupper(c) == 'Y') {
-                cond = false;
-            }
-        } while (cond);
-    }
-    //Create save structure
-    std::array<std::string, 7> strings{"Full_frames", "Mean_frames", "Base Intensity", "Contrast",
-        "WrappedPhase", "unwrappedPhase", "reprojectionError"};
-
-    for (std::size_t i = 0; i < strings.size(); ++i)
-    {
-        if (!std::filesystem::create_directory(path / strings[i])) {
-            std::cout << "Creating directory " << (path / strings[i]).string() << " failed \n";
-        }
-        switch (i) {
-        case(0): { save_png(path / strings[i], m_frames); break; }
-        case(1): { save_png(path / strings[i], m_raw_phase); break; }
-        case(2): { save_png(path / strings[i], m_baseIntensity); break; }
-        case(3): { save_png(path / strings[i], m_contrast); break; }
-        case(4): { save_png(path / strings[i], m_wrapped_phase); break; }
-        case(5): { save_png(path / strings[i], m_unwrapped_phase); break; }
-        case(6): { save_png(path / strings[i], m_reprojection_error_img); break; }
-            
-        }
-    }
-}
-
-
-void ImageProcessing::saveImages(const std::string& path) {
-    std::filesystem::path complete(path);
-    if (std::filesystem::exists(complete)) {
-        throw std::runtime_error("Directory already exist. Data will be overriden. \n");
-    }
-    try {
-        std::filesystem::create_directories(complete);
-    }
-    catch (std::exception& e) { std::cout << "EXCEPTION " << e.what() << std::endl; }
-
-    std::cout << "Created directory at " << complete.string() << '\n';
-
-    cv::FileStorage fs((complete/"Data.xml").string(), cv::FileStorage::WRITE);
-    
-    if (fs.isOpened()) {
-        fs << "wrappedPhasehorizontal" << m_wrapped_phase.at(0);
-        fs << "wrappedPhasevertical" << m_wrapped_phase.at(1);
-        fs << "contrasthorizontal" << m_contrast.at(0);
-        fs << "contrastvertical" << m_contrast.at(1);
-        fs << "baseIntensityhorizontal" << m_baseIntensity.at(0);
-        fs << "baseIntensityvertical" << m_baseIntensity.at(1);
-        fs << "unwrappedPhasehorizontal" << m_unwrapped_phase.at(0);
-        fs << "unwrappedPhasevertical" << m_unwrapped_phase.at(1);
-        fs << "reprojectionErrorHorizontal" << m_reprojection_error.at(0);
-        fs << "reprojectionErrorVertical" << m_reprojection_error.at(1);
-    }
-}
-
-std::vector<double> ImageProcessing::extract_Row_reprojection(int row) {
-    const cv::Mat& repro = m_reprojection_error[0];
-    std::vector<double> row_repro;
-    row_repro.reserve(repro.cols);
-    for (int i = 0; i < repro.cols; ++i) {
-        if (!m_mask.at<uchar>(row, i)) continue;
-        row_repro.push_back(repro.at<double>(row, i));
-    }
-    return row_repro;
-}
-
-std::vector<double> ImageProcessing::extract_Row_unwrap(int row) {
+std::vector<double> ImageProcessing::extract_Row(
+    int row,
+    const cv::Mat& img,
+    const cv::Mat& mask) 
+{
     const cv::Mat& repro = m_unwrapped_phase[0];
     std::vector<double> row_unwrap;
     row_unwrap.reserve(repro.cols);
@@ -2168,19 +2143,12 @@ std::vector<double> ImageProcessing::extract_Row_unwrap(int row) {
     return row_unwrap;
 }
 
-std::vector<double> ImageProcessing::extract_Column_reprojection(int x) {
-    const cv::Mat& repro = m_reprojection_error[1];
-    std::vector<double> col;
-    col.reserve(repro.rows);
 
-    for (int i = 0; i < repro.rows; ++i) {
-        if (!m_mask.at<uchar>(i, x)) continue;
-        col.push_back(repro.at<double>(i, x));
-    }
-    return col;
-}
-
-std::vector<double> ImageProcessing::extract_Column_unwrap(int x) {
+std::vector<double> ImageProcessing::extract_Column(
+    int x,
+    const cv::Mat& img,
+    const cv::Mat& mask) 
+{
     const cv::Mat& unwrap = m_unwrapped_phase[1];
     std::vector<double> col;
     col.reserve(unwrap.rows);
@@ -2192,43 +2160,16 @@ std::vector<double> ImageProcessing::extract_Column_unwrap(int x) {
     return col;
 }
 
-ImageProcessing::~ImageProcessing() {
-    --instance_counter;
-}
-
-
-void ImageProcessing::goldsteinUnwrap() {
-    cv::Mat unwrapped1;
-    cv::Mat unwrapped2;
-    for (auto& m : m_unwrapped_phase) {
-		cv::normalize(m, m, 0, 1, cv::NORM_MINMAX, CV_32F); 
-    }
-    cv::Mat mask1 = (m_contrast[0] > 0.2f); // for example: keep only valid contrast regions
-    mask1.convertTo(mask1, CV_8U);           // ensure binary mask
-	cv::Mat mask2 = (m_contrast[1] > 0.2f);
-	mask2.convertTo(mask2, CV_8U);
-    goldsteinUnwrapCV(m_wrapped_phase[0], unwrapped1, mask1);
-	goldsteinUnwrapCV(m_wrapped_phase[1], unwrapped2, mask2);
-
-	cv::normalize(unwrapped1, m_unwrapped_phase[0], 0, 255, cv::NORM_MINMAX, CV_8U);
-	cv::normalize(unwrapped2, m_unwrapped_phase[1], 0, 255, cv::NORM_MINMAX, CV_8U);    
-	cv::imshow("Goldstein Unwrapped Phase 1", m_unwrapped_phase.at(0));
-	cv::imshow("Goldstein Unwrapped Phase 2", m_unwrapped_phase.at(1));
-    cv::waitKey(0);
-
-}
-
+ImageProcessing::~ImageProcessing() {}
 
 std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
     const std::vector<cv::Mat>& wrappedPhase,
     const cv::Mat& mask) 
 {
     CV_Assert(wrappedPhase.size() == 2);
-    //CV_Assert(contrast.size() == 2);
     CV_Assert(wrappedPhase[0].size() == mask.size());
     CV_Assert(wrappedPhase[0].type() == CV_32F || wrappedPhase[0].type() == CV_64F);
 
-    
     cv::Size sz = wrappedPhase[0].size();
 
     cv::Mat wX, wY, cX, cY;
@@ -2291,11 +2232,11 @@ cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
     }
     cv::Mat acc;
 
-    if(vec[0].type() != CV_64F) vec[0].convertTo(acc, CV_64FC1);
+    if(vec[0].type() != CV_64F) vec[0].convertTo(acc, CV_64F);
     
     for (size_t i = 0; i < vec.size(); ++i) {
         cv::Mat temp;
-        vec[i].convertTo(temp, CV_64FC1);
+        vec[i].convertTo(temp, CV_64F);
         acc += temp;   // pixelweise Addition
     }
 
@@ -2305,10 +2246,171 @@ cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
 }
 
 
-cv::Mat ImageProcessing::load_images(std::string path) {
-    std::filesystem::path image_location{ path };
-    if (std::filesystem::exists(image_location)) {
-        return cv::imread(path, cv::ImreadModes::IMREAD_GRAYSCALE);
+// Depracted code
+
+/*
+// This is the first implementation of a template elipsis. The function takes a arbitrary ammount of cv::MAts and a function pointer.
+// Becasue the cv::Mat datatype can not be decued at compile time this functions template calls a second inner function where,
+// for the datatypes it is differntiatied.
+template<typename func, typename... Mats>
+auto ImageProcessing::forEachPixel(func, Mats&&... mats) {
+    static_assert(sizeof...(mats) > 0, "Need at least one matrix."); //compile time check
+    auto first = std::get<0>(std::forward_as_tuple(std::forward<Mats>(mats)));
+    const cv::Size size = first.size();
+    const int type = first.type();
+    (assert(size == mats.size() && type == mats.type()), ...); //compiler expands at compile time, checkupt at runtime.
+    // giving a conditional datatype back, std::is_same<>::value is static function
+    // if condition is true give back the first datatype, if false give back the second datatype
+    // But mats.size() and mats.type() are runtime functions, therefore static assert does not work.
+
+    // This line does not work becasue in decltype it is assumed that .at<float> for each datatype
+    // This line typename std::conditional -> typename is necessary to tell the compiler that a type is named. not a value. wihtout std::conditional<...>::type could be interpreted as static
+    // typenmae std::remove_reference -> the function itself is template class and ::type nested type alias.
+    // Whenever <T>::type (or something) is used and it is not a static member function we have to use typename becasue the comiler can not now.
+    // using T = typename std::conditional<
+    //    std::is_same<Func, float(*)(float,float) >>::value, float, typename std::remove_reference<decltype(first.at<float>(0, 0))>::type>::type;
+
+    // typenabhängiger Name.
+    int type = mat.type();
+    int depth = CV_MAT_DEPTH(type);  //Macros to extract depth (datatype)
+    int channels = CV_MAT_CN(type);  //Macros to define extract how manc channels are there
+
+    // type dependend name here, therefore "typename" before. Also this line does not work. becasue type is runtime constant at the
+    // template deduction would hapen at comile time the value is not available when the programm runs.
+    //using T = typename CvDepthTraits<CV_MAT_DEPTH(type)>::value_type;
+
+    switch (depth) {
+    case CV_8U:  return forEachPixelImpl<CV_8U>(func, std::forward<Mats>(mats)...);
+    case CV_8S:  return forEachPixelImpl<CV_8S>(func, std::forward<Mats>(mats)...);
+    case CV_16U: return forEachPixelImpl<CV_16U>(func, std::forward<Mats>(mats)...);
+    case CV_16S: return forEachPixelImpl<CV_16S>(func, std::forward<Mats>(mats)...);
+    case CV_32S: return forEachPixelImpl<CV_32S>(func, std::forward<Mats>(mats)...);
+    case CV_32F: return forEachPixelImpl<CV_32F>(func, std::forward<Mats>(mats)...);
+    case CV_64F: return forEachPixelImpl<CV_64F>(func, std::forward<Mats>(mats)...);
+    default:
+        throw std::runtime_error("Unsupported depth.");
     }
 }
 
+
+template<int Depth, typename Func, typename... Mats>
+cv::Mat ImageProcessing::forEachPixelImpl(const Func& func, Mats&&... mats) {
+    using T = typename CvDepthTraits<Depth>::value_type;   //again typename necessary because of ...<dependen>::...
+    auto&& first = std::get<0>(std::forward_as_tuple(mats...));
+
+    cv::Mat result(first.size(), first.type());
+
+    for (int y = 0; y < result.rows; ++y) {
+        for (int x = 0; x < result.cols; ++x) {
+            result.at<T>(y, x) = func(mats.at<T>(y, x)...);
+        }
+    }
+    return result;
+}
+*/
+
+//void ImageProcessing::saveImages_png(const std::string& path_s) {
+//    std::filesystem::path path{ path_s };
+//    if (!std::filesystem::exists(path)) {
+//        if (!std::filesystem::create_directory(path)) std::cerr << "Creating the directory failed. \n";
+//        std::cout << "Created Directory for the .png files \n";
+//    }
+//    else {
+//        std::cout << "Directory for .png files already exists \n" << "Possible override. Do you want to proceed? \n [Y/N]";
+//        char c;
+//        bool cond{ true };
+//        do {
+//            std::cin >> c;
+//            if (!std::cin.fail()) {
+//                std::cin.clear();
+//                std::cin.ignore(100, '\n');
+//            }
+//            if (std::toupper(c) == 'N') {
+//                return;
+//            }
+//            if (std::toupper(c) == 'Y') {
+//                cond = false;
+//            }
+//        } while (cond);
+//    }
+//    //Create save structure
+//    std::array<std::string, 7> strings{ "Full_frames", "Mean_frames", "Base Intensity", "Contrast",
+//        "WrappedPhase", "unwrappedPhase", "reprojectionError" };
+//
+//    for (std::size_t i = 0; i < strings.size(); ++i)
+//    {
+//        if (!std::filesystem::create_directory(path / strings[i])) {
+//            std::cout << "Creating directory " << (path / strings[i]).string() << " failed \n";
+//        }
+//        switch (i) {
+//        case(0): { save_png(path / strings[i], m_frames); break; }
+//        case(1): { save_png(path / strings[i], m_raw_phase); break; }
+//        case(2): { save_png(path / strings[i], m_baseIntensity); break; }
+//        case(3): { save_png(path / strings[i], m_contrast); break; }
+//        case(4): { save_png(path / strings[i], m_wrapped_phase); break; }
+//        case(5): { save_png(path / strings[i], m_unwrapped_phase); break; }
+//        case(6): { save_png(path / strings[i], m_reprojection_error_img); break; }
+//
+//        }
+//    }
+//}
+
+
+
+////Try to write first allcoator
+//template <typename T, std::size_t Alignment = 32>
+//struct AlignedAllocator {
+//    using value_type = T;
+//
+//    AlignedAllocator() noexcept = default;
+//    template<class U> AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+//
+//    T* allocate(std::size_t n) {
+//        void* ptr = nullptr;
+//        if (ptr = std::aligned_alloc() != 0)
+//            throw std::bad_alloc();
+//        return reinterpret_cast<T*>(ptr);
+//    }
+//
+//    void deallocate(T* p, std::size_t) noexcept {
+//        free(p);
+//    }
+//};
+
+
+//
+////Just a small example code to do generic programming with iterators
+//template <class InputIt>
+//typename std::iterator_traits<InputIt>::difference_type
+//distance(InputIt first, InputIt last) {
+//    using category = typename std::iterator_traits<InputIt>::iterator_category;
+//
+//    if constexpr (std::is_same_v<category, std::random_access_iterator_tag>)
+//        return last - first;     // fast O(1)
+//    else {
+//        typename std::iterator_traits<InputIt>::difference_type n = 0;
+//        for (; first != last; ++first) ++n;   // slow O(n)
+//        return n;
+//    }
+//}
+
+
+//void ImageProcessing::goldsteinUnwrap() {
+//    cv::Mat unwrapped1;
+//    cv::Mat unwrapped2;
+//    for (auto& m : m_unwrapped_phase) {
+//        cv::normalize(m, m, 0, 1, cv::NORM_MINMAX, CV_32F);
+//    }
+//    cv::Mat mask1 = (m_contrast[0] > 0.2f); // for example: keep only valid contrast regions
+//    mask1.convertTo(mask1, CV_8U);           // ensure binary mask
+//    cv::Mat mask2 = (m_contrast[1] > 0.2f);
+//    mask2.convertTo(mask2, CV_8U);
+//    goldsteinUnwrapCV(m_wrapped_phase[0], unwrapped1, mask1);
+//    goldsteinUnwrapCV(m_wrapped_phase[1], unwrapped2, mask2);
+//
+//    cv::normalize(unwrapped1, m_unwrapped_phase[0], 0, 255, cv::NORM_MINMAX, CV_8U);
+//    cv::normalize(unwrapped2, m_unwrapped_phase[1], 0, 255, cv::NORM_MINMAX, CV_8U);
+//    cv::imshow("Goldstein Unwrapped Phase 1", m_unwrapped_phase.at(0));
+//    cv::imshow("Goldstein Unwrapped Phase 2", m_unwrapped_phase.at(1));
+//    cv::waitKey(0);
+//}

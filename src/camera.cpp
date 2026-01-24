@@ -115,6 +115,8 @@ void Camera::close(std::size_t prefferedIndex)
         dataStream(prefferedIndex)->StopAcquisition();
         nodeMap(prefferedIndex)->FindNode<peak::core::nodes::IntegerNode>("TLParamsLocked")->SetValue(0);
         nodeMap(prefferedIndex)->FindNode<peak::core::nodes::CommandNode>("AcquisitionStop")->Execute();
+        //m_dataStreams[prefferedIndex] = nullptr;
+        //m_nodeMaps[prefferedIndex] = nullptr;
     }
     //dataStream(prefferedIndex)->
     catch (std::exception& e) { std::cout << "EXCEPTION: " << e.what() << '\n'; }
@@ -199,6 +201,7 @@ Camera::~Camera() {
 
     for (auto& ds : m_dataStreams) {
         if (!ds) continue;
+        else if (!ds->IsGrabbing()) continue;
         try {
             ds->StopAcquisition();
         }
@@ -279,8 +282,8 @@ bool Camera::adjustSettings(std::size_t i) {
     if (gain && gainSelector) {
         try {
             std::array<std::string, (std::size_t)3> color{ "Red", "Green", "Blue" };
-            std::array<double, (std::size_t)3> gain_val{ 1.30462, 1.0, 1.50483 }; //   FH Dispaly Gain (03.01.2025) values 1.30462, 1.0, 1.50483 
-            // BMZ Desktop1.198660134060, 1.0, 1.5666735106970
+            std::array<double, (std::size_t)3> gain_val{ 1.198660134060, 1.0, 1.5666735106970 }; //   FH Dispaly Gain (03.01.2025) values 1.30462, 1.0, 1.50483 
+            // BMZ Desktop 1.198660134060, 1.0, 1.5666735106970
             for (std::size_t i = 0; i < color.size(); ++i) {
                 gainSelector->SetCurrentEntry(color[i]);
                 gain->SetValue(gain_val[i]);
@@ -291,10 +294,6 @@ bool Camera::adjustSettings(std::size_t i) {
                 gainSelector->SetCurrentEntry(color[i]);
                 std::cout << color[i] << ": " << gain->Value() << '\n';
             }
-
-            /*gain->SetValue(gain->Minimum());
-            std::cout << "Gain value is set to " << gain->Value() << '\n';
-            runtime_flags.camera_data.gain = gain->Value();*/
         }
         catch (const std::exception& e) {
             std::cout << "EXCEPTION (Gain): " << e.what() << '\n';
@@ -351,7 +350,7 @@ bool Camera::adjustSettings(std::size_t i) {
         std::dynamic_pointer_cast<FloatNode>(nm->FindNode("AcquisitionFrameRateConv"));
     if (frame_rate) {
         try {
-            frame_rate->SetValue(2.5);
+            frame_rate->SetValue(4.5);
             std::cout << "Current Frame Rate " << frame_rate->Value() << '\n';
         }
         catch (const std::exception& e) {

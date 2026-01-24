@@ -28,7 +28,7 @@ public:
     // Checks for active acquisition 
     bool isRunning(std::size_t i = 0) { return m_backend->isRunning(i); };
 
-    std::vector<std::shared_ptr<defl::CameraConfig>> getCamConfig() {
+    std::vector<defl::CameraConfig> getCamConfig() {
         return m_backend->getCameraConfig();
     }
 

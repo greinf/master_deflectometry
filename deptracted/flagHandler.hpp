@@ -5,7 +5,6 @@
 #include <stdexcept>
 #include <iostream>
 //If not defined, getting problms witch std::max/ std::min
-#define NOMINMAX
 #include <windows.h>
 #include <mutex>
 
