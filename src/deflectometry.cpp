@@ -686,7 +686,10 @@ std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 	return unwrappedPhase;
 }
 
+
 std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
+	const double gamma,
+	const bool luminance,
 	const double image_height,  // Mirror circumference  
 	const int dest_width,      // Mako G-507-B width
 	const int dest_height,     // Mako G-507-B height
@@ -706,6 +709,7 @@ std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
 	CV_Assert(distance >= 0 && object_height > 0);
 	CV_Assert(image_height >= 0);
 	CV_Assert(dest_width >= 0 && dest_height >= 0);
+	CV_Assert(gamma >= 0);
 
 	setupPattern(*m_img_store);
 
@@ -725,12 +729,60 @@ std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
 		cv::imshow("pattern", img);
 		cv::waitKey(0);
 		cv::destroyWindow("pattern");
+	}
+	*/
+
+	std::vector<cv::Mat> pattern_gamma;
+	if (gamma) {
+		for (const auto& img : pattern) {
+			pattern_gamma.emplace_back(
+				m_img_processing->do_gamma_distortion(2, img, UniformRowsCols{}));
+		}
+	}
+
+	else pattern_gamma = pattern;
+
+	
+	/*for (const auto& imga : pattern_gamma) {
+		cv::Mat img;
+		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::imshow("pattern", img);
+		cv::waitKey(0);
+		cv::destroyWindow("pattern");
 	}*/
+
+
+	std::vector<cv::Mat> pattern_luminance;
+	if (luminance) {
+		for (const auto& img : pattern_gamma) {
+			pattern_luminance.emplace_back(
+				m_img_processing->simulate_luminance(
+					img,
+					100,
+					0.2745,
+					1920,
+					1080,
+					0.0,
+					0.0,
+					0.0,
+					0.0)
+			);
+		}
+	}
+	else pattern_luminance = pattern_gamma;
+
+	for (const auto& imga : pattern_luminance) {
+		cv::Mat img;
+		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::imshow("pattern", img);
+		cv::waitKey(0);
+		cv::destroyWindow("pattern");
+	}
 
 	std::vector<cv::Mat> pattern_realistic;
 
 	
-	for (const auto& img : pattern) {
+	for (const auto& img : pattern_gamma) {
 		pattern_realistic.emplace_back(createRealisticFromPattern(
 			img,
 			aperture_number,

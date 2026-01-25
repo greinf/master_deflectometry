@@ -17,6 +17,7 @@
 #include <opencv2/core/traits.hpp>
 #include "GrayCalibVector.hpp"
 #include "utils.hpp" 
+#include "RowPolicy.hpp"
 
 using CalibPairF = std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>>;
 using CalibPairD = std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>>;
@@ -93,6 +94,104 @@ public:
 
 	std::vector<std::pair<double,double>> find_ParallelogramCorners(const cv::Mat& bin);
 
+	// A functon to simulate luminance over the dispaly (more or less)
+	// If no function is given, a lambda emitter is assumed. 
+	// Input: 
+	// 1 Input image, channels() ==1, type() CV_8U || CV_64F
+	// 2 Distance between camera and Dispaly
+	// 3 Pixelpitch dispaly
+	// 4 n_dispaly_pixel_x
+	// 5 n_display_pixel_y
+	// 6 shift_x if 0 Camera is assumed to be in the center of the dispaly
+	// (pixel_x/2,pixel_y/2,distance) in Display coordinates
+	// A value > 0 shifts the camera to the right and vice versa
+	// 7 like above. a value > 0 shift the camera down and vice versa
+	// 6 Angle of the Dispaly in Dispaly Coordiantes System X-Direction [rad]
+	// 7 Angle of the Dispaly in display coordiante System Y-Direction [rad]
+	// Alterantive function to calculate Luminance
+	cv::Mat simulate_luminance(
+		const cv::Mat& img,
+		const double distance = 3200,
+		const double pixel_pitch = 0.2745,                //PixelPitch  FH 0.277    BMZ: ,
+		const int display_pixel_x = 1920,
+		const int display_pixel_y = 1080,
+		const double shift_x = 0,
+		const double shift_y = 0,
+		const double angle_x = 0,
+		const double angle_y = 0,
+		const double(*funct_ptr)(double) = nullptr
+		);
+
+	// Input 1: double value for gamma distortion must be >=0
+	// Input 2: Image on which to perfrom the operation. 
+	// If img.type() != CV_8U it is converted! 
+	// Input 3: Row Policy: if UnifromRowsCols{} 
+	// operation will be perfromed for one row and repeated over the image
+	// Ouptput: Picture with gamma distortion of type CV_8U
+	template<typename RowPolicy = UniformRowsCols>
+	cv::Mat do_gamma_distortion(
+		const double gamma,
+		const cv::Mat& img,
+		RowPolicy = {})
+	{
+		static_assert(is_row_policy_v<RowPolicy>,
+			"RowPolicy must be PerElement or UniformRowsCols");
+		CV_Assert(gamma >= 0);
+		CV_Assert(!img.empty());
+		CV_Assert(img.channels() == 1);
+		cv::Mat img8U, imgGamma;
+
+		if (img.type() != CV_8U)
+			cv::normalize(img, img8U, 0, 255, cv::NORM_MINMAX, CV_8U);
+		else img8U = img;
+		if (gamma == 1) return img8U;
+
+		if constexpr (std::is_same<RowPolicy, UniformRowsCols>::value) {
+			bool unifrom_cols{ true };
+			for (int row = 0; row < img8U.rows; ++row) {
+				const uchar* start = img8U.ptr<uchar>(row);
+				const uchar* middle = img8U.ptr<uchar>(row) + (img8U.cols / 2);
+				const uchar* end = img8U.ptr<uchar>(row) + (img8U.cols - 1);
+				if (*start != *middle || *middle != *end) {
+					unifrom_cols = false;
+					break;
+				}
+			}
+			switch (unifrom_cols) {
+				case(true): {
+					cv::Mat col(img8U.rows, 1, CV_8U);
+					for (int row = 0; row < img8U.rows; ++row) {
+						*col.ptr<uchar>(row) = static_cast<uchar>(std::round(
+							255.0 * std::pow(static_cast<double>(*img8U.ptr<uchar>(row))/255.0, gamma)));
+					}
+					imgGamma = cv::repeat(col, 1, img8U.cols);
+					break;
+				}
+				case(false): {
+					cv::Mat row(1, img8U.cols, CV_8U);
+					uchar* row_ptr = row.ptr<uchar>(0);
+					uchar* img_ptr = img8U.ptr<uchar>(img8U.rows / 2);
+					for (int col = 0; col < img8U.cols; ++col) {
+						row_ptr[col] = static_cast<uchar>(
+							std::round(255.0 * std::pow(static_cast<double>(img_ptr[col])/ 255.0, gamma)));
+					}
+					imgGamma = cv::repeat(row, img8U.rows, 1);
+					break;
+				}
+			}
+		}
+		else {
+			imgGamma.create(img8U.size(), CV_8U);
+			for (int row = 0; row < img8U.rows; ++row) {
+				for (int col = 0; col < img8U.cols; ++col) {
+					imgGamma.ptr<uchar>(row)[col] = static_cast<uchar>(std::round(
+						255.0 * std::pow(static_cast<double>(img8U.ptr<uchar>(row)[col])/255.0, gamma)));
+				}
+			}
+		}
+		
+		return imgGamma;
+	}
 
 	std::vector<std::pair<double, double>> gray_value_calib(
 		const std::vector<cv::Mat>&, 
@@ -377,6 +476,48 @@ public:
 private:	
 	//New class to hold the data
 	ImageStore& m_imgStore;
+
+	// Creates a coordiante Image in the coordiante System of the image in 3d
+	// Input 
+	// 1 Size of the Image
+	// 2 PixelPitch of the physikal display
+	// 3 If shit_x = 0 origina is in center of the image x > 0 shifts right
+	// 4 shift_y > 0 shifts down
+	// 5 angle_x image is tilted in X. Image coordinates system stands stil
+	// 6 angle_x image is tilted in Y. IMage coordinate system stand stil
+	// Returns cv::Mat with 4 channels (x,y,z,1) of CV_64F
+	cv::Mat angle_camera_toScreenNormal(
+		const cv::Size& sz,
+		const double pixel_pitch_disp,
+		const double shift_x,
+		const double shift_y,
+		const double angle_x,
+		const double angle_y,
+		const double distance
+	);
+
+	// Calculates a coordinated image in Object coordiantes in the display coordiante system
+	// The origin is placed in the center and can be moved with shift_x and y
+	// pixelPitch is the scaling factor for the coordinates 
+	// functoin return a cv::Mat_<cv::Vec3d> 
+	cv::Mat calcCoordinateImage(
+		const cv::Size& sz,
+		const double pixel_pitch_disp,
+		const double shift_x,
+		const double shift_y
+	);
+
+	// Takes grid (cv::Mat_<Vec3d> of coordinate points. 
+	// this get roation with rotatoin matrix and retured
+	// The rotation Vector is enterpreted as: 
+	// 1. angle around 2. angle around y 3. angel around z
+	// The order ist (rot z) * (rot y) * (rot x)
+	cv::Mat rotateCoordinatedGrid(
+		const cv::Mat& img,
+		const cv::Vec3d& rotVector
+	);
+
+
 
 	std::vector<std::pair<double, double>> orderTLTRBRBL_sumdiff(const std::vector<std::pair<double, double>>& p);
 

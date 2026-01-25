@@ -276,11 +276,15 @@ public:
 	 }
 
 
+
 	 // Creates syntehical images of the scene by doing a homography and smoothing acoording to the
 	 // circle of confusion. 
 	 // If no smoothing should be done set Image height to zero!
 	 // If no homogrpahy should be done. set destWidth or destheight to zero!
+	 // If Gamma is set to true also Gamme Distortion is applied to the pattern.
 	 std::vector<cv::Mat> createSyntheticalImages(
+		 const double gamma = 2.2,
+		 const bool luminance = true,
 		 const double image_height = 400,  // Mirror circumference  
 		 const int dest_width = 2464,      // Mako G-507-B width
 		 const int dest_height = 2056,     // Mako G-507-B height

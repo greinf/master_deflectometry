@@ -54,6 +54,8 @@ public:
 		int pixelY = 1080,
 		RowPolicy policy = {})
 	{
+		static_assert(is_row_policy_v<RowPolicy>,
+			"RowPolicy must be PerElement or UniformRowsCols");
 		CV_Assert(n_periods_y >= 1);
 		CV_Assert(pixelX >= 1);
 		CV_Assert(pixelY >= 1);

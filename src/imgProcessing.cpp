@@ -1353,8 +1353,10 @@ void ImageProcessing::checkHomogrpahy(
     cv::Mat camera64 = img.clone();
     cv::Mat camera;
     cv::normalize(camera64, camera, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::drawMarker(dummy_display, cv::Point(coord[0], coord[1]), cv::Scalar(255), 0, 50);
-    cv::drawMarker(camera, cv::Point(projected[0], projected[1]), cv::Scalar(255), 0, 50);
+    cv::drawMarker(dummy_display, cv::Point(static_cast<int>(coord[0]),
+        static_cast<int>(coord[1])), cv::Scalar(255), 0, 50);
+    cv::drawMarker(camera, cv::Point(static_cast<int>(projected[0]), 
+        static_cast<int>(projected[1])), cv::Scalar(255), 0, 50);
     cv::imshow("Dispaly", dummy_display);
     cv::imshow("Projected", camera);
     cv::waitKey(0);
@@ -1364,8 +1366,8 @@ void ImageProcessing::checkHomogrpahy(
 cv::Mat ImageProcessing::createCirculeBinaryMask(
     const double radius)
 {
-    CV_Assert(radius > 0);
-    int r = static_cast<double>(std::ceil(radius));
+    CV_Assert(radius > 0.0);
+    int r = static_cast<int>(std::ceil(radius));
     int k = 2 * r + 1;
     cv::Mat se(k, k, CV_8U, cv::Scalar(0));
 
@@ -1429,6 +1431,184 @@ cv::Mat ImageProcessing::getHomographyMat(
     }
 
     return getHomographyMat(src_n, dst_n);
+}
+
+cv::Mat ImageProcessing::simulate_luminance(
+    const cv::Mat& img,
+    const double distance,
+    const double pixel_pitch,                //PixelPitch  FH 0.277    BMZ: ,
+    const int display_pixel_x,
+    const int display_pixel_y,
+    const double shift_x,
+    const double shift_y,
+    const double angle_x,
+    const double angle_y,
+    const double(*funct_ptr)(double))
+{
+    CV_Assert(!img.empty());
+    CV_Assert(img.type() == CV_64F || img.type() == CV_8U);
+    CV_Assert(distance > 0 && pixel_pitch > 0);
+    CV_Assert(display_pixel_x > 0 && display_pixel_y > 0);
+    CV_Assert(shift_x < distance && shift_y < distance);
+    
+    cv::Mat angle_img = angle_camera_toScreenNormal(
+        img.size(),
+        pixel_pitch,
+        shift_x,
+        shift_y,
+        angle_x,
+        angle_y,
+        distance
+    );
+    
+    for (int row = 0; row < angle_img.rows; ++row) {
+        double* img_ptr = angle_img.ptr<double>(row);
+        for (int col = 0; col < angle_img.cols; ++col) {
+            if (funct_ptr == nullptr) img_ptr[col] = std::cos(img_ptr[col]); // lambert scaling
+            else img_ptr[col] = funct_ptr(img_ptr[col]);
+        }
+    }
+    cv::Mat output;
+    cv::Mat img64;
+    if (img.type() != CV_64F) img.convertTo(img64, CV_64F);
+    else img64 = img;
+
+    cv::multiply(angle_img, img64, output);
+
+    return output;
+    
+}
+
+cv::Mat ImageProcessing::calcCoordinateImage(
+    const cv::Size& sz,
+    const double pixel_pitch_disp,
+    const double shift_x,
+    const double shift_y)
+{
+    CV_Assert(sz.area() > 0 && pixel_pitch_disp > 0);
+    CV_Assert(sz.height % 2 == 0 && sz.width % 2 == 0);
+
+    cv::Mat_<cv::Vec3d> coordinates(sz, CV_64FC3);
+
+    cv::parallel_for_(cv::Range(0, sz.height),
+        [&](const cv::Range& range)
+        {
+            for (int start = range.start; start < range.end; ++start) {
+                double world_y = (static_cast<double>(start - sz.height / 2) - shift_y) * pixel_pitch_disp;
+                cv::Vec3d* row = coordinates.ptr<cv::Vec3d>(start);
+                for (int col = 0; col < sz.width; ++col) {
+                    double world_x = (static_cast<double>(col - sz.width / 2) - shift_x) * pixel_pitch_disp;
+                    row[col] = cv::Vec3d(world_x, world_y, 0);
+                }
+            }
+        });
+    return coordinates;
+}
+
+cv::Mat ImageProcessing::rotateCoordinatedGrid(
+    const cv::Mat& img,
+    const cv::Vec3d& rotVector)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(img.channels() == 3);
+   
+    if (rotVector[0] == 0 && rotVector[1] == 0 && rotVector[2] == 0) return img;
+
+    cv::Matx33d Rx(
+        1, 0, 0,
+        0, std::cos(rotVector[0]), -sin(rotVector[0]),
+        0, std::sin(rotVector[0]), std::cos(rotVector[0])
+    );
+
+    cv::Matx33d Ry(
+        std::cos(rotVector[1]), 0, std::sin(rotVector[1]),
+        0, 1, 0,
+        -std::sin(rotVector[1]), 0, std::cos(rotVector[1])
+    );
+
+    // choose order: usually Ry * Rx (but depends on your convention)
+    cv::Matx33d R = Ry * Rx;
+
+    cv::Mat_<cv::Vec3d> output(img.rows, img.cols);
+
+    cv::parallel_for_(cv::Range(0, img.rows),
+        [&](const cv::Range& range) {
+            for (int start = range.start; start < range.end; ++start) {
+                const cv::Vec3d* ptr = img.ptr<cv::Vec3d>(start);
+                cv::Vec3d* output_ptr = output.ptr<cv::Vec3d>(start);
+                for (int cols = 0; cols < img.cols; ++cols) {
+                    output_ptr[cols] = R * ptr[cols];
+                }
+
+            }
+        });
+
+
+    return output;
+}
+
+
+
+cv::Mat ImageProcessing::angle_camera_toScreenNormal(
+    const cv::Size& sz,
+    const double pixel_pitch_disp,
+    const double shift_x,
+    const double shift_y,
+    const double angle_x,
+    const double angle_y,
+    const double distance)
+{
+    CV_Assert(sz.area() > 0 && pixel_pitch_disp > 0);
+    CV_Assert(sz.height % 2 == 0 && sz.width % 2 == 0);
+    
+    cv::Mat_<cv::Vec3d> coordinates = calcCoordinateImage(
+        sz,
+        pixel_pitch_disp,
+        0,  // set this alwasy at zero 
+        0);
+
+
+    cv::Mat_<cv::Vec3d> rotated = rotateCoordinatedGrid(
+        coordinates,
+        cv::Vec3d(angle_x, angle_y, 0)
+    );
+
+    // now Calculate the Anlge between Screen and Hitting Ray
+    // |a| * |b| * sin(alpha) = a * b 
+    // a is Vector on the image center to image point.
+    // b is Vector from camera to image Point ->  (shift_x, shift_y,0) + (pixel_x, pixel_y, pixel_z (in case of rotation)) - distance
+
+    cv::Mat output(sz.height, sz.width, CV_64F);
+
+    cv::Vec3d X_axis = rotated.ptr<cv::Vec3d>(rotated.rows / 2)[rotated.cols-1];
+    cv::Vec3d Y_axis = rotated.ptr<cv::Vec3d>(rotated.rows - 1)[rotated.cols / 2];
+
+    cv::Vec3d display_normal = X_axis.cross(Y_axis);
+
+    cv::parallel_for_(cv::Range(0, rotated.rows),
+        [&](const cv::Range& range) {
+            for (int row = range.start; row < range.end; ++row) {
+                cv::Vec3d* ptr = rotated.ptr<cv::Vec3d>(row);
+                double* out_ptr = output.ptr<double>(row);
+                for (int col = 0; col < rotated.cols; ++col) {
+                    
+                    cv::Vec3d b = ptr[col] - cv::Vec3d(shift_x, shift_y, -distance);
+                    double denom = cv::norm(display_normal) * cv::norm(b);
+                    if (denom == 0.0) { out_ptr[col] = 0; continue; }
+                    double c = (display_normal.ddot(b)) / denom;
+                    double angle = std::acos(c);
+                    out_ptr[col] = angle;
+                }
+            }
+        });
+
+    /*cv::Mat img8u;
+    cv::normalize(output, img8u, 0, 255, cv::NORM_MINMAX, CV_8U);
+    cv::imshow("angel", img8u);
+    cv::waitKey(0);*/
+
+
+    return output;
 }
 
 
@@ -2185,7 +2365,7 @@ std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
     cv::phase_unwrapping::HistogramPhaseUnwrapping::Params params;
     params.width = sz.width;
     params.height = sz.height;
-    params.histThresh = CV_PI / 10;
+    params.histThresh = static_cast<float>(CV_PI / 10.0);
     params.nbrOfSmallBins = 20;
     params.nbrOfLargeBins = 10;
 
@@ -2199,7 +2379,7 @@ std::vector<cv::Mat> ImageProcessing::unwrapped_phase(
     cv::phase_unwrapping::HistogramPhaseUnwrapping::Params paramsY;
     paramsY.width = wrappedPhase[0].rows;
     paramsY.height = wrappedPhase[0].cols;
-    paramsY.histThresh = CV_PI / 10;
+    paramsY.histThresh = static_cast<float>(CV_PI / 10.0);
     paramsY.nbrOfSmallBins = 20;
     paramsY.nbrOfLargeBins = 10;
 
