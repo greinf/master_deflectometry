@@ -8,7 +8,7 @@
 #include <memory>
 #include "RowPolicy.hpp"
 #include <opencv2/core.hpp>
-
+#include "utils.hpp"
 
 // Tag Dispatching for the GrayCalibration Class
 namespace gr_calib {
@@ -19,7 +19,7 @@ namespace gr_calib {
 }
 class ImageStore;
 
-
+struct GammaLMResult;
 
 class GrayCalibration {
 private:
@@ -32,6 +32,15 @@ private:
 	std::unique_ptr<Impl> m_impl = nullptr;  
 	
 	//void prepareLUT();
+
+	GammaLMResult fitGamma_LM_andBuildLUT(
+		const std::array<double, 256>& measured,
+		double sat_cut_rel = 1,    // Sättigung raus
+		double eps = 1e-12,
+		int max_iters = 100,
+		double tol_rel_sse = 1e-10,
+		double tol_step = 1e-10,
+		double damping = 5.0e-3);
 
 public:
 	explicit GrayCalibration(ImageStore& image_store);
@@ -54,6 +63,12 @@ public:
 		
 	/*std::vector<cv::Mat> run_gray_calib(
 		const std::vector<cv::Mat>&);*/
+
+	bool doCalibration(
+		const CalibrationMethod method,
+		const std::vector<cv::Mat>& images,
+		const cv::Mat& mask
+	);
 
 };
 

@@ -12,6 +12,7 @@
 #include "utils.hpp"
 #include <array>
 #include "enums.hpp"
+#include <optional>
 
 
 
@@ -176,8 +177,18 @@ public:
 		 const int n_pics_per_value,
 		 const int n_steps, 
 		 bool save,
-		 const std::string& save_path);
+		 const std::string& save_path,
+		 const CalibrationMethod method);
 
+
+	 bool do_grayvalue_calibration(
+		 const std::vector<cv::Mat>& gray_val,
+		 const int n_pics_per_value,
+		 const int steps,
+		 bool save,
+		 const std::string& path,
+		 const CalibrationMethod method
+	 );
 	 
 
 	 GrayCalibVector calc_response_curve_sections(
@@ -279,20 +290,42 @@ public:
 
 	 // Creates syntehical images of the scene by doing a homography and smoothing acoording to the
 	 // circle of confusion. 
-	 // If no smoothing should be done set Image height to zero!
-	 // If no homogrpahy should be done. set destWidth or destheight to zero!
-	 // If Gamma is set to true also Gamme Distortion is applied to the pattern.
+	 // If no smoothing set smooth to false
+	 // If no homogrpahy should be done. set warp to false!
+	 // If Gamma is set to smooth to false
+	 // The overall order in which computation is done differs for homorgraphy and Raycasting.
+	 // ------------------------------Homogrpahy path ------------------------------------------------
+	 // If Homography is used -> Create Pattern -> Gamma -> (if smoothing = true) Smoothing (with a fixed Kernel with respect
+	 // to the distance to the object and Focuslength) -> if (luminance = true) calculate luminance (lambda emitter assumed) for different angles of dispaly and positions ->
+	 // Warp the image with fixed RoiBorders (calculate Homography Matrix and warp into the Camera image (Camera pixel_width and pixel_height needed)
+	 // Be carefull the homography, luminance and smoothing are not connected -> Therefore the kernel (smoothing) stays fixed and homography and luminance are 
+	 // totally unrealated in this case 
+	 // 
+	 // ------------------------------Raycasting path ------------------------------------------------
+	 // If Raycasting is used -> create Pattern -> Gamma 
+	 // 
+	 //
 	 std::vector<cv::Mat> createSyntheticalImages(
+		 const Warping ,
+		 std::optional< std::vector<cv::Mat>> camera_matrix,
 		 const double gamma = 2.2,
+		 const bool display_qunatize = true,
+		 const bool camera_quantization = true,
 		 const bool luminance = true,
+		 const bool smoothing = true,
+		 const bool warp = true,
 		 const double image_height = 400,  // Mirror circumference  
 		 const int dest_width = 2464,      // Mako G-507-B width
 		 const int dest_height = 2056,     // Mako G-507-B height
 		 const double display_pixel_pitch = 0.2745,                //PixelPitch  FH 0.277    BMZ: 
+		 const double display_shift_x = 0.0,
+		 const double display_shift_y = 0.0,
+		 const double display_tilt_x = 0.0,
+		 const double display_tilt_y = 0.0,
 		 const Shift_mode mode = Shift_mode::four_phase_shift,
 		 const CalibrationMethod method = CalibrationMethod::None,
-		 const int display_pixel_x = 1920,
-		 const int display_pixel_y = 1080,
+		 const int pattern_width = 1920,
+		 const int pattern_height = 1080,
 		 const int n_periods_in_y = 10,
 		 const double aperture_number = 2.4,
 		 const double distance = 3200,     // f = 1600 distance 2*f
@@ -315,7 +348,37 @@ private:
 	std::unique_ptr<defl::AcquisitionController> m_acquisition_controller{ nullptr };  // better shared
 	std::unique_ptr<GrayCalibration> m_calibration{ nullptr };
 
+	void show_norm(const std::vector<cv::Mat>& images, const std::string& name) {
+		for (const auto& imga : images) {
+			cv::Mat img;
+			cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
+			cv::namedWindow(name, cv::WINDOW_NORMAL);
+			cv::imshow(name, img);
+			cv::waitKey(0);
+			cv::destroyWindow(name);
+		}
+	}
 	
+	// Calculates the Word koordiantes in the camera coordiante System of every display pixel
+	cv::Mat calcDisplayPointsinCameraCoordiantes(
+		const cv::Size& pattern_size,
+		const double distance,
+		const double shift_x,
+		const double shift_y,
+		const double tilt_x,
+		const double tilt_y,
+		const double pixel_pitch
+	);
+
+	// Input 
+	// 1 rays cv::Mat_<cv::Vec3d> is a matrix that represent all the rays coming from the camera
+	// 2 DisplayCoordiantes are all the DispalyPixels (rotated and shifted) in Camea Coordinates
+	std::vector<cv::Mat> createImageFromRays(
+		const cv::Mat_<cv::Vec3d>& rays,
+		const cv::Mat_<cv::Vec3d>& DisplayCoordiantes,
+		const std::vector<cv::Mat>& pattern
+	);
+
 	// If Curly brackets for default initialization are used forward decleration breaks
 	std::vector<std::unique_ptr<defl::PhaseShiftConfig>> m_pattern_config;
 	std::vector<std::unique_ptr<defl::CameraConfig>> m_camera_config;
@@ -326,14 +389,23 @@ private:
 	bool init();
 
 
-
-	cv::Mat createRealisticFromPattern(
+	// Function applays smoothing on a picture with respect to the distance, focus length and entrance pupil
+	// Input
+	// 1 Image to smooth. 2 Aperture number of the camera. 3 distance camera to the object, 
+	// 4 pixelpitch of the dispaly, 5 Height of the object (Here diameter mirror) 6 Image height (Sensor Height, since height is limiting)
+	cv::Mat apply_ApertureSmoorting(
 		const cv::Mat& pattern,
 		const double aperture_number,
-		const double display_pixel_pitch = 0.2745, //PixelPitch  FH 0.277    BMZ: 
-		const double distance = 3200,     // f = 1600 distance 2*f
-		const double object_height = 6.6, // 2/3" Sensor 8,8 * 6,6 
-		const double image_height = 400,  // Mirror circumference  
+		const double distance,
+		const double dispaly_pixel_pitch,
+		const double object_height,
+		const double image_height
+		);
+
+	
+
+	cv::Mat warpImage(
+		const cv::Mat& pattern,
 		const int dest_width = 2464,      // Mako G-507-B width
 		const int dest_height = 2056,     // Mako G-507-B height
 		const RoiBorders<double> destination = {

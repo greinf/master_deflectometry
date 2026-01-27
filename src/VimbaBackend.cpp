@@ -479,7 +479,7 @@ bool VimbaBackend::adjustSettings(const std::size_t camera_index) {
     
     bool forceFree = forceFreerunTimedExposure(cam);
     bool forceGain = setGain(cam, 0.0);
-    bool exposure = setExposureAbsRobust(cam, 3500.0);
+    bool exposure = setExposureAbsRobust(cam, 7000.0);
     bool gamma = setGamma(cam, 1.0);
     bool roi = setRoi(cam);
     bool format = setFormat(cam);

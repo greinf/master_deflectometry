@@ -106,6 +106,7 @@ cv::Mat Pattern::generateCross(
 	return pattern;
 }
 
+// Output cv::Mat size(pixel_x, pixel_y) und CV_8U
 std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(
 	const int stepwidth,
 	const int pixel_x,
@@ -186,10 +187,14 @@ cv::Mat Pattern::createCoordinateImg(int pixel_x, int pixel_y) {
 	return coord;
 }
 
+// Input
+// 1 Pattern width 2 Pattern height
+// Ouptput
+// cv::Mat size pixel_y x pixelx ot type cv::Vec2d
 cv::Mat Pattern::generatecoordianteImg(
 	const int pixel_x, 
 	const int pixel_y) {
-	cv::Mat coordImg = createCoordinateImg(m_pixel_x, m_pixel_y);
+	cv::Mat coordImg = createCoordinateImg(pixel_x, pixel_y);
 	return coordImg;
 }
 
@@ -346,8 +351,6 @@ std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 			//cv::normalize(pattern64, pattern8, 0, 255, cv::NORM_MINMAX, CV_8U);
 			pattern64.convertTo(pattern8, CV_8U, 1.0, 0.0);
 			outPatterns.push_back(pattern8);
-			m_img_store.add(FrameRole::Pattern, pattern8);
-
 		}
 	}
 	return outPatterns;
@@ -410,7 +413,8 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 	double ampl,
 	int pixelX,
 	int pixelY,
-	bool uniformRow)
+	bool uniformRow,
+	bool return_double)
 {
 	m_numberPeriods = n_periods_in_y;
 	m_pixel_x = pixelX;
@@ -437,9 +441,15 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 		
 		//Store the files in Image_storage File
 		m_img_store.add(FrameRole::RawPhase, phaseMaps);
-		m_img_store.add(FrameRole::RawPhase, patterns);
+		m_img_store.add(FrameRole::Pattern, patterns);
 
 		logging();
+
+		// Extra path if Double Values of the pattern are needed
+		if (return_double) {
+			std::vector<cv::Mat> pattern_double{ m_img_store.get(FrameRole::PatternDouble) };
+			return pattern_double;
+		}
 
 		return patterns;
 	}
@@ -467,9 +477,14 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 
 		//Store the files in Image_storage File
 		m_img_store.add(FrameRole::RawPhase, phaseMaps);
-		m_img_store.add(FrameRole::RawPhase, patterns);
+		m_img_store.add(FrameRole::Pattern, patterns);
 
 		logging();
+
+		if (return_double) {
+			std::vector<cv::Mat> pattern_double{ m_img_store.get(FrameRole::PatternDouble) };
+			return pattern_double;
+		}
 
 		return patterns;
 	}

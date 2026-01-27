@@ -4,7 +4,7 @@
 enum class Shift_mode {
 	four_phase_shift,
 	user_defined,
-	max_value
+	GrayValues,
 };
 
 enum class DisplayMode {
@@ -27,6 +27,11 @@ enum class AcquisitionMode {
 enum class ReferenceMode {
 	cross,
 	checkerboard
+};
+
+enum class Warping {
+	homography,
+	raycasting
 };
 
 #endif // !1

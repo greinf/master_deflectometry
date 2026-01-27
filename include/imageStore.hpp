@@ -37,7 +37,8 @@ enum class FrameRole {
     DistortErrY,       // Picture that showcases the ammount of Distortion in the Y component
     UndistortErrX,     // Picture that showscases the ammount of Distortion after the undistortion in the X compoment.
     UndistortErrY,     // Picture that showcases the ammound of Distortion after the undistortion in the Y compoment. 
-    PassiveGrayCalib,  // Holds 2 Images where the parameters for passive calibration are stored
+    PassiveGrayCalib,  // Holds 3 Images:
+                       // [0] gamma, [1] I_max, [2] r_2 Error [3] Maybe RMS_error
     AcitveGrayCalib,   // Holds 2 Images where the parameters for active calibratino are stored
     maxElements        // Place Holder for ammound of categories
 };

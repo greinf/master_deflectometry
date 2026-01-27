@@ -44,7 +44,12 @@ public:
 		const int n_checker_size
 	);
 
-	// Row Policy can speed up computation if the values only have to be calculate for one row or column. 
+	
+	// Input 1 shift mode -> four phase shift or user defined, 2 nperiods in y direction
+	// 3 mean value of pattern, 4 amplitude of pattern, 5 pixelX: pattern width, 6 pixelY: pattern height
+	// 7 RowPolicy: speed up computation if the values only have to be calculate for one row or column. 
+	// 8 return_double: if set to true -> images are return as double and not qunatized to CV_8U
+	// Return Image of width height (pixelX, pixelY) and datatype CV_8U or CV_64F (depends on return_double)
 	template<typename RowPolicy = UniformRowsCols>
 	std::vector<cv::Mat> generate_phaseShift(Shift_mode mode = Shift_mode::four_phase_shift,
 		int n_periods_y = 10,
@@ -52,7 +57,8 @@ public:
 		double ampl = 127.5,
 		int pixelX = 1920,
 		int pixelY = 1080,
-		RowPolicy policy = {})
+		RowPolicy policy = {},
+		bool return_double = false)
 	{
 		static_assert(is_row_policy_v<RowPolicy>,
 			"RowPolicy must be PerElement or UniformRowsCols");
@@ -60,10 +66,10 @@ public:
 		CV_Assert(pixelX >= 1);
 		CV_Assert(pixelY >= 1);
 		const bool uniformRow = uniform::is_uniform_rows(policy);
-		return generate_phaseShift(mode, n_periods_y, mean, ampl, pixelX, pixelY, uniformRow);
+		return generate_phaseShift(mode, n_periods_y, mean, ampl, pixelX, pixelY, uniformRow, return_double);
 	}
 
-	// Creates a 
+
 	std::vector<cv::Mat> generateGrayCalibrationSequence(
 		const int stepwidth,
 		const int pixel_x = 1920,
@@ -73,12 +79,13 @@ public:
 
 	// Function creates a Picutre of cv::size(pixel_x, pixel_y) with channels()  = 2
 	// Per Pixel the Coords are saved (x,y)
+	// output cv::MAt of size (pixel_y, pixel_x) with type cv::Vec2d
 	cv::Mat generatecoordianteImg(
 		const int pixel_x = 1920,
 		const int pixel_y = 1080);
 
-	// Function creates a Picutre of cv::size(pixel_x, pixel_y) with channels()  = 2
-	// Per Pixel the Coords are saved (x,y)
+	
+	// Description above 
 	cv::Mat createCoordinateImg(int pixel_x, int pixel_y);
 
 	void generate_optimalPhase();
@@ -122,7 +129,8 @@ private:
 		double ampl = 127.5,
 		int pixelX = 1920,
 		int pixelY = 1080,
-		bool uniformRow = true);
+		bool uniformRow = true,
+		bool return_double = false);
 
 	bool prepareShiftParameters(
 		int n_periods_in_y, 

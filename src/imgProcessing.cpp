@@ -43,7 +43,7 @@ auto grad_strength = [](const cv::Mat& f) -> std::pair<cv::Mat, cv::Mat> {
     return pair;
     };
 
-ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(cv::Mat& mat) const {
+ImageProcessing::minmaxloc ImageProcessing::get_minmaxloc(const cv::Mat& mat) const {
     minmaxloc helper;
     cv::minMaxLoc(mat, &helper.minval, &helper.maxval, &helper.minloc, &helper.maxloc);
     return helper;
@@ -1170,6 +1170,22 @@ cv::Mat ImageProcessing::do_reprojection_error(
     return error_map;
 }
 
+cv::Vec2d ImageProcessing::distortImagePoints(
+    const cv::Vec2d& imgPts,
+    const cv::Mat& calimatrix,
+    const cv::Mat& distcoeffs)
+{
+    CV_Assert(!calimatrix.empty());
+    CV_Assert(!distcoeffs.empty());
+
+    cv::Vec2d distorted = 
+        newtonSolverdistort(imgPts, calimatrix, distcoeffs);
+
+    return distorted;
+    
+    return distorted;
+}
+
 std::vector<cv::Vec2d> ImageProcessing::distortImagePoints(
     const std::vector<cv::Vec2d>& imgPts,
     const cv::Mat& calimatrix,
@@ -1364,22 +1380,78 @@ void ImageProcessing::checkHomogrpahy(
 }
 
 cv::Mat ImageProcessing::createCirculeBinaryMask(
-    const double radius)
+    const int diameter)
 {
-    CV_Assert(radius > 0.0);
-    int r = static_cast<int>(std::ceil(radius));
-    int k = 2 * r + 1;
-    cv::Mat se(k, k, CV_8U, cv::Scalar(0));
+    CV_Assert(diameter >= 1);
+        
+    cv::Mat se(diameter, diameter, CV_64F, cv::Scalar(0));
 
-    for (int y = 0; y < k; ++y) {
-        for (int x = 0; x < k; ++x) {
-            double dx = x - r; // Shift origin in the middle 
-            double dy = y - r;
-            if (dx * dx + dy * dy <= r)
-                se.at<uint8_t>(y, x) = 1; // oder 255
+    for (int y = 0; y < diameter; ++y) {
+        for (int x = 0; x < diameter; ++x) {
+            double dx = x - (diameter/2); // Shift origin in the middle 
+            double dy = y - (diameter/2);
+            if (dx * dx + dy * dy <= diameter/2)
+                se.at<double>(y, x) = 1; // oder 255
         }
     }
     return se;
+}
+
+cv::Mat ImageProcessing::calulateRays(
+    const cv::Mat& camera_matrix,
+    const cv::Mat& dist_coeffs,
+    const cv::Mat& sensor_coordinates)
+{
+    CV_Assert(!camera_matrix.empty());
+    CV_Assert(camera_matrix.size() == cv::Size(3, 3));
+    CV_Assert(!sensor_coordinates.empty());
+
+    cv::Mat sensor = sensor_coordinates.clone();
+    
+    // 1. distort the image Points
+    cv::Mat distorted_sensor(sensor.size(), CV_64FC2);
+
+    if (!dist_coeffs.empty()) {
+        cv::parallel_for_(cv::Range(0, sensor_coordinates.rows),
+            [&](const cv::Range& range) {
+                for (int start = range.start; start < range.end; ++start) {
+                    cv::Vec2d* sensor_ptr = sensor.ptr<cv::Vec2d>(start);
+                    cv::Vec2d* sensor_dist_ptr = distorted_sensor.ptr<cv::Vec2d>(start);
+                    for (int col = 0; col < sensor.cols; ++col) {
+                        sensor_dist_ptr[col] = distortImagePoints(sensor_ptr[col], camera_matrix, dist_coeffs);
+                    }
+                }
+            });
+    }
+    else distorted_sensor = sensor;
+
+    // 2. Calculate the Rays
+    cv::Mat rays(distorted_sensor.size(), CV_64FC3);
+    cv::Mat homogenCoordinates;
+
+    cv::Matx33d K(
+        camera_matrix.at<double>(0, 0), camera_matrix.at<double>(0, 1), camera_matrix.at<double>(0, 2),
+        camera_matrix.at<double>(1, 0), camera_matrix.at<double>(1, 1), camera_matrix.at<double>(1, 2),
+        camera_matrix.at<double>(2, 0), camera_matrix.at<double>(2, 1), camera_matrix.at<double>(2, 2)
+    );
+
+    cv::Matx33d Kinv = K.inv();
+
+    cv::parallel_for_(cv::Range(0, distorted_sensor.rows),
+        [&](const cv::Range& range) {
+            for (int r = range.start; r < range.end; ++r) {
+                const cv::Vec2d* s = distorted_sensor.ptr<cv::Vec2d>(r);
+                cv::Vec3d* out = rays.ptr<cv::Vec3d>(r);
+
+                for (int c = 0; c < distorted_sensor.cols; ++c) {
+                    const double x = s[c][0];
+                    const double y = s[c][1];
+                    out[c] = Kinv * cv::Vec3d(x, y, 1.0);
+                }
+            }
+        });
+
+    return rays;
 }
 
 
@@ -1433,12 +1505,239 @@ cv::Mat ImageProcessing::getHomographyMat(
     return getHomographyMat(src_n, dst_n);
 }
 
+cv::Mat ImageProcessing::quantizeImage(
+    const cv::Mat& img,
+    const double max,
+    const double min)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(img.type() == CV_64F);
+    CV_Assert(img.channels() == 1);
+    CV_Assert(max > min);
+
+    minmaxloc img_data{ get_minmaxloc(img) };
+    CV_Assert(img_data.maxval <= max && "Values Must be within the given Range");
+    CV_Assert(img_data.minval >= min && "Values must be within the given Range");
+
+    // Quantize: round to integer levels, keep CV_64F as you wanted
+    cv::Mat output(img.size(), CV_64F);
+    for (int row = 0; row < img.rows; ++row) {
+        const double* in = img.ptr<double>(row);
+        double* out = output.ptr<double>(row);
+        for (int col = 0; col < img.cols; ++col) {
+            out[col] = std::round(in[col]);
+        }
+    }
+
+    return output;
+}
+
+std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
+    const cv::Mat_<cv::Vec3d> rays,
+    const cv::Mat_<cv::Vec3d> display_coordiantes)
+{
+    CV_Assert(!display_coordiantes.empty());
+    CV_Assert(display_coordiantes.type() == CV_64FC3);
+    CV_Assert(display_coordiantes.rows >= 2 && display_coordiantes.cols >= 2);
+    CV_Assert(!rays.empty());
+    CV_Assert(rays.type() == CV_64FC3);
+    CV_Assert(rays.type() == CV_64FC3);
+    CV_Assert(rays.rows >= 2 && rays.cols >= 2);
+
+    // Because ideal Plane just take two Vector for normal
+    const double eps = 1e-10;
+
+    const int r0 = display_coordiantes.rows / 2;
+    const int c0 = display_coordiantes.cols / 2;
+
+    const cv::Vec3d p0 = display_coordiantes(r0, c0); // mittlepunkt display
+
+    cv::Vec3d x = display_coordiantes.at<cv::Vec3d>(r0, c0+1);
+    cv::Vec3d y = display_coordiantes.at<cv::Vec3d>(r0+1, c0);
+
+    cv::Vec3d u = x - p0;
+    cv::Vec3d v = y - p0;
+    cv::Vec3d n = u.cross(v);
+
+    double nn = cv::norm(n);
+
+    n /= nn;
+
+    const cv::Vec3d surface_normal(n);
+
+    const double numer = surface_normal.ddot(p0);
+
+    cv::Mat_<cv::Vec3d> hitpoints(rays.size());
+    cv::Mat t_map(rays.size(), CV_64F, cv::Scalar(0));
+    cv::Mat hitMask(rays.size(), CV_8U, cv::Scalar(0));
+
+    cv::Mat angle(rays.size(), CV_64F, cv::Scalar(0));
+
+    cv::parallel_for_(cv::Range(0, rays.rows), [&](const cv::Range& range) {
+        for (int r = range.start; r < range.end; ++r) {
+            const cv::Vec3d* drow = rays.ptr<cv::Vec3d>(r);
+            cv::Vec3d* hit = hitpoints.ptr<cv::Vec3d>(r);
+            double* t_ptr = t_map.ptr<double>(r);
+            uchar* hit_ptr = hitMask.ptr<uchar>(r);
+            double* angle_ptr = angle.ptr<double>(r);
+            for (int col = 0; col < rays.cols; ++col) {
+                cv::Vec3d ray = drow[col];
+                const double denom =
+                    surface_normal.ddot(ray);
+
+                if (std::abs(denom) < eps) { // It out of nowhwere this would be orthogoanl 
+                    t_ptr[col] = std::numeric_limits<double>::quiet_NaN();
+                    hit[col] = cv::Vec3d(0, 0, 0);
+                    hit_ptr[col] = 0;
+                    continue;
+                }
+
+                const double t = numer / denom;
+
+                if (t <= 0.0) { // behind camera
+                    std::cout << "Seems Surface is behind Camera \n";
+                    t_ptr[col] = t;
+                    hit[col] = cv::Vec3d(0, 0, 0);
+                    hit_ptr[col] = 0;
+                    continue;
+                }
+
+                hit[col] =  t * ray;
+                t_ptr[col] = t;
+                hit_ptr[col] = 255;
+                // Calc Angle between Normal and Vector
+                double cosangle = surface_normal.ddot(ray) /
+                    (cv::norm(surface_normal) * cv::norm(ray));
+                angle_ptr[col] = std::acos(cosangle);
+            }
+        }
+        });
+    std::vector<cv::Mat> returnvalues{ hitpoints,angle };
+
+    return returnvalues;
+}
+
+cv::Mat ImageProcessing::createImageFromHitpointCoordinates(
+    const cv::Mat& hitPoints_dispaly_coord,
+    const cv::Mat& pattern)
+{
+    CV_Assert(!hitPoints_dispaly_coord.empty());
+    CV_Assert(!pattern.empty());
+
+    cv::Mat realImage(hitPoints_dispaly_coord.size(), CV_64F, cv::Scalar(0.0));
+
+    cv::parallel_for_(cv::Range(0, hitPoints_dispaly_coord.rows),
+        [&](const cv::Range& range) {
+            for (int start = range.start; start < range.end; ++start) {
+                const cv::Vec2d* hitPoint_ptr = hitPoints_dispaly_coord.ptr<cv::Vec2d>(start);
+                double* img_ptr = realImage.ptr<double>(start);
+                for (int cols = 0; cols < hitPoints_dispaly_coord.cols; ++cols) {
+                    if (hitPoint_ptr[cols][0] < 0 || hitPoint_ptr[cols][1] < 0) continue;
+
+                    if (hitPoint_ptr[cols][0] > pattern.cols || hitPoint_ptr[cols][1] > pattern.rows)
+                        cv::waitKey(0);
+                    img_ptr[cols] = bilinearInterpolation(
+                        pattern, cv::Vec2d(hitPoint_ptr[cols][1], hitPoint_ptr[cols][0]));
+                }
+            }
+        });
+    
+    return realImage;
+}
+
+
+
+
+
+cv::Mat ImageProcessing::mapHitPointsToDisplayCoords(
+    const cv::Mat& hitpoints,        // CV_64FC3, size = rays.size()
+    const cv::Mat& display_points    // CV_64FC3, size = (H,W) of display raster
+) {
+    CV_Assert(!hitpoints.empty() && hitpoints.type() == CV_64FC3);
+    CV_Assert(!display_points.empty() && display_points.type() == CV_64FC3);
+    CV_Assert(display_points.rows >= 2 && display_points.cols >= 2);
+
+    const int H = display_points.rows;
+    const int W = display_points.cols;
+
+    // Reference basis from display raster
+    const cv::Vec3d P00 = display_points.at<cv::Vec3d>(0, 0);
+    const cv::Vec3d P10 = display_points.at<cv::Vec3d>(0, 1);
+    const cv::Vec3d P01 = display_points.at<cv::Vec3d>(1, 0);
+
+    const cv::Vec3d A = P10 - P00; // x direciton
+    const cv::Vec3d B = P01 - P00; // y direction
+
+    // d = u * A + v * B
+    // Meassure part of A and B with 
+    // A*d = u * A * A + v * B * A  -> times A
+    // B*d = u * A * B + v* B * B  -> times B
+    // Build GLS from that and solve for u and v
+    // [A·A  A·B] [u] = [A·d]
+    // [A·B  B·B] [v]   [B·d]
+    
+    // inverse : 1/det * Matrix_adjunct
+    // det : 1/ (a*c-b*b)
+    // ((a,b),(b,c)) adjunkt -> ((c,-b), (-b,a)) 
+    // 1/(a*c-bb) * ((c, -b)(-b,a))
+
+    // Solve:
+    // u = ( bb*ad - ab*bd) / det
+    // v = (-ab*ad + aa*bd) / det
+
+    const double aa = A.dot(A);
+    const double ab = A.dot(B);
+    const double bb = B.dot(B);
+
+    const double det = aa * bb - ab * ab;
+    CV_Assert(std::abs(det) > 1e-12); // Test if Basis vector are parallel 
+
+    const double inv_det = 1.0 / det;
+
+    cv::Mat uv(hitpoints.size(), CV_64FC2, cv::Scalar(-1.0, -1.0));
+
+    
+    const double eps = 1e-5;
+
+    cv::parallel_for_(cv::Range(0, hitpoints.rows), [&](const cv::Range& range) {
+        for (int r = range.start; r < range.end; ++r) {
+            const cv::Vec3d* hp = hitpoints.ptr<cv::Vec3d>(r);
+            cv::Vec2d* out = uv.ptr<cv::Vec2d>(r);
+
+            for (int c = 0; c < hitpoints.cols; ++c) {
+                const cv::Vec3d X = hp[c];
+
+               
+                const cv::Vec3d d = X - P00;
+
+                const double ad = A.dot(d);
+                const double bd = B.dot(d);
+
+                
+                const double u = (bb * ad - ab * bd) * inv_det; // col coordinate (float)
+                const double v = (-ab * ad + aa * bd) * inv_det; // row coordinate (float)
+
+                // Inside display?
+                // u in [0, W-1], v in [0, H-1] (allow tiny epsilon)
+                if (u >= eps && u <= (W - 1) - eps &&
+                    v >= eps && v <= (H - 1) - eps) {
+                    out[c] = cv::Vec2d(u, v);      // (col,row) as floating values
+                }
+                else {
+                    out[c] = cv::Vec2d(-1.0, -1.0);
+                }
+            }
+        }
+        });
+
+    return uv;
+}
+
+
 cv::Mat ImageProcessing::simulate_luminance(
     const cv::Mat& img,
     const double distance,
     const double pixel_pitch,                //PixelPitch  FH 0.277    BMZ: ,
-    const int display_pixel_x,
-    const int display_pixel_y,
     const double shift_x,
     const double shift_y,
     const double angle_x,
@@ -1448,7 +1747,6 @@ cv::Mat ImageProcessing::simulate_luminance(
     CV_Assert(!img.empty());
     CV_Assert(img.type() == CV_64F || img.type() == CV_8U);
     CV_Assert(distance > 0 && pixel_pitch > 0);
-    CV_Assert(display_pixel_x > 0 && display_pixel_y > 0);
     CV_Assert(shift_x < distance && shift_y < distance);
     
     cv::Mat angle_img = angle_camera_toScreenNormal(
@@ -1478,6 +1776,30 @@ cv::Mat ImageProcessing::simulate_luminance(
     return output;
     
 }
+
+cv::Mat ImageProcessing::shiftCoordinateGrid(
+    const cv::Mat_<cv::Vec3d>& grid,
+    const cv::Vec3d& shift_vec)
+{
+    CV_Assert(!grid.empty());
+    
+    cv::Mat_<cv::Vec3d> shifted(grid.size());
+
+    cv::parallel_for_(cv::Range(0, grid.rows),
+        [&](const cv::Range& range) {
+            for (int start = range.start; start < range.end; ++start) {
+                const cv::Vec3d* grid_ptr = grid.ptr<cv::Vec3d>(start);
+                cv::Vec3d* shifted_ptr = shifted.ptr<cv::Vec3d>(start);
+                for (int cols = 0; cols < grid.cols; ++cols) {
+                    shifted_ptr[cols] = grid_ptr[cols] + shift_vec;
+                }
+            }
+        });
+
+    return shifted;
+
+}
+
 
 cv::Mat ImageProcessing::calcCoordinateImage(
     const cv::Size& sz,
@@ -1802,7 +2124,7 @@ cv::Vec2d ImageProcessing::newtonSolverdistort(
     // --- Basic sanity checks ---
     CV_Assert(cam_Matrix.type() == CV_64F);
     CV_Assert(cam_Matrix.rows == 3 && cam_Matrix.cols == 3);
-    CV_Assert(dist_coeffs.type() == CV_64F);
+    CV_Assert(dist_coeffs.type() == CV_64F || dist_coeffs.type() == CV_32F);
     CV_Assert(dist_coeffs.total() >= 4);       // mind. k1, k2, p1, p2
     CV_Assert(dist_coeffs.isContinuous());
 

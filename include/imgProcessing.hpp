@@ -113,8 +113,6 @@ public:
 		const cv::Mat& img,
 		const double distance = 3200,
 		const double pixel_pitch = 0.2745,                //PixelPitch  FH 0.277    BMZ: ,
-		const int display_pixel_x = 1920,
-		const int display_pixel_y = 1080,
 		const double shift_x = 0,
 		const double shift_y = 0,
 		const double angle_x = 0,
@@ -122,12 +120,23 @@ public:
 		const double(*funct_ptr)(double) = nullptr
 		);
 
+	// Input
+	// 1. image of type == CV_64F, 2. double max allowed value in image 3. min allwed value in image
+	// Output cv::Mat of type cv_64F and size of img
+	// The Method aborts if the Values in the image are higher than max val or lower than minval !
+	cv::Mat quantizeImage(
+		const cv::Mat& img,
+		const double max_allowed = 255.0,
+		const double min_allowed = 0.0
+	);
+
+
 	// Input 1: double value for gamma distortion must be >=0
 	// Input 2: Image on which to perfrom the operation. 
-	// If img.type() != CV_8U it is converted! 
+	// If img.type() != CV64F it is converted! 
 	// Input 3: Row Policy: if UnifromRowsCols{} 
 	// operation will be perfromed for one row and repeated over the image
-	// Ouptput: Picture with gamma distortion of type CV_8U
+	// Ouptput: Picture with gamma distortion of type CV_64F
 	template<typename RowPolicy = UniformRowsCols>
 	cv::Mat do_gamma_distortion(
 		const double gamma,
@@ -139,19 +148,19 @@ public:
 		CV_Assert(gamma >= 0);
 		CV_Assert(!img.empty());
 		CV_Assert(img.channels() == 1);
-		cv::Mat img8U, imgGamma;
+		cv::Mat img64, imgGamma;
 
-		if (img.type() != CV_8U)
-			cv::normalize(img, img8U, 0, 255, cv::NORM_MINMAX, CV_8U);
-		else img8U = img;
-		if (gamma == 1) return img8U;
+		if (img.type() != CV_64F)
+			img.convertTo(img64, CV_64F);
+		else img64 = img;
+		if (gamma == 1) return img64;
 
 		if constexpr (std::is_same<RowPolicy, UniformRowsCols>::value) {
 			bool unifrom_cols{ true };
-			for (int row = 0; row < img8U.rows; ++row) {
-				const uchar* start = img8U.ptr<uchar>(row);
-				const uchar* middle = img8U.ptr<uchar>(row) + (img8U.cols / 2);
-				const uchar* end = img8U.ptr<uchar>(row) + (img8U.cols - 1);
+			for (int row = 0; row < img64.rows; ++row) {
+				const double* start = img64.ptr<double>(row);
+				const double* middle = img64.ptr<double>(row) + (img64.cols / 2);
+				const double* end = img64.ptr<double>(row) + (img64.cols - 1);
 				if (*start != *middle || *middle != *end) {
 					unifrom_cols = false;
 					break;
@@ -159,33 +168,32 @@ public:
 			}
 			switch (unifrom_cols) {
 				case(true): {
-					cv::Mat col(img8U.rows, 1, CV_8U);
-					for (int row = 0; row < img8U.rows; ++row) {
-						*col.ptr<uchar>(row) = static_cast<uchar>(std::round(
-							255.0 * std::pow(static_cast<double>(*img8U.ptr<uchar>(row))/255.0, gamma)));
+					cv::Mat col(img64.rows, 1, CV_64F);
+					for (int row = 0; row < img64.rows; ++row) {
+						*col.ptr<double>(row) = std::round(
+							255.0 * std::pow(*img64.ptr<double>(row)/255.0, gamma));
 					}
-					imgGamma = cv::repeat(col, 1, img8U.cols);
+					imgGamma = cv::repeat(col, 1, img64.cols);
 					break;
 				}
 				case(false): {
-					cv::Mat row(1, img8U.cols, CV_8U);
-					uchar* row_ptr = row.ptr<uchar>(0);
-					uchar* img_ptr = img8U.ptr<uchar>(img8U.rows / 2);
-					for (int col = 0; col < img8U.cols; ++col) {
-						row_ptr[col] = static_cast<uchar>(
-							std::round(255.0 * std::pow(static_cast<double>(img_ptr[col])/ 255.0, gamma)));
+					cv::Mat row(1, img64.cols, CV_64F);
+					double* row_ptr = row.ptr<double>(0);
+					double* img_ptr = img64.ptr<double>(img64.rows / 2);
+					for (int col = 0; col < img64.cols; ++col) {
+						row_ptr[col] = std::round(255.0 * std::pow(img_ptr[col]/ 255.0, gamma));
 					}
-					imgGamma = cv::repeat(row, img8U.rows, 1);
+					imgGamma = cv::repeat(row, img64.rows, 1);
 					break;
 				}
 			}
 		}
 		else {
-			imgGamma.create(img8U.size(), CV_8U);
+			imgGamma.create(img64.size(), CV_64F);
 			for (int row = 0; row < img8U.rows; ++row) {
 				for (int col = 0; col < img8U.cols; ++col) {
-					imgGamma.ptr<uchar>(row)[col] = static_cast<uchar>(std::round(
-						255.0 * std::pow(static_cast<double>(img8U.ptr<uchar>(row)[col])/255.0, gamma)));
+					imgGamma.ptr<double>(row)[col] = std::round(
+						255.0 * std::pow(img8U.ptr<double>(row)[col]/255.0, gamma));
 				}
 			}
 		}
@@ -219,9 +227,10 @@ public:
 		const int method = 1
 	);
 
+	// Create circular mask with given diameter
+	// Return mat is row = cols = diameter; type = CV_64F
 	cv::Mat createCirculeBinaryMask(
-		const double r);
-	
+		const int diameter);
 
 	cv::Mat getHomographyMat(
 		const RoiBorders<int>,
@@ -236,6 +245,10 @@ public:
 		const int n_steps
 	);
 
+	// Input
+	// 1 Coordiantes as Vec2d in (x,y)
+	// cam Matrix size (3,3) in floating
+	// dist coeffs in floating
 	cv::Vec2d newtonSolverdistort(
 		const cv::Vec2d& coordiantes,
 		const cv::Mat& cam_Matrix,
@@ -473,6 +486,75 @@ public:
 		const cv::Mat& mask
 		);
 
+	cv::Vec2d distortImagePoints(
+		const cv::Vec2d& imgPts,
+		const cv::Mat& calimatrix,
+		const cv::Mat& distcoeffs);
+
+
+	// Input
+	// 1 3x3 Camera Matrix of floating point CV_32F || CV_64F
+	// 2 dist coeffs matrix 1x5 || 1x6 of CV_32F || cv_64F
+	// 3 cv::Mat of pixely x pixelx as CV_8U 
+	// Output cv::Mat_<cv::Vec3d> of size pixel_y x pixel_x
+	cv::Mat calulateRays(
+		const cv::Mat& camera,
+		const cv::Mat& dist_coeffs,
+		const cv::Mat& sensor_coordinates
+	);
+
+	// Calculates a coordinated image in Object coordiantes in the display coordiante system
+	// The origin is placed in the center and can be moved with shift_x and y
+	// pixelPitch is the scaling factor for the coordinates 
+	// functoin return a cv::Mat_<cv::Vec3d> 
+	// DO NOT USE THE SHIFT_X SHIFT_Y ALWAYS 0
+	cv::Mat calcCoordinateImage(
+		const cv::Size& sz,
+		const double pixel_pitch_disp,
+		const double shift_x,
+		const double shift_y
+	);
+
+	// Takes grid (cv::Mat_<Vec3d> of coordinate points. 
+	// this get roation with rotatoin matrix and retured
+	// The rotation Vector is enterpreted as: 
+	// 1. angle around 2. angle around y 3. angel around z
+	// The order ist (rot z) * (rot y) * (rot x)
+	cv::Mat rotateCoordinatedGrid(
+		const cv::Mat& img,
+		const cv::Vec3d& rotVector
+	);
+
+	// Takes 1 grid (cv::Mat_<Vec3d> of coordinate points. 
+	// 2. cv::vec3d the shift Vector to shift the Coordiate Grid
+	// Return a cv::Mat_<cv::Vec3d> with all vector shifted about the shift vector
+	cv::Mat shiftCoordinateGrid(
+		const cv::Mat_<cv::Vec3d>& img,
+		const cv::Vec3d& shift
+	);
+
+	// Input
+	// 1 cv::Mat_<cv::Vec3d> of rays
+	// 2 cv::Mat_<cv::vec3d> of Objekt Points
+	// return a cv::Mat<Vec3d> of the all impact points.
+	// No impact is (0,0,0)
+	std::vector<cv::Mat> calculateHitPoints(
+		const cv::Mat_<cv::Vec3d> rays,
+		const cv::Mat_<cv::Vec3d> display_coordiantes
+	);
+
+	cv::Mat mapHitPointsToDisplayCoords(
+		const cv::Mat& hitpoints,        // CV_64FC3, size = rays.size()
+		const cv::Mat& display_points    // CV_64FC3, size = (H,W) of display raster
+	);
+
+	cv::Mat createImageFromHitpointCoordinates(
+		const cv::Mat& hitPoints_dispaly_coord,
+		const cv::Mat& pattern
+	);
+
+	cv::Mat mean(const std::vector<cv::Mat>&);
+
 private:	
 	//New class to hold the data
 	ImageStore& m_imgStore;
@@ -496,29 +578,9 @@ private:
 		const double distance
 	);
 
-	// Calculates a coordinated image in Object coordiantes in the display coordiante system
-	// The origin is placed in the center and can be moved with shift_x and y
-	// pixelPitch is the scaling factor for the coordinates 
-	// functoin return a cv::Mat_<cv::Vec3d> 
-	cv::Mat calcCoordinateImage(
-		const cv::Size& sz,
-		const double pixel_pitch_disp,
-		const double shift_x,
-		const double shift_y
-	);
-
-	// Takes grid (cv::Mat_<Vec3d> of coordinate points. 
-	// this get roation with rotatoin matrix and retured
-	// The rotation Vector is enterpreted as: 
-	// 1. angle around 2. angle around y 3. angel around z
-	// The order ist (rot z) * (rot y) * (rot x)
-	cv::Mat rotateCoordinatedGrid(
-		const cv::Mat& img,
-		const cv::Vec3d& rotVector
-	);
-
-
-
+	
+	
+	
 	std::vector<std::pair<double, double>> orderTLTRBRBL_sumdiff(const std::vector<std::pair<double, double>>& p);
 
 	void checkHomogrpahy(
@@ -533,8 +595,6 @@ private:
 
 	void unwrap_column(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int colunn);
 
-	cv::Mat mean(const std::vector<cv::Mat>&);
-
 	std::string path{ "C:\\Users\\grein\\Desktop\\Master\\Project\\deflectometrie\\out" };
 
 	std::array<std::string, 7> m_reprojection_error_string{ "SqrtError_x", "SqrtError_y", "Median_x", "Median_y",
@@ -542,7 +602,7 @@ private:
 	
 	cv::Mat applyMask(const cv::Mat&, const cv::Mat&, float shift = 0.0f);
 
-	minmaxloc get_minmaxloc(cv::Mat& mat) const; 
+	minmaxloc get_minmaxloc(const cv::Mat& mat) const; 
 
 	// A type-dependent name is one whose existence or meaning as a type can only be known after template substitution.
 	// This is important here. ís_vec_or_array formulates a condition in it´s static variable ::value -> a constant expression

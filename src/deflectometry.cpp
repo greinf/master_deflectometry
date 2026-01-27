@@ -6,6 +6,7 @@
 #include "imgProcessing.hpp"
 #include "camera_calib.hpp"
 #include <fstream>
+#include <optional>
 #include <filesystem>
 #include <utility>
 #include "imageStore.hpp"
@@ -16,6 +17,7 @@
 #include "config/PhaseShiftConfig.hpp"
 #include "algorithm"
 #include "CameraNew.hpp"
+#include <iterator>
 // Response in Section
 #include "GrayCalibVector.hpp"
 // Gray Calib class
@@ -143,6 +145,7 @@ Deflectometry::Deflectometry() {
 	// For now imageProcessing Strays in constructor
 	m_img_processing = std::make_unique<ImageProcessing>(*m_img_store);
 	m_screenDisplay = std::make_unique<ScreenDisplay>();
+	m_pattern = std::make_unique<Pattern>(*m_img_store);
 	
 }
 
@@ -688,177 +691,387 @@ std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 
 
 std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
+	const Warping operation,
+	std::optional<std::vector<cv::Mat>> cameraMatrix,
 	const double gamma,
+	const bool display_quantization,
+	const bool camera_quantization,
 	const bool luminance,
+	const bool smoothing,
+	const bool warping,
 	const double image_height,  // Mirror circumference  
-	const int dest_width,      // Mako G-507-B width
+	const int dest_width,      // Mako G-507-B width 
 	const int dest_height,     // Mako G-507-B height
 	const double dispaly_pixel_pitch,
+	const double display_shift_x,
+	const double display_shift_y,
+	const double display_tilt_x,
+	const double display_tilt_y,
 	const Shift_mode mode,
 	const CalibrationMethod method,
-	const int display_pixel_x,
-	const int display_pixel_y,
+	const int pattern_width,
+	const int pattern_height,
 	const int n_periods_in_y,
 	const double aperture_number,
 	const double distance,     // f = 1600 distance 2*f
 	const double object_height, // 2/3" Sensor 8,8 * 6,6 
 	const RoiBorders<double> homography_points)
 {
-	CV_Assert(display_pixel_x > 0 && display_pixel_y > 0);
+	CV_Assert(dispaly_pixel_pitch >= 0);
+	CV_Assert(pattern_width > 0 && pattern_height > 0);
 	CV_Assert(aperture_number >= 0 && n_periods_in_y > 0);
 	CV_Assert(distance >= 0 && object_height > 0);
 	CV_Assert(image_height >= 0);
 	CV_Assert(dest_width >= 0 && dest_height >= 0);
 	CV_Assert(gamma >= 0);
+	CV_Assert(display_tilt_x < CV_PI / 4);
+	CV_Assert(display_tilt_y < CV_PI / 4);
+
 
 	setupPattern(*m_img_store);
 
-	std::vector<cv::Mat> pattern =
-		m_pattern->generate_phaseShift(
-			mode,
-			10,
-			127.5,
-			127.5,
-			1920,
-			1080,
-			UniformRowsCols{});
+	std::vector<cv::Mat> pattern;
 
-	/*for (const auto& imga : pattern) {
-		cv::Mat img;
-		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
-		cv::imshow("pattern", img);
-		cv::waitKey(0);
-		cv::destroyWindow("pattern");
+	// Define the start Pattern 
+	if (mode == Shift_mode::four_phase_shift ||
+		mode == Shift_mode::user_defined)
+	{
+		// Generate Pattern
+		pattern = m_pattern->generate_phaseShift(
+				mode,
+				n_periods_in_y,
+				127.5,   // Mean Value
+				127.5,   // Amplitude
+				pattern_width,
+				pattern_height,
+				UniformRowsCols{},
+				true);   // if Return value should be double 
 	}
-	*/
 
+	if (mode == Shift_mode::GrayValues) {
+		pattern = m_pattern->generateGrayCalibrationSequence(
+			1,
+			pattern_width,
+			pattern_height
+		);
+
+		for (auto& img : pattern) {
+			img.convertTo(img, CV_64F);
+		}
+		
+	}
+	//show_norm(pattern, "pattern");
+	
+
+	// ------------------  Gray Val Calibration -> here passive Camera Calibration and LUT  ----------------------
+	
+	// Dispaly Quantization
+	std::vector<cv::Mat> qunatized_pattern;
+	if (display_quantization) {
+		for (const auto& img : pattern) {
+			qunatized_pattern.emplace_back(
+				m_img_processing->quantizeImage(
+					img,
+					255.0,
+					0.0));
+		}
+	}
+	else qunatized_pattern = pattern;
+
+	//show_norm(qunatized_pattern, "qunatized_pattern");
+
+
+	// Gamma Distortion
 	std::vector<cv::Mat> pattern_gamma;
 	if (gamma) {
-		for (const auto& img : pattern) {
+		for (const auto& img : qunatized_pattern) {
 			pattern_gamma.emplace_back(
-				m_img_processing->do_gamma_distortion(2, img, UniformRowsCols{}));
+				m_img_processing->do_gamma_distortion(
+					gamma,
+					img, 
+					UniformRowsCols{}
+				)
+			);
 		}
+		//return pattern_gamma;
 	}
 
 	else pattern_gamma = pattern;
 
-	
-	/*for (const auto& imga : pattern_gamma) {
-		cv::Mat img;
-		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
-		cv::imshow("pattern", img);
-		cv::waitKey(0);
-		cv::destroyWindow("pattern");
-	}*/
+	//show_norm(pattern_gamma, "pattern_gamma");
 
+	// ------- Homogrpahy is used --------
+	if (operation == Warping::homography) {
 
-	std::vector<cv::Mat> pattern_luminance;
-	if (luminance) {
-		for (const auto& img : pattern_gamma) {
-			pattern_luminance.emplace_back(
-				m_img_processing->simulate_luminance(
+		// Try to calculate impact of luminance 
+		std::vector<cv::Mat> pattern_luminance;
+		if (luminance) {
+			for (const auto& img : pattern_gamma) {
+				pattern_luminance.emplace_back(
+					m_img_processing->simulate_luminance(
+						img,
+						distance,
+						dispaly_pixel_pitch,
+						display_shift_x,
+						display_shift_y,
+						display_tilt_x,
+						display_tilt_y)
+				);
+			}
+		}
+		else pattern_luminance = pattern_gamma;
+
+		show_norm(pattern_luminance, "pattern_luminance");
+
+		std::vector<cv::Mat> pattern_smoothed;
+
+		if (smoothing) {
+			for (const auto& img : pattern_luminance) {
+				pattern_smoothed.emplace_back(apply_ApertureSmoorting(
 					img,
-					100,
-					0.2745,
-					1920,
-					1080,
-					0.0,
-					0.0,
-					0.0,
-					0.0)
+					aperture_number,
+					distance,
+					dispaly_pixel_pitch,
+					object_height,
+					image_height
+				));
+			}
+		}
+		else pattern_smoothed = pattern_luminance;
+
+		show_norm(pattern_smoothed, "pattern_smoothed");
+
+		std::vector<cv::Mat> camera_quantized;
+		if (camera_quantization) {
+			for (const auto& img : pattern_smoothed) {
+				camera_quantized.emplace_back(m_img_processing->quantizeImage(
+					img,
+					255.0,
+					0.0
+				));
+			}
+		}
+		else camera_quantized = pattern_smoothed;
+
+		show_norm(camera_quantized, "camera_quantized");
+
+		// ------------------  Gray Val Calibration -> here active Camera Calibration  ----------------------
+
+		std::vector<cv::Mat> pattern_warped;
+
+		if (warping) {
+			for (const auto& img : camera_quantized) {
+				pattern_warped.emplace_back(warpImage(
+					img,
+					dest_width,
+					dest_height,
+					homography_points));
+			}
+		}
+		else pattern_warped = pattern_smoothed;
+
+		show_norm(pattern_warped, "pattern_warped");
+
+		return pattern_warped;
+	}
+	
+	// ------------------ Raycasting --------------------
+	if (operation == Warping::raycasting) {
+		
+		CV_Assert(cameraMatrix.has_value());
+		CV_Assert(cameraMatrix.value().size() == 2);
+		cv::Mat cam_matrix = cameraMatrix.value()[0];
+		cv::Mat dist_coeffs = cameraMatrix.value()[1];
+
+		cv::Mat_<cv::Vec2d> coordinateImage =
+			m_pattern->generatecoordianteImg(
+				dest_width,
+				dest_height);
+
+		cv::Mat_<cv::Vec3d> rayImage =
+			m_img_processing->calulateRays(
+				cam_matrix,
+				dist_coeffs,
+				coordinateImage
 			);
+
+		cv::Mat displayPixelInCameraCoordinates =
+			calcDisplayPointsinCameraCoordiantes(
+				cv::Size(pattern_width, pattern_height),
+				distance,
+				display_shift_x,
+				display_shift_y,
+				display_tilt_x,
+				display_tilt_y,
+				dispaly_pixel_pitch
+			);
+
+		std::vector<cv::Mat> images = createImageFromRays(
+			rayImage,
+			displayPixelInCameraCoordinates,
+			pattern_gamma
+		);
+
+		show_norm(images, "pattern_smoothed");
+
+		return images;
+		
+	}
+}
+
+std::vector<cv::Mat> Deflectometry::createImageFromRays(
+	const cv::Mat_<cv::Vec3d>& rays,
+	const cv::Mat_<cv::Vec3d>& DisplayCoordiantes,
+	const std::vector<cv::Mat>& pattern)
+{
+	CV_Assert(!DisplayCoordiantes.empty());
+	CV_Assert(DisplayCoordiantes.type() == CV_64FC3);
+	CV_Assert(DisplayCoordiantes.rows >= 2 && DisplayCoordiantes.cols >= 2);
+	CV_Assert(!rays.empty());
+	CV_Assert(rays.type() == CV_64FC3);
+	CV_Assert(rays.rows >= 2 && rays.cols >= 2);
+
+	// Because ideal Plane just take two Vector for normal
+
+	// First Mat is possible Position on on Matrix Second is Angle for each possible point
+	std::vector<cv::Mat> maybe_hitpoints =
+		m_img_processing->calculateHitPoints(
+			rays,
+			DisplayCoordiantes
+		);
+
+	cv::Mat hitPoints = m_img_processing->
+		mapHitPointsToDisplayCoords(maybe_hitpoints[0], DisplayCoordiantes);
+
+
+	// Luminance 
+	cv::Mat angle_img{ maybe_hitpoints[1] };
+	for (int row = 0; row < angle_img.rows; ++row) {
+		double* img_ptr = angle_img.ptr<double>(row);
+		for (int col = 0; col < angle_img.cols; ++col) {
+			img_ptr[col] = std::cos(img_ptr[col]);
 		}
 	}
-	else pattern_luminance = pattern_gamma;
-
-	for (const auto& imga : pattern_luminance) {
-		cv::Mat img;
-		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
-		cv::imshow("pattern", img);
-		cv::waitKey(0);
-		cv::destroyWindow("pattern");
-	}
-
-	std::vector<cv::Mat> pattern_realistic;
-
 	
-	for (const auto& img : pattern_gamma) {
-		pattern_realistic.emplace_back(createRealisticFromPattern(
-			img,
-			aperture_number,
-			dispaly_pixel_pitch,
-			distance,
-			object_height,
-			image_height,
-			dest_width,      
-			dest_height,    
-			homography_points));
+	std::vector<cv::Mat> createProjected;
+
+	for (const auto& img : pattern) {
+		cv::Mat image = m_img_processing->createImageFromHitpointCoordinates(hitPoints, img);
+		cv::Mat image_luminance;
+		cv::multiply(angle_img, image, image_luminance);
+
+		createProjected.emplace_back(image_luminance);
 	}
 
-	for (const auto& imga : pattern_realistic) {
-		cv::Mat img;
-		cv::normalize(imga, img, 0, 255, cv::NORM_MINMAX, CV_8U);
-		cv::namedWindow("Pattern", cv::WINDOW_NORMAL);
+	return createProjected;
+}
 
-		cv::resizeWindow("Pattern", 1500, 1000);
-		cv::imshow("Pattern", img);
-		cv::waitKey(0);
-		cv::destroyWindow("Pattern");
-	}
+
+cv::Mat Deflectometry::calcDisplayPointsinCameraCoordiantes(
+	const cv::Size& pattern_size,
+	const double distance,
+	const double shift_x,
+	const double shift_y,
+	const double tilt_x,
+	const double tilt_y,
+	const double pixel_pitch)
+{
+	CV_Assert(pattern_size.area() > 0);
+	CV_Assert(distance > 0);
+	CV_Assert(tilt_x <= CV_PI/4 && tilt_y <= CV_PI / 4);
+
+	cv::Mat displaypixel_coordinates =
+		m_img_processing->calcCoordinateImage(
+			pattern_size,
+			pixel_pitch,
+			0.0,
+			0.0
+		);
+
+
+	cv::Mat rot_display_coordinates =
+		m_img_processing->rotateCoordinatedGrid(
+			displaypixel_coordinates,
+			cv::Vec3d(tilt_x, tilt_y, 0)
+		);
+
+	cv::Mat rot_shift_display_coordinates =
+		m_img_processing->shiftCoordinateGrid(
+			rot_display_coordinates,
+			cv::Vec3d(shift_x, shift_y, distance)
+		);
+
+	return rot_shift_display_coordinates;
 
 }
 
-// If no smoothing should be done set Image height to zero!
-// // If no homogrpahy should be done. set destWidth or destheight to zero!
-cv::Mat Deflectometry::createRealisticFromPattern(
+
+
+cv::Mat Deflectometry::apply_ApertureSmoorting(
 	const cv::Mat& pattern,
 	const double aperture_number,
+	const double distance,
 	const double dispaly_pixel_pitch,
-	const double distance,   
-	const double object_height, 
-	const double image_height, 
+	const double object_height,  // Object Height -> here Mirror Diameter
+	const double image_height    // Sensor Height -> limiting Factor 
+)
+{
+	CV_Assert(pattern.type() == CV_64F);
+	CV_Assert(pattern.channels() == 1);
+	CV_Assert(aperture_number >= 0 && distance >= 0);
+	const double scale = object_height / image_height;
+	const double focal_length = distance * scale / (scale + 1); // g = (m+1)/m * f
+	const double circ_entrance_pupil = focal_length / aperture_number; // f# = f/D -> D = entrance pupil 
+	cv::Mat smoothed;
+
+	// Smoothing 
+
+	int n_pixel_diameter =
+		static_cast<int>(std::ceil(circ_entrance_pupil / dispaly_pixel_pitch));
+	if (n_pixel_diameter <= 2) return pattern;
+	
+	if (!(n_pixel_diameter % 2)) ++n_pixel_diameter;
+
+	cv::Mat circular_binary = m_img_processing->createCirculeBinaryMask(n_pixel_diameter);
+	double sum = cv::sum(circular_binary)[0];
+	circular_binary /= sum;
+	cv::filter2D(pattern, smoothed, CV_64F, circular_binary);
+
+	return smoothed;
+}
+	
+
+
+// If no smoothing should be done set Image height to zero!
+// // If no homogrpahy should be done. set destWidth or destheight to zero!
+cv::Mat Deflectometry::warpImage(
+	const cv::Mat& pattern,
 	const int dest_width , 
 	const int dest_height,   
 	const RoiBorders<double> destination)
 {
-	CV_Assert(aperture_number >= 0 && image_height >= 0);
-	CV_Assert(distance >= 0 && object_height > 0);
-	CV_Assert(dest_width >= 0 && dest_height >= 0);
+	CV_Assert(!pattern.empty());
+	CV_Assert(pattern.channels() == 1);
+	CV_Assert(pattern.type() == CV_64F);
 
-	const double scale = object_height/image_height;
-	const double focal_length = distance * scale / (scale + 1); // g = (m+1)/m * f
-	const double circ_entrance_pupil = focal_length / aperture_number; // f# = f/D -> D = entrance pupil 
-	cv::Mat smoothed, warped;
-	cv::Size output_size{ dest_width, dest_height };
+	cv::Mat warped;
+	cv::Size output_size(dest_width, dest_height);
 
-	// Smoothing 
-	if (image_height) {
-		const int n_pixel_diameter =
-			static_cast<int>(std::ceil(circ_entrance_pupil / dispaly_pixel_pitch));
-		cv::Mat circular_binary = m_img_processing->createCirculeBinaryMask(n_pixel_diameter / 2);
-		double sum = cv::sum(circular_binary)[0];
-		circular_binary /= sum;
-		cv::filter2D(pattern, smoothed, CV_64F, circular_binary);
-	}
-	else smoothed = pattern;
-	
 	// Warp the image 
-	if (dest_height && dest_width) {
-		RoiBorders<int> source{
-			{0,0},
-			{pattern.cols - 1, 0},
-			{0, pattern.rows - 1},
-			{pattern.cols - 1, pattern.rows - 1}
+	
+	RoiBorders<int> source{
+		{0,0},
+		{pattern.cols - 1, 0},
+		{0, pattern.rows - 1},
+		{pattern.cols - 1, pattern.rows - 1}
 
-		};
+	};
 
-		const cv::Mat homography =
-			m_img_processing->getHomographyMat(source, destination);
+	const cv::Mat homography =
+		m_img_processing->getHomographyMat(source, destination);
 
-		cv::warpPerspective(pattern, warped, homography, output_size);
-	}
-	else warped = smoothed;
-
+	cv::warpPerspective(pattern, warped, homography, output_size);
+	
 	return warped;
 }
 
@@ -1280,10 +1493,69 @@ GrayCalibVector Deflectometry::calc_response_curve_sections(
 }
 
 bool Deflectometry::do_grayvalue_calibration(
+	const std::vector<cv::Mat>& gray_val,
+	const int n_pics_perValue,
+	const int n_steps,
+	bool save,
+	const std::string& path,
+	const CalibrationMethod method)
+{
+	CV_Assert(n_steps >= 1);
+	if (save) CV_Assert(!path.empty());
+	CV_Assert(!gray_val.empty());
+
+	ImageProcessing& process = processing();
+
+	setupCalibration(CalibrationMethod::None, "");
+
+	std::vector<cv::Mat> mean_images;
+	if (n_pics_perValue > 1) {
+		std::vector<cv::Mat>::const_iterator start = gray_val.begin();
+		for (std::size_t i = 0; i < 255; ++i) {
+			std::vector<cv::Mat>::const_iterator end =
+				std::next(start, static_cast<std::size_t>(n_pics_perValue + 1));
+
+			mean_images.emplace_back(
+				process.mean(std::vector<cv::Mat>(start, end)));
+		}
+
+	}
+	else {
+		for (const auto& img : gray_val) {
+			cv::Mat gray64;
+			img.convertTo(gray64, CV_64F);
+			mean_images.push_back(gray64);
+		}
+	}
+
+	CV_Assert(mean_images.size() == 256);
+
+	cv::Mat mask = process.grayCalibMask(
+		std::vector<cv::Mat>{*mean_images.begin(), * std::prev(mean_images.end())});
+
+	CV_Assert(mask.size() == mean_images[0].size());
+
+	//mask = cv::Mat::ones(mask.size(), CV_8U);
+
+	m_calibration->doCalibration(
+		CalibrationMethod::Passive,
+		mean_images,
+		mask);
+
+	m_img_store->saveRoleXML(FrameRole::PassiveGrayCalib, path);
+
+	return true;
+}
+
+
+
+
+bool Deflectometry::do_grayvalue_calibration(
 	const int n_pics_per_value,
 	const int n_steps,
 	bool save,
-	const std::string& path)
+	const std::string& path,
+	const CalibrationMethod method)
 {
 	CV_Assert(n_pics_per_value >= 1);
 	CV_Assert(n_steps >= 1);
@@ -1304,15 +1576,16 @@ bool Deflectometry::do_grayvalue_calibration(
 		n_pics_per_value);
 
 	CV_Assert(!gray_calib.empty());
+	CV_Assert(gray_calib.size() == (256 * n_pics_per_value));
 
-	std::vector<std::pair<double,double>> LUT = 
-		m_img_processing->gray_value_calib(gray_calib, n_pics_per_value, n_steps);
-
-	m_img_store->add(FrameRole::GrayLUT, std::move(LUT));
-	if(save)
-		m_img_store->saveRole(FrameRole::GrayLUT, path);
-
-	return true;
+	return do_grayvalue_calibration(
+		gray_calib,
+		n_pics_per_value,
+		n_steps,
+		save,
+		path,
+		method
+	);
 }
 
 GrayCalibVector Deflectometry::borderPoints_gray_val(

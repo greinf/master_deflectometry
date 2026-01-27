@@ -1,4 +1,4 @@
-#define VERSION "1"
+﻿#define VERSION "1"
 
 #include <cstddef>
 #include <iostream>
@@ -7,9 +7,6 @@
 #include <opencv2/opencv.hpp>
 #include "acquisitionworker.hpp"
 #include <filesystem>
-
-
-
 
 
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
@@ -52,21 +49,6 @@ auto showNormalized = [](const cv::Mat& img) {
 //C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23 GrayLut for Desktop at FH
 //C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22 GrayLut for Deskotp BMZ
 
-auto show1to1 = [](const cv::Mat& img) {
-    CV_Assert(img.channels() == 1);
-
-    cv::Mat u8;
-    if (img.type() == CV_8U) u8 = img;
-    else cv::normalize(img, u8, 0, 255, cv::NORM_MINMAX, CV_8U);
-
-    cv::namedWindow("normalized", cv::WINDOW_AUTOSIZE); // wichtig: 1:1
-    cv::imshow("normalized", u8);
-    cv::waitKey(0);
-    cv::destroyWindow("normalized");
-    };
-
-
-
 int main()
 {
     //Supress open CV Information -only warnings are logged. 
@@ -79,20 +61,90 @@ int main()
 
     Deflectometry meassure{};
 
-    std::vector<cv::Mat> real_pattern = 
-        meassure.createSyntheticalImages();
+    meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
 
-    for (const auto& img : real_pattern) {
-        showNormalized(img);
+    std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
+
+    std::vector<cv::Mat> dist_Coeffs = meassure.get(FrameRole::DistortionCoeff);
+
+    std::optional<std::vector<cv::Mat>> cameramatrix_distCoeff;
+    
+    cameramatrix_distCoeff.emplace(std::vector<cv::Mat>{camMatrix[0], dist_Coeffs[0]});
+ 
+
+    std::vector<cv::Mat> real_pattern =
+        meassure.createSyntheticalImages(
+            Warping::raycasting,                 // Warping: homography-based warping
+
+            cameramatrix_distCoeff,                 // camera_matrix (std::optional<std::vector<cv::Mat>>)
+
+            2.2,                                 // gamma: display / camera gamma
+
+            true,                                // display_quantize: quantize display output
+
+            true,                                // camera_quantization: simulate camera ADC quantization
+
+            true,                                // luminance: apply luminance weighting
+
+            true,                                // smoothing: enable optical smoothing
+
+            true,                                // warp: apply geometric warping
+
+            200.0,                               // image_height: mirror circumference [mm]
+
+            800,                                // dest_width: Mako G-507-B sensor width (px)
+
+            800,                                // dest_height: Mako G-507-B sensor height (px)
+
+            0.2745,                              // display_pixel_pitch: display pixel pitch [mm]
+
+            -650.0,                                 // display_shift_x: lateral display shift x [mm]
+
+            -400.0,                                 // display_shift_y: lateral display shift y [mm]
+
+            0.0,                                 // display_tilt_x: display tilt around x-axis [rad]
+
+            0.0,                                 // display_tilt_y: display tilt around y-axis [rad]
+
+            Shift_mode::four_phase_shift,        // mode: phase-shift pattern mode
+
+            CalibrationMethod::None,             // method: no gray-value calibration
+
+            1720,                                // pattern_width: display width (px)
+
+            880,                                // pattern_height: display height (px)
+
+            10,                                  // n_periods_in_y: number of sinusoidal periods in y
+
+            2.4,                                 // aperture_number: f-number (N)
+
+            3000,                                // distance: camera–mirror distance [mm] (2*f, f=1600)
+
+            6.6,                                 // object_height: sensor height [mm] (2/3" → 6.6 mm)
+            
+            RoiBorders<double>{                  // destination ROI in destination image
+                {200.0, 200.0},                  // left-up corner 
+                { 1800.0, 180.0 },                 // left-down corner
+                { 210.0, 2200.0 },                 // right-up corner
+                { 1900.0, 1900.0 }                 // right-down corner
     }
+        );
 
-    meassure.calc_response_curve_sections(1, 1, true, path_gray_sections, 8, 6);
+     meassure.do_grayvalue_calibration(
+         real_pattern,
+         1,
+         1,
+         true,
+         "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-27PassiveGrayLaptop",
+         CalibrationMethod::Passive
+     );
+
+
+    // meassure.calc_response_curve_sections(1, 1, true, path_gray_sections, 8, 6);
+    
     
 
     //meassure.do_camera_calibration();
-
-    //meassure.do_grayvalue_calibration(5, "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09BMZGrayValMako");
-
 
     // White balance
     /* std::vector<cv::Mat> frames =
@@ -191,9 +243,7 @@ int main()
 
     /*std::cout << "Matrix: " << cam_Matrix << '\n';*/
 
-    meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
-    std::vector<cv::Mat> cam_Matrix = meassure.get(FrameRole::CalibrationMatrix);
-    std::vector<cv::Mat> dist_coeffs = meassure.get(FrameRole::DistortionCoeff);
+    
 
     /*std::vector<cv::Mat> cartesian = 
         meassure.generateCartesian(true, path, 1080/100, 1920/100);*/
@@ -248,8 +298,8 @@ int main()
         unwrappedPhase,
         mask,
         ref_point[0],
-        cam_Matrix[0],
-        dist_coeffs[0],
+        camMatrix[0],
+        dist_Coeffs[0],
         108.0,
         unwrappedPhase[0].cols,
         unwrappedPhase[0].rows,
