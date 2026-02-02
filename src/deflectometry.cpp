@@ -715,7 +715,8 @@ std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
 	const double aperture_number,
 	const double distance,     // f = 1600 distance 2*f
 	const double object_height, // 2/3" Sensor 8,8 * 6,6 
-	const RoiBorders<double> homography_points)
+	const RoiBorders<double> homography_points,
+	const std::string& calib_path)
 {
 	CV_Assert(dispaly_pixel_pitch >= 0);
 	CV_Assert(pattern_width > 0 && pattern_height > 0);
@@ -729,6 +730,11 @@ std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
 
 
 	setupPattern(*m_img_store);
+
+	if (!setupCalibration(method, calib_path)) {
+		std::cout << "Calibration Setup failed \n";
+		return {};
+	}
 
 	std::vector<cv::Mat> pattern;
 
@@ -778,7 +784,7 @@ std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
 	}
 	else qunatized_pattern = pattern;
 
-	//show_norm(qunatized_pattern, "qunatized_pattern");
+	
 
 
 	// Gamma Distortion
@@ -793,12 +799,39 @@ std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
 				)
 			);
 		}
-		//return pattern_gamma;
+		return pattern_gamma;
 	}
 
 	else pattern_gamma = pattern;
 
-	//show_norm(pattern_gamma, "pattern_gamma");
+	//show_norm(pattern_gamma, "gamma_pattern");
+
+	// Apply Passive or Lut Calibration !!! 
+
+	std::vector<cv::Mat> calibrated{};
+
+	switch (method) {
+	case(CalibrationMethod::Lut):
+		for (auto& img : pattern_gamma) {
+			calibrated.emplace_back(m_calibration->applyCalibration(method, img));
+		}
+		break;
+	case(CalibrationMethod::Passive):
+		for (auto& img : pattern_gamma) {
+			calibrated.emplace_back(m_calibration->applyCalibration(method, img));
+		}
+		break;
+	case(CalibrationMethod::Bias_Passive):
+		for (auto& img : pattern_gamma) {
+			calibrated.emplace_back(m_calibration->applyCalibration(method, img));
+		}
+		break;
+	default:
+		calibrated = pattern_gamma;
+		break;
+	}
+
+	show_norm(calibrated, "Calibrated? ");
 
 	// ------- Homogrpahy is used --------
 	if (operation == Warping::homography) {
@@ -1256,8 +1289,6 @@ std::vector<cv::Mat> Deflectometry::do_wrapped_phase(
 	return std::vector<cv::Mat>(wrapped_phase_out.begin(), std::next(wrapped_phase_out.begin(), 2));
 }
 
-
-
 bool Deflectometry::setupCalibration(
 	const CalibrationMethod method,
 	const std::string& path)
@@ -1273,15 +1304,18 @@ bool Deflectometry::setupCalibration(
 	case(CalibrationMethod::None):
 		std::cout << "No calibration Mode selected !\n";
 		break;
+
 	case(CalibrationMethod::Lut): {
 		std::cout << "Calibratio via Lut selected \n" << "Try loading LUT... \n";
 		CV_Assert(!path.empty());
-		m_img_store->loadRoleXML(FrameRole::GrayLUT, path);
-		m_calibration->setupCalibrationMethod(
-			gr_calib::LUTCalibration{}, m_img_store->getLut());
-		std::cout << "LUT loaded and ready \n";
+		if (!m_calibration->
+			setupCalibrationMethod(gr_calib::LUTCalibration{}, path)) {
+			std::cout << "Setup Lut failed \n";
+			return false;
+		}
 		break;
 	}
+
 	case(CalibrationMethod::Active): {
 		std::cout << "Active Calibration selected \n" << "Try loading images ... \n";
 		CV_Assert(!path.empty());
@@ -1293,15 +1327,20 @@ bool Deflectometry::setupCalibration(
 		throw std::runtime_error("This path must be terminated \n");
 		break;
 	}
-	case(CalibrationMethod::Passive):
-		std::cout << "Passive Calibration iselected \n" << "Try loading images ... \n";
-		CV_Assert(!path.empty());
-		m_img_store->loadRoleXML(FrameRole::PassiveGrayCalib, path);
-		std::vector<cv::Mat> passive_gray = m_img_store->get(FrameRole::PassiveGrayCalib);
-		CV_Assert(!passive_gray.empty());
 
-		std::cout << "This path is not implemented at this point ! \n";
-		throw std::runtime_error("Not implemente ");
+	case(CalibrationMethod::Bias_Passive):
+		std::cout << "Uses the same Setup as the the Passiv method \n";
+		[[fallthrough]];
+
+	case(CalibrationMethod::Passive):
+		std::cout << "Passive Calibration selected \n" << "Try loading images ... \n";
+		CV_Assert(!path.empty());
+
+		if (!m_calibration->
+			setupCalibrationMethod(gr_calib::PassiveCalibration{}, path)) {
+			std::cout << "Setup Passive failed \n";
+			return false;
+		}
 		break;
 	}
 	return true;
@@ -1535,15 +1574,30 @@ bool Deflectometry::do_grayvalue_calibration(
 
 	CV_Assert(mask.size() == mean_images[0].size());
 
-	//mask = cv::Mat::ones(mask.size(), CV_8U);
+	mask = cv::Mat::ones(mask.size(), CV_8U);
 
 	m_calibration->doCalibration(
-		CalibrationMethod::Passive,
+		method,
 		mean_images,
 		mask);
 
-	m_img_store->saveRoleXML(FrameRole::PassiveGrayCalib, path);
+	if (save) {
+		switch (method) {
+		case(CalibrationMethod::Lut):
+			m_img_store->saveLut(path);
+			break;
 
+		case(CalibrationMethod::Passive):
+			[[fallthough]];
+		case(CalibrationMethod::Bias_Passive):
+			m_img_store->saveRoleXML(FrameRole::PassiveGrayCalib, path);
+			break;
+
+		case(CalibrationMethod::Active):
+			m_img_store->saveRoleXML(FrameRole::AcitveGrayCalib, path);
+			break;
+		}
+	}
 	return true;
 }
 

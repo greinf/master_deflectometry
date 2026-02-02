@@ -25,7 +25,7 @@ void ImageStore::add(
 }
 
 
-void ImageStore::add(FrameRole role, const std::vector<std::pair<double, double>>&& LUT) {
+void ImageStore::add(FrameRole role, const std::array<std::pair<double, double>, 256>& LUT) {
     std::scoped_lock lock(mtx_);
     LUT_Gray = LUT;
 }
@@ -45,7 +45,7 @@ std::vector<cv::Mat> ImageStore::get(FrameRole role) const {
     return {};
 }
 
-std::vector<std::pair<double, double>> ImageStore::getLut() const {
+std::array<std::pair<double, double>,256> ImageStore::getLut() const {
     return LUT_Gray;
 }
 
@@ -71,6 +71,15 @@ void ImageStore::clearAll() {
 
 bool ImageStore::has(FrameRole role) const {
     std::scoped_lock lock(mtx_);
+    if (role == FrameRole::GrayLUT) {
+        //if (!LUT_Gray.empty()) return false;
+        return !std::all_of(LUT_Gray.begin(), LUT_Gray.end(),
+            [&](const std::pair<double, double>& value) -> bool
+            {
+                return value.first == 0 && value.second == 0;
+            });
+    }
+
     auto it = storage_.find(role);
     return (it != storage_.end() && !it->second.empty());
 }
@@ -114,6 +123,16 @@ void ImageStore::saveLut(const std::string& basePath)
         return;
     }
 
+    if (std::all_of(LUT_Gray.begin(), LUT_Gray.end(),
+        [&](const std::pair<double, double>& gray_val)
+        {
+            return gray_val.first == 0 && gray_val.second == 0;
+        })) 
+    {
+        std::cout << "Array was not assigend, every entry is 0!. Return to caller \n";
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(mtx_);
 
     std::string dir = basePath + "/" +
@@ -130,7 +149,6 @@ void ImageStore::saveLut(const std::string& basePath)
     file.close();
 
 }
-
 
 void ImageStore::saveRole(FrameRole role, const std::string& path)
 {
@@ -202,9 +220,10 @@ void ImageStore::loadLut(const std::string& basePath)
     if (!file.is_open())
         throw std::runtime_error("Cannot open LUT file");
 
-    std::vector<std::pair<double, double>> loaded;
+    std::array<std::pair<double, double>, 256> loaded;
 
     std::string line;
+    int count{};
     while (std::getline(file, line)) {
         if (line.empty()) continue;
         std::stringstream ss(line);
@@ -215,12 +234,12 @@ void ImageStore::loadLut(const std::string& basePath)
         ss >> x >> comma >> y;
 
         if (!ss.fail() && comma == ',')
-            loaded.emplace_back(x, y);
+            loaded[count++] = { x, y };
         else
             throw std::runtime_error("Malformed CSV line: " + line);
     }
 
-    LUT_Gray = std::move(loaded);
+    LUT_Gray = loaded;
 }
 
 void ImageStore::loadCalibrationMatrix(const std::string& path) {

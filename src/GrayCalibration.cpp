@@ -5,34 +5,59 @@
 #include "RowPolicy.hpp"
 #include <opencv2/core.hpp>
 #include "utils.hpp"
-
+#include <ceres/ceres.h>
 
 struct GrayCalibration::Impl {
 	std::vector<cv::Mat> active_gray{};
 	std::vector<cv::Mat> passive_gray{};
-	std::vector<std::pair<double, double>> gray_Lut{};
+	std::array<std::pair<double, double>, 256> gray_Lut{};
 };
 
 
 
 // ----------   Passive Camera Calibration with Model  ------------------
-struct GammaLMStats {
+struct Gray_Calib_Stats {
     int n = 0;
     int iters = 0;
     bool converged = false;
 
     double gamma = 1.0;
     double Imax = 1.0;
+    double I_0 = 0.0;
 
     double sse = 0.0;
     double rmse = 0.0;
     double r2 = 0.0;
 };
 
-struct GammaLMResult {
-    GammaLMStats stats;
+struct Gray_Calib_Result {
+    Gray_Calib_Stats stats;
     std::array<uint8_t, 256> lut{};
 };
+
+
+namespace ceresCost {
+    struct ExponentialResidual {
+        ExponentialResidual(double x, double y)
+            : x_(x), y_(y) { }
+
+        template <typename T>
+        bool operator()(
+            const T* const i_max,
+            const T* const gamma,
+            const T* const i_0,
+            T* residual) const {
+            residual[0] = (T)y_ - (*i_max * ceres::pow((T)x_, *gamma) + *i_0);
+            return true;
+        }
+
+    private:
+        const double x_;
+        const double y_;
+    };
+}
+
+
 
 namespace detail {
 
@@ -49,6 +74,7 @@ namespace detail {
 
 
     // Try to do some data sampling before we start 
+    // 
     inline std::vector<Sample> buildSamples(const std::array<double, 256>& measured,
         double sat_cut_rel,
         double eps)
@@ -60,7 +86,7 @@ namespace detail {
         std::vector<Sample> samples;
         samples.reserve(256);
 
-        for (int g = 1; g <= 255; ++g) {
+        for (int g = 0; g <= 255; ++g) {
             double I = measured[g];
             // We cut first if the smaller than epsion.
             if (I < eps) continue;
@@ -117,10 +143,87 @@ namespace detail {
 
 } // namespace detail
 
+cv::Mat GrayCalibration::applyCalibration(
+    const CalibrationMethod method,
+    const cv::Mat& image) 
+{
+    CV_Assert(image.type() == CV_64F);
+    CV_Assert(image.channels() == 1);
+
+    switch (method) {
+    case(CalibrationMethod::None):
+        std::cout << "No Calibration Used " << std::endl;
+        return image;
+    case(CalibrationMethod::Lut):
+        return applyLut(image);
+    case(CalibrationMethod::Passive):
+        [[fallthrough]];
+    case(CalibrationMethod::Bias_Passive):
+        return applyPassive(image);
+    case(CalibrationMethod::Active):
+        std::cout << "not Calibrated " << std::endl;
+        return image;
+    }
+}
+
+cv::Mat GrayCalibration::applyPassive(
+    const cv::Mat& image)
+{
+    CV_Assert(image.type() == CV_64F);
+    CV_Assert(image.channels() == 1);
+
+    CV_Assert(m_impl->passive_gray.size() == 3);
+    CV_Assert(std::all_of(m_impl->passive_gray.begin(), m_impl->passive_gray.end(),
+        [&](const cv::Mat& img) {
+            return img.size() == image.size();
+        }));
+
+    cv::Mat calibrated(image.size(), CV_64F, cv::Scalar(0));
+
+    cv::parallel_for_(cv::Range(0, image.rows),
+        [&](const cv::Range& range) {
+            for (int row = range.start; row < range.end; ++row) {
+                const double* gamma_ptr = m_impl->passive_gray[0].ptr<double>(row);
+                const double* i_max_ptr = m_impl->passive_gray[1].ptr<double>(row);
+                const double* I_0_ptr = m_impl->passive_gray[2].ptr<double>(row);
+                const double* img_ptr = image.ptr<double>(row);
+                double* cal_ptr = calibrated.ptr<double>(row);
+                for (int col = 0; col < image.cols; ++col) {
+                    cal_ptr[col] =
+                        I_0_ptr[col] + std::pow(img_ptr[col] / i_max_ptr[col], 1.0 / gamma_ptr[col]) * 255.0;
+                }
+            }
+        });
+
+    return calibrated;
+}
+
+
+cv::Mat GrayCalibration::applyLut(
+    const cv::Mat& image)
+{
+    CV_Assert(image.type() == CV_64F);
+    CV_Assert(image.channels() == 1);
+    
+    cv::Mat calibrated(image.size(), CV_64F, cv::Scalar(0));
+
+    cv::parallel_for_(cv::Range(0, image.rows),
+        [&](const cv::Range& range) {
+            for (int row = range.start; row < range.end; ++row) {
+                const double* img_ptr = image.ptr<double>(row);
+                double* cal_ptr = calibrated.ptr<double>(row);
+                for (int col = 0; col < image.cols; ++col) {
+                    cal_ptr[col] = getLutVal(img_ptr[col]);
+                }
+            }
+        });
+
+    return calibrated;
+}
 
 
 
-GammaLMResult GrayCalibration::fitGamma_LM_andBuildLUT(
+Gray_Calib_Result GrayCalibration::fitGamma_LM_andBuildLUT(
     const std::array<double, 256>& measured,
     double sat_cut_rel,    // Sättigung raus
     double eps,
@@ -169,7 +272,7 @@ GammaLMResult GrayCalibration::fitGamma_LM_andBuildLUT(
     double sse = computeSSE(samples, Imax, gamma);
     if (!isFinite(sse)) throw std::runtime_error("Initial SSE not finite.");
 
-    GammaLMStats stats;
+    Gray_Calib_Stats stats;
     stats.n = static_cast<int>(samples.size());
 
     bool converged = false;
@@ -296,10 +399,68 @@ GammaLMResult GrayCalibration::fitGamma_LM_andBuildLUT(
         lut[i] = static_cast<uint8_t>(gi);
     }
 
-    GammaLMResult out;
+    Gray_Calib_Result out;
     out.stats = stats;
     out.lut = lut;
     return out;
+}
+
+std::array<std::pair<double, double>, 256> GrayCalibration::createLut(
+    const std::vector<cv::Mat>& images,
+    const cv::Mat& mask) 
+{
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(mask.channels() == 1);
+    CV_Assert(images.size() == 256);
+    CV_Assert(std::all_of(images.begin(), images.end(),
+        [&](const cv::Mat& img) {
+            return mask.size() == img.size() && 
+                img.type() == CV_64F && 
+                img.channels() == 1;
+        }));
+
+    std::array<std::pair<double, double>, 256> Lut{};
+
+    for (std::size_t i = 0; i < images.size(); ++i) {
+        double mean = cv::mean(images[i], mask)[0];
+        Lut[i].first = static_cast<double>(i);
+        Lut[i].second = mean;
+    }
+
+    return Lut;
+}
+
+double GrayCalibration::getLutVal(
+    const double value)
+{
+    CV_Assert(!m_impl->gray_Lut.empty());
+    CV_Assert(m_impl->gray_Lut.begin() != 
+        m_impl->gray_Lut.end());
+
+    // binary search on "second" values
+    auto it = std::lower_bound(
+        m_impl->gray_Lut.begin(),
+        m_impl->gray_Lut.end(),
+        value,
+        [](const auto& a, double val) {
+            return a.second < val;
+        }
+    );
+
+    if (it == m_impl->gray_Lut.begin())
+        return it->first;
+
+    if (it == m_impl->gray_Lut.end())
+        return std::prev(it)->first;
+
+    // choose closer of the two neighbors
+    double hi_dist = std::abs(it->second - value);
+    double lo_dist = std::abs(std::prev(it)->second - value);
+
+    if (lo_dist < hi_dist)
+        return std::prev(it)->first;
+    else
+        return it->first;
 }
 
 
@@ -312,16 +473,35 @@ bool GrayCalibration::doCalibration(
     CV_Assert(!mask.empty());
     CV_Assert(images.size() == 256);
     CV_Assert(mask.type() == CV_8U);
+    CV_Assert(m_impl != nullptr);
 
     for (const auto& im : images) {
         CV_Assert(im.size() == mask.size());
         CV_Assert(im.type() == CV_64FC1);  
     }
 
+    if (method == CalibrationMethod::Lut) {
+        std::array<std::pair<double,double>, 256> lut =
+            createLut(images, mask);
+        
+        if (!prepareLUT(lut)) {
+            std::cout << "Lut Creation failed \n";
+            return false;
+        }
+
+        m_impl->gray_Lut = lut;
+
+        m_img_store.add(FrameRole::GrayLUT, lut);
+
+        return true;
+    }
+
     cv::Mat gamma(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
     cv::Mat Imax(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+    cv::Mat I_0(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
     cv::Mat errorR2(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
     cv::Mat iter(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+
 
     cv::parallel_for_(cv::Range(0, mask.rows),
         [&](const cv::Range& range) {
@@ -330,6 +510,7 @@ bool GrayCalibration::doCalibration(
 
                 double* gammaPtr = gamma.ptr<double>(r);
                 double* ImaxPtr = Imax.ptr<double>(r);
+                double* I_0Ptr = I_0.ptr<double>(r);
                 double* r2Ptr = errorR2.ptr<double>(r);
                 double* iterPtr = iter.ptr<double>(r);
 
@@ -342,14 +523,30 @@ bool GrayCalibration::doCalibration(
                     }
 
                     try {
-                        if (method == CalibrationMethod::Passive) {
-                            auto res = fitGamma_LM_andBuildLUT(y, 0.9995);
-
+                        switch (method) {
+                        case(CalibrationMethod::Active):
+                            std::cout << "Active Calibration is not implemented so no \n";
+                            return false;
+                            break;
+                        case(CalibrationMethod::Bias_Passive): {
+                            auto res = fitGammaBias_LM(y);
                             gammaPtr[c] = res.stats.gamma;
                             ImaxPtr[c] = res.stats.Imax;
+                            I_0Ptr[c] = res.stats.I_0;
                             r2Ptr[c] = res.stats.r2;
                             iterPtr[c] = res.stats.iters;
-                            
+                            break;
+                        }
+                        case(CalibrationMethod::Passive): {
+                            auto res = fitGamma(y);
+                            gammaPtr[c] = res.stats.gamma;
+                            ImaxPtr[c] = res.stats.Imax;
+                            I_0Ptr[c] = res.stats.I_0;
+                            r2Ptr[c] = res.stats.r2;
+                            iterPtr[c] = res.stats.iters;
+                            break;
+                        }
+                        
                         }
                     }
                     catch (const std::exception&) {
@@ -359,9 +556,12 @@ bool GrayCalibration::doCalibration(
             }
         });
 
-    if (method == CalibrationMethod::Passive) {
+    // Both Passive and Bias_Passive have essnetially the same procedure apart from the creation. 
+    if (method == CalibrationMethod::Passive || 
+        method == CalibrationMethod::Bias_Passive) {
         m_img_store.add(FrameRole::PassiveGrayCalib, gamma);
         m_img_store.add(FrameRole::PassiveGrayCalib, Imax);
+        m_img_store.add(FrameRole::PassiveGrayCalib, I_0);
         m_img_store.add(FrameRole::PassiveGrayCalib, errorR2);
         m_img_store.add(FrameRole::PassiveGrayCalib, iter);
     }
@@ -369,6 +569,106 @@ bool GrayCalibration::doCalibration(
     return true;
 }
 
+Gray_Calib_Result GrayCalibration::fitGammaBias_LM(
+    const std::array<double, 256>& meassured,
+    const double eps,
+    const double sat_cut)
+{
+    CV_Assert(!meassured.empty());
+    CV_Assert(eps >= 0 && sat_cut > 0);
+
+    double i_min{ 0 }, gamma{ 1.0 }, i_max{ 150.0 };
+
+    std::vector<detail::Sample> values =
+        detail::buildSamples(meassured, sat_cut, eps);
+
+    ceres::Problem problem;
+
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        auto* costfunction =
+            new ceres::AutoDiffCostFunction<ceresCost::ExponentialResidual,
+            1, 1, 1, 1>(new ceresCost::ExponentialResidual(values[i].u, values[i].I));
+
+        problem.AddResidualBlock(costfunction, nullptr, &i_max, &gamma, &i_min);
+    }
+
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::DENSE_QR;   
+    //options.minimizer_progress_to_stdout = true;
+    options.max_num_iterations = 50;
+
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+
+    //std::cout << summary.BriefReport() << "\n";
+
+
+    Gray_Calib_Result result;
+    result.stats.gamma = gamma;
+    result.stats.Imax = i_max;
+    result.stats.I_0 = i_min;
+    result.stats.r2 = summary.final_cost;
+
+    return result;
+
+}
+
+
+
+Gray_Calib_Result GrayCalibration::fitGamma(
+    const std::array<double, 256>& meassured,
+    const double eps,
+    const double sat_cut)
+{
+    std::vector<detail::Sample> samples =
+        detail::buildSamples(meassured, sat_cut, eps);
+    
+    double ln_x{}, ln_y{}, ln_x2{}, ln_y2{}, ln_xy{};
+
+    for (std::size_t val = 0; val < samples.size(); ++val) {
+        CV_Assert(samples[val].I > 0);
+        CV_Assert(samples[val].u > 0);
+
+        const double ln_x_act = std::log(samples[val].u);
+        ln_x += ln_x_act;
+        ln_x2 += ln_x_act * ln_x_act;
+        const double ln_y_act = std::log(samples[val].I);
+        ln_y += ln_y_act;
+        ln_y2 += ln_y_act * ln_y_act;
+        ln_xy += ln_x_act * ln_y_act;
+    }
+    
+    Gray_Calib_Stats stats;
+
+    double n = static_cast<double>(samples.size());
+    
+    double gamma_num =
+        ln_xy - (ln_x * ln_y) / n;
+
+    double gamma_denom =
+        - (ln_x/n) * (ln_x) + ln_x2;
+
+    double gamma = gamma_num / gamma_denom;
+
+    double i_max = std::exp((ln_y - gamma * ln_x) / n);
+
+    double sse = detail::computeSSE(samples, i_max, gamma);
+
+    double r_2 = detail::computeR2(samples, i_max, gamma, eps);
+
+    stats.gamma = gamma;
+    stats.Imax = i_max;
+    stats.n = n;
+    stats.r2 = r_2;
+    stats.sse = sse;
+    stats.rmse = std::sqrt(sse / std::max(1, stats.n - 2)); // dof n-2
+
+    Gray_Calib_Result result;
+
+    result.stats = stats;
+
+    return result;
+}
 
 GrayCalibration::GrayCalibration(ImageStore& imgStore)
 	:m_img_store{ imgStore }
@@ -381,54 +681,74 @@ GrayCalibration::~GrayCalibration() = default;
 
 bool GrayCalibration::setupCalibrationMethod(
 	const gr_calib::ActiveCalibration,
-	const std::string& pat)
+	const std::string& path)
 {
-	
-	
+    CV_Assert(!path.empty());
 
-	return false;
+    m_img_store.loadRoleXML(FrameRole::AcitveGrayCalib, path);
+
+    m_impl->active_gray = m_img_store.get(FrameRole::AcitveGrayCalib);
+	
+    if (!m_impl->active_gray.size() == 2) return false;
+
+	return true;
 }
 
 bool GrayCalibration::setupCalibrationMethod(
 	const gr_calib::PassiveCalibration,
 	const std::string& path)
 {
-	assert(!path.empty() && "Path to active Calibration Frames is needed \n");
-	return false;
+    CV_Assert(!path.empty());
+
+    m_img_store.loadRoleXML(FrameRole::PassiveGrayCalib, path);
+
+    // Frame Role can have up to 5 Pictures stored. Only the first three are needed for the calibration
+    std::vector<cv::Mat> passive_calib = 
+        m_img_store.get(FrameRole::PassiveGrayCalib);
+
+    m_impl->passive_gray =
+        std::vector<cv::Mat>(passive_calib.begin(), std::next(passive_calib.begin(), 3));
+
+    if (!m_impl->passive_gray.size() == 3) return false;
+
+    return true;
 }
 
 bool GrayCalibration::setupCalibrationMethod(
 	const gr_calib::LUTCalibration,
-	std::vector<std::pair<double,double>> grayLut)
+    const std::string& path)
 {
-	assert(!grayLut.empty());
-	assert(grayLut.size() > 255);
-	m_impl->gray_Lut = grayLut;
+    CV_Assert(!path.empty());
+    if(!m_img_store.has(FrameRole::GrayLUT))
+        m_img_store.loadLut(path);
 
+    m_impl->gray_Lut = m_img_store.getLut();
 
-	return true;
+    if (!m_impl->gray_Lut.size() == 256) return false;
+
+    return true;
 }
 
 
-//void GrayCalibration::prepareLUT()
-//{
-//	if (!m_LUT.has_value()) {
-//		m_lut_ready = false;
-//		return;
-//	}
-//
-//	m_sortedLUT = m_LUT.value();
-//	std::sort(m_sortedLUT.begin(), m_sortedLUT.end(),
-//		[](auto& a, auto& b) { return a.second < b.second; });
-//
-//	double minv = m_sortedLUT.front().second;
-//	double maxv = m_sortedLUT.back().second;
-//
-//	double range = maxv - minv;
-//	double range_safety = range * 0.9;      // keep 10% margin
-//
-//	m_lut_scale_factor = range_safety / 255.0;
-//	m_lut_offset = minv + range * 0.05;
-//
-//	m_lut_ready = true;
-//}
+bool GrayCalibration::prepareLUT(
+    std::array<std::pair<double,double>,256>& lut)
+{
+    CV_Assert(!lut.empty());
+    try {
+        std::sort(lut.begin(), lut.end(),
+            [](auto& a, auto& b) { return a.second < b.second; });
+
+        double minv = lut.front().second;
+        double maxv = lut.back().second;
+
+        double range = maxv - minv;
+        double range_safety = range * 0.9;      // keep 10% margin
+    }
+    catch (std::exception& e) {
+        std::cout << "EXCEPTION: " << e.what() << std::endl;
+        return false;
+    }
+
+
+    return true;
+}

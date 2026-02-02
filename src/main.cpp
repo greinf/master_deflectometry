@@ -59,6 +59,8 @@ int main()
     //Path to IDS calibration: Blende geschlossen. 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09MAKO.xml" };
 
+    std::string calibPath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-31Synthetic" };
+
     Deflectometry meassure{};
 
     meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
@@ -70,13 +72,13 @@ int main()
     std::optional<std::vector<cv::Mat>> cameramatrix_distCoeff;
     
     cameramatrix_distCoeff.emplace(std::vector<cv::Mat>{camMatrix[0], dist_Coeffs[0]});
- 
+
 
     std::vector<cv::Mat> real_pattern =
         meassure.createSyntheticalImages(
             Warping::raycasting,                 // Warping: homography-based warping
 
-            cameramatrix_distCoeff,                 // camera_matrix (std::optional<std::vector<cv::Mat>>)
+            cameramatrix_distCoeff,              // camera_matrix (std::optional<std::vector<cv::Mat>>)
 
             2.2,                                 // gamma: display / camera gamma
 
@@ -92,9 +94,9 @@ int main()
 
             200.0,                               // image_height: mirror circumference [mm]
 
-            800,                                // dest_width: Mako G-507-B sensor width (px)
+            2464,                                // dest_width: Mako G-507-B sensor width (px)
 
-            800,                                // dest_height: Mako G-507-B sensor height (px)
+            2056,                                // dest_height: Mako G-507-B sensor height (px)
 
             0.2745,                              // display_pixel_pitch: display pixel pitch [mm]
 
@@ -106,13 +108,13 @@ int main()
 
             0.0,                                 // display_tilt_y: display tilt around y-axis [rad]
 
-            Shift_mode::four_phase_shift,        // mode: phase-shift pattern mode
+            Shift_mode::GrayValues,        // mode: phase-shift pattern mode
 
-            CalibrationMethod::None,             // method: no gray-value calibration
+            CalibrationMethod::Passive,             // method: no gray-value calibration
 
-            1720,                                // pattern_width: display width (px)
+            1920,                                // pattern_width: display width (px)
 
-            880,                                // pattern_height: display height (px)
+            1080,                                // pattern_height: display height (px)
 
             10,                                  // n_periods_in_y: number of sinusoidal periods in y
 
@@ -127,7 +129,10 @@ int main()
                 { 1800.0, 180.0 },                 // left-down corner
                 { 210.0, 2200.0 },                 // right-up corner
                 { 1900.0, 1900.0 }                 // right-down corner
-    }
+            },
+            
+            calibPath                            // path to the stored GrayCalibration values
+            
         );
 
      meassure.do_grayvalue_calibration(
@@ -135,8 +140,8 @@ int main()
          1,
          1,
          true,
-         "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-27PassiveGrayLaptop",
-         CalibrationMethod::Passive
+         calibPath,
+         CalibrationMethod::Bias_Passive
      );
 
 

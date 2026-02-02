@@ -70,6 +70,13 @@ add_executable (${PROJECT_NAME}
     src/imageStore.cpp
  "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp")
 
+
+#Debug 
+message(STATUS "DEBUG: VCPKG_INSTALLED_DIR='${VCPKG_INSTALLED_DIR}'")
+message(STATUS "DEBUG: VCPKG_TARGET_TRIPLET='${VCPKG_TARGET_TRIPLET}'")
+message(STATUS "DEBUG: CMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'")
+
+
 # Find packages
 if (NOT TARGET ids_peak)
     find_package (ids_peak REQUIRED
@@ -78,6 +85,7 @@ if (NOT TARGET ids_peak)
     )
 endif ()
 find_package (Threads REQUIRED)
+find_package(Ceres CONFIG REQUIRED)
 # For vcpkg manifest mode (local install)
 set(OpenCV_ROOT "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/share/opencv4")
 find_package(OpenCV REQUIRED)
@@ -104,7 +112,8 @@ target_link_libraries (${PROJECT_NAME}
     ids_peak
     ${CMAKE_THREAD_LIBS_INIT}
     ${OpenCV_LIBS}
-    VimbaX::VmbCPP
+    VimbaX::VmbCPP 
+    Ceres::ceres
 )
 
 

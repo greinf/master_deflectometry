@@ -286,8 +286,6 @@ public:
 		 return *m_pattern;
 	 }
 
-
-
 	 // Creates syntehical images of the scene by doing a homography and smoothing acoording to the
 	 // circle of confusion. 
 	 // If no smoothing set smooth to false
@@ -335,7 +333,8 @@ public:
 		 {1800, 180},  // left down corner,
 		 {210, 2200},  // right up corner,
 		 {1900, 1900}, // right down corner
-		 }
+		 },
+		 const std::string& calibPath = ""
 		 );
 	 
 

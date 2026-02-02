@@ -38,7 +38,7 @@ enum class FrameRole {
     UndistortErrX,     // Picture that showscases the ammount of Distortion after the undistortion in the X compoment.
     UndistortErrY,     // Picture that showcases the ammound of Distortion after the undistortion in the Y compoment. 
     PassiveGrayCalib,  // Holds 3 Images:
-                       // [0] gamma, [1] I_max, [2] r_2 Error [3] Maybe RMS_error
+                       // [0] gamma, [1] I_max, [2] I_0, [3] r_2 Error [4] RMS_error
     AcitveGrayCalib,   // Holds 2 Images where the parameters for active calibratino are stored
     maxElements        // Place Holder for ammound of categories
 };
@@ -50,12 +50,12 @@ public:
 
     // Add image to store under a specific role
     void add(FrameRole role, const cv::Mat& img);
-    void add(FrameRole role, const std::vector<std::pair<double, double>>&&);
+    void add(FrameRole role, const std::array<std::pair<double, double>, 256>&);
     void add(FrameRole role, const std::vector<cv::Mat>& images);
 
     // Access images by category
     std::vector<cv::Mat> get(FrameRole role) const;
-    std::vector<std::pair<double, double>> getLut() const;
+    std::array<std::pair<double, double>, 256> getLut() const;
 
     // Only get last image of category
     cv::Mat getLast(FrameRole role) const;
@@ -93,13 +93,13 @@ public:
 
     void loadCalibrationMatrix(const std::string& filename);
 
+    void saveLut(const std::string& path);
+
+    void loadLut(const std::string& path);
 private:
     std::map<FrameRole, std::vector<cv::Mat>> storage_;
-    std::vector<std::pair<double, double>> LUT_Gray;
+    std::array<std::pair<double, double>, 256> LUT_Gray;
     mutable std::mutex mtx_;  
-
-    void saveLut(const std::string& path);
-    void loadLut(const std::string& path);
 
     inline static const std::array<std::string,
         static_cast<size_t>(FrameRole::maxElements)> FrameRole_string{ {

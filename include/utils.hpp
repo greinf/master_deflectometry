@@ -70,7 +70,8 @@ enum class CalibrationMethod {
 	None,
 	Lut,
 	Active,
-	Passive
+	Passive,
+	Bias_Passive
 };
 
 #endif

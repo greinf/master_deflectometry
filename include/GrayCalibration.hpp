@@ -19,7 +19,7 @@ namespace gr_calib {
 }
 class ImageStore;
 
-struct GammaLMResult;
+struct Gray_Calib_Result;
 
 class GrayCalibration {
 private:
@@ -33,7 +33,7 @@ private:
 	
 	//void prepareLUT();
 
-	GammaLMResult fitGamma_LM_andBuildLUT(
+	Gray_Calib_Result fitGamma_LM_andBuildLUT(
 		const std::array<double, 256>& measured,
 		double sat_cut_rel = 1,    // Sättigung raus
 		double eps = 1e-12,
@@ -41,6 +41,45 @@ private:
 		double tol_rel_sse = 1e-10,
 		double tol_step = 1e-10,
 		double damping = 5.0e-3);
+
+
+	// Fita function of type I_mess = I_max * (x/255)^lambda 
+	// for  the parameters lambda and I_max. This only works if there is no bias 
+	// Parameter eps is used for cutting values nere zero -> val < eps is discarded
+	// paramter sat_cut cuts values that are near the 
+	Gray_Calib_Result fitGamma(
+		const std::array<double, 256>& meassured,
+		const double eps = 1e-10,
+		const double sat_cut = 1
+	);
+
+	std::array<std::pair<double, double>, 256> createLut(
+		const std::vector<cv::Mat>& images,
+		const cv::Mat& mask
+	);
+
+	// In place sorting of the according array. 
+	bool prepareLUT(
+		std::array<std::pair<double, double>, 256>&
+	);
+
+	cv::Mat applyLut(
+		const cv::Mat&
+	);
+
+	double getLutVal(
+		const double val
+	);
+
+	cv::Mat applyPassive(
+		const cv::Mat& img
+	);
+
+	Gray_Calib_Result fitGammaBias_LM(
+		const std::array<double, 256>& meassured,
+		const double eps = 1e-10,
+		const double sat_cut = 1
+	);
 
 public:
 	explicit GrayCalibration(ImageStore& image_store);
@@ -59,7 +98,7 @@ public:
 
 	bool setupCalibrationMethod(
 		const gr_calib::LUTCalibration,
-		std::vector<std::pair<double, double>> grayLut);
+		const std::string& path);
 		
 	/*std::vector<cv::Mat> run_gray_calib(
 		const std::vector<cv::Mat>&);*/
@@ -68,6 +107,11 @@ public:
 		const CalibrationMethod method,
 		const std::vector<cv::Mat>& images,
 		const cv::Mat& mask
+	);
+
+	cv::Mat applyCalibration(
+		const CalibrationMethod method,
+		const cv::Mat& image
 	);
 
 };
@@ -109,43 +153,6 @@ if (m_LUT.has_value()) {
 				}
 			}
 		});
-}
-
-
-double Pattern::linear_gray(double s)
-{
-	if (!m_lut_ready || m_sortedLUT.empty()) {
-		std::cout << "WARNING: LUT not found. Create IMG without calib \n";
-		return s; // fallback: no LUT active
-	}
-
-	// transform 0..255 range into LUT-range
-	double target = s * m_lut_scale_factor + m_lut_offset;
-
-	// binary search on "second" values
-	auto it = std::lower_bound(
-		m_sortedLUT.begin(),
-		m_sortedLUT.end(),
-		target,
-		[](const auto& a, double val) {
-			return a.second < val;
-		}
-	);
-
-	if (it == m_sortedLUT.begin())
-		return it->first;
-
-	if (it == m_sortedLUT.end())
-		return std::prev(it)->first;
-
-	// choose closer of the two neighbors
-	double hi_dist = std::abs(it->second - target);
-	double lo_dist = std::abs(std::prev(it)->second - target);
-
-	if (lo_dist < hi_dist)
-		return std::prev(it)->first;
-	else
-		return it->first;
 }
 
 */
