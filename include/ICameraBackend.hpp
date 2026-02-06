@@ -22,7 +22,7 @@ public:
     virtual std::vector<defl::CameraConfig> getCameraConfig() = 0;
 
     // Blocking grab. Returns empty on timeout/error.
-    virtual cv::Mat grab(int timeout_ms) = 0;
+    virtual std::vector<cv::Mat> grab(int timeout_ms) = 0;
 };
 
 #endif

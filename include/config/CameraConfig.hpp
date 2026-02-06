@@ -73,19 +73,19 @@ namespace defl {
                 fs << "CameraConfig" << "{";
                 fs << "pixel_x" << pixel_x;
                 fs << "pixel_y" << pixel_y;
-                fs << "Exposure Time: " << exposure_time;
-                fs << "Frame Rate: " << frame_rate;
+                fs << "Exposure_Time" << exposure_time;
+                fs << "Frame_Rate" << frame_rate;
                 if (gainR || gainG || gainB) {
-                    fs << "Gain R: " << gainR;
-                    fs << "Gain B: " << gainB;
-                    fs << "Gain G: " << gainG;
+                    fs << "Gain_R" << gainR;
+                    fs << "Gain_B" << gainB;
+                    fs << "Gain_G" << gainG;
                 }
-                else fs << "Gain: " << gain << '\n';
-                fs << "Acquisition mode " << (acquisition_mode_active ? "is active\n" : "is not active \n");
-                fs << "Model Name: " << model_name;
-                fs << "Version: " << version;
-                fs << "Parent: " << parent_system;
-                fs << "Pixel Format: " << pixel_format;
+                else fs << "Gain" << gain;;
+                fs << "Acquisition_mode" << (acquisition_mode_active ? "is active\n" : "is not active \n");
+                fs << "Model_Name" << model_name;
+                fs << "Version" << version;
+                fs << "Parent" << parent_system;
+                fs << "Pixel_Format" << pixel_format;
                 
                 fs << "}";  // Ende des Blocks
 

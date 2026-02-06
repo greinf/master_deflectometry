@@ -1,90 +1,182 @@
 #ifndef RINGBUFFER_HPP
 #define RINGBUFFER_HPP
 
+
 #include <iterator>
+#include <opencv2/opencv.hpp>
+#include <new>
+#include <atomic>
 // Ring Buffer Class
 // Buffer size Hardcoded to 10 Frames
+
+struct RawData {
+	uchar* data_ptr{nullptr};
+	std::size_t bytes{ };  // for Full Frames 
+	int height{};
+	int width{};
+	std::mutex mtx{};
+	bool free{ true };
+
+	~RawData() {
+		delete[] data_ptr;
+	}
+	void clear() {
+		height = 0;
+		width = 0;
+		free = true;
+	}
+};
+
 class RingBuffer
 {
 public:
-	void getFrame(const VmbCPP::FramePtr& pFrame);
+	bool extractData(
+		const VmbCPP::FramePtr& pFrame,
+		const std::size_t index);
 
-	RingBuffer();
+	RingBuffer(
+		const std::size_t buffer_size, 
+		const std::size_t payload);
 
-	cv::Mat extract();
+	cv::Mat extractfromRing();
 
-	~RingBuffer() = default;
+	std::size_t m_size{ 0 };
+
+	std::atomic<std::size_t> m_counter{0};
+
+	~RingBuffer();
 
 	// Safety this class should not be copied.
 	RingBuffer(const RingBuffer&) = delete;
 	RingBuffer(RingBuffer&&) = delete;
 	RingBuffer& operator=(const RingBuffer&) = delete;
 	RingBuffer& operator=(RingBuffer&&) = delete;
+
+	void start() { m_started = true; }
+
 private:
-	static const std::size_t m_size{ 15 };
-	std::vector<cv::Mat> m_ring{};
-	// We say that the iterator always should point at one element after the last Frame. 
-	std::vector<cv::Mat>::iterator m_iter;
-	std::mutex mtx{};
 
-	cv::Mat convertToMat(const VmbCPP::FramePtr& pFrame);
+	bool m_started{ false };
+
+	bool out_working{ false };
+
+	std::vector<RawData> m_raw{};
+
+	std::atomic<int> m_last_success{ -1 };
 	
-	void clear();
+	void startUp(
+		const std::size_t buffer_size,
+		const std::size_t payload_per_buf
+	);
 
-	void startUp();
-
-	void allocate(const cv::Mat frame);
+	RawData m_out{};
 };
 
-inline RingBuffer::RingBuffer() {
-	startUp();
+inline RingBuffer::RingBuffer(
+	const std::size_t buffer_size,
+	const std::size_t payload_per_buf)
+	:m_size{ buffer_size }
+{
+	startUp(buffer_size, payload_per_buf);
+	std::cout << "Ring Buffer Memory allocated \n";
 }
 
-inline void RingBuffer::startUp() {
-	// If m_ring also has capacity > 0
-	if (m_ring.begin() != m_ring.end()) {
-		std::cout << "WARN: Ring Buffer already holds elements which are deleted \n";
+inline RingBuffer::~RingBuffer() {}
+
+inline void RingBuffer::startUp(
+	const std::size_t buffer_size,
+	const std::size_t payload_per_buf)
+{
+	assert(m_raw.empty() && "Container must be empty \n");
+	// Create the out RawData one time
+	m_out.data_ptr = new uchar[payload_per_buf];
+
+	m_out.bytes = payload_per_buf;
+
+	m_raw = std::vector<RawData>(buffer_size);
+
+	for (auto& raw : m_raw) {
+		raw.data_ptr = new uchar[payload_per_buf];
+		raw.bytes = payload_per_buf;
 	}
-	m_ring = std::vector<cv::Mat>(m_size);
-	m_iter = m_ring.end();
 }
 
-inline void RingBuffer::allocate(const cv::Mat frame) {
-	std::lock_guard<std::mutex> locked(mtx);
-	if (m_iter == m_ring.end()) {
-		m_iter = m_ring.begin();
+inline bool RingBuffer::extractData(
+	const VmbCPP::FramePtr& pFrame,
+	const std::size_t index)
+{
+	if (index >= m_raw.size()) {
+		std::cout << "Index RingBuffer out of bounds \n";
+		std::cout << "index " << index << '\n';
+		return false;
 	}
-	(*m_iter) = frame;
-	std::advance(m_iter, 1);
-	return;
+
+	//std::cout << "Extract Data " << '\n' <<
+	//	"Index " << index << '\n';
+
+	if (m_raw.empty())
+		throw std::runtime_error("RingBuffer empty");
+
+	VmbUint32_t bufferSize = 0;
+	if (pFrame->GetBufferSize(bufferSize) != VmbErrorSuccess || bufferSize == 0)
+		throw std::runtime_error("GetBufferSize failed");
+
+	std::lock_guard lock(m_raw[index].mtx);
+	// slot capacity should match bufferSize (PayloadSize) OR be >= imageSize
+	if (static_cast<std::size_t>(bufferSize) != m_raw[index].bytes)
+		throw std::runtime_error("Slot size mismatch");
+
+	VmbUint32_t width = 0, height = 0;
+	if (pFrame ->GetWidth(width) != VmbErrorSuccess || width == 0) return false;
+	if (pFrame -> GetHeight(height) != VmbErrorSuccess || height == 0) return false;
+	
+	m_raw[index].height = static_cast<int>(height);
+	m_raw[index].width = static_cast<int>(width);
+	
+	uchar* src_data_ptr;
+	if (pFrame->GetImage(src_data_ptr) != VmbErrorSuccess || src_data_ptr == nullptr)
+		return false;
+
+	// copy only what actually arrived
+	std::memcpy(m_raw[index].data_ptr, src_data_ptr, bufferSize);
+
+	m_last_success.store(static_cast<int>(index),
+		std::memory_order_release);
+	
+	//std::cout << "Successfull frame into ringbuffer with index " << m_last_success.load() << '\n';
+
+	return true;
 }
 
-inline void RingBuffer::clear() {
-	m_ring.clear();
-}
+inline cv::Mat RingBuffer::extractfromRing()
+{
+	int i = m_last_success.load(std::memory_order_acquire);
+	if (i < 0) return{};
 
-inline void RingBuffer::getFrame(const VmbCPP::FramePtr& pFrame) {
-	assert(m_ring.size() > 0 && "The ringBuffer must be created");
-	cv::Mat image = convertToMat(pFrame);
-	allocate(image);
-	return;
-}
+	const std::size_t index{ static_cast<std::size_t>(i) };
+	
+	//std::cout << "Convert and Out " << '\n' << "Instance " <<
+	//	"Index " << index << '\n';
 
-inline cv::Mat RingBuffer::extract() {
-	std::lock_guard<std::mutex> lock(mtx);
-	return *std::prev(m_iter);
-}
 
-inline cv::Mat RingBuffer::convertToMat(const VmbCPP::FramePtr& pFrame) {
-	VmbUint32_t width, height;
-	pFrame->GetWidth(width);
-	pFrame->GetHeight(height);
+	cv::Mat img;
+	{
+		std::scoped_lock lock(m_raw[index].mtx, m_out.mtx);
 
-	VmbUchar_t* pData = nullptr;
-	pFrame->GetImage(pData); // Get the raw pointer to the pixel data
+		m_out.free = false;
+		std::memcpy(m_out.data_ptr, m_raw[index].data_ptr, m_raw[index].bytes);
+		m_out.bytes = m_raw[index].bytes;
+		m_out.height = m_raw[index].height;
+		m_out.width = m_raw[index].width;
 
-	// Assuming the camera is set to Mono8
-	return cv::Mat(height, width, CV_8UC1, pData).clone();
+		img = cv::Mat(m_out.height, m_out.width, CV_8UC1, m_out.data_ptr).clone();
+
+		m_out.free = true;
+	}
+
+	//std::cout << "Succesfull index extraction at " << i << '\n';
+
+	return img;
 }
 
 

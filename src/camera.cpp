@@ -213,7 +213,7 @@ Camera::~Camera() {
     peak::Library::Close();
 }
 
-cv::Mat Camera::grab(int timeout) {
+std::vector<cv::Mat> Camera::grab(int timeout) {
     CV_Assert(isRunning());
     CV_Assert(timeout > 0);
     auto ds = m_dataStreams[0];
@@ -229,7 +229,7 @@ cv::Mat Camera::grab(int timeout) {
 
         cv::cvtColor(gray, gray, cv::COLOR_BayerRG2GRAY);
         ds->QueueBuffer(buffer);
-        return gray;
+        return std::vector<cv::Mat>{gray};
         
     }
 }

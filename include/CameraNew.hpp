@@ -23,7 +23,7 @@ public:
     void close(std::size_t i = 0) { m_backend->close(i); }
     
     // If camera is in Acquisition mode grabs frames from the buffer.
-    cv::Mat grab(int timeout_ms = 5000);
+    std::vector<cv::Mat> grab(int timeout_ms = 5000);
 
     // Checks for active acquisition 
     bool isRunning(std::size_t i = 0) { return m_backend->isRunning(i); };

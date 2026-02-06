@@ -67,7 +67,7 @@ public:
         return config_vec;
     }
 
-    cv::Mat grab(int timeout);
+    std::vector<cv::Mat> grab(int timeout);
 
 private:
     // Does look in the according logging file if the camera "i" and return the "acquisition_mode_active" member

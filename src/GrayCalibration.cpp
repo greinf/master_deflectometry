@@ -152,7 +152,7 @@ cv::Mat GrayCalibration::applyCalibration(
 
     switch (method) {
     case(CalibrationMethod::None):
-        std::cout << "No Calibration Used " << std::endl;
+        //std::cout << "No Calibration Used " << std::endl;
         return image;
     case(CalibrationMethod::Lut):
         return applyLut(image);

@@ -59,7 +59,7 @@ int main()
     //Path to IDS calibration: Blende geschlossen. 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09MAKO.xml" };
 
-    std::string calibPath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-31Synthetic" };
+    std::string calibPath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-02-06TestRun" };
 
     Deflectometry meassure{};
 
@@ -71,78 +71,86 @@ int main()
 
     std::optional<std::vector<cv::Mat>> cameramatrix_distCoeff;
     
-    cameramatrix_distCoeff.emplace(std::vector<cv::Mat>{camMatrix[0], dist_Coeffs[0]});
+    //cameramatrix_distCoeff.emplace(std::vector<cv::Mat>{camMatrix[0], dist_Coeffs[0]});
 
 
-    std::vector<cv::Mat> real_pattern =
-        meassure.createSyntheticalImages(
-            Warping::raycasting,                 // Warping: homography-based warping
+    //std::vector<cv::Mat> real_pattern =
+    //    meassure.createSyntheticalImages(
+    //        Warping::raycasting,                 // Warping: homography-based warping
 
-            cameramatrix_distCoeff,              // camera_matrix (std::optional<std::vector<cv::Mat>>)
+    //        cameramatrix_distCoeff,              // camera_matrix (std::optional<std::vector<cv::Mat>>)
 
-            2.2,                                 // gamma: display / camera gamma
+    //        2.2,                                 // gamma: display / camera gamma
 
-            true,                                // display_quantize: quantize display output
+    //        true,                                // display_quantize: quantize display output
 
-            true,                                // camera_quantization: simulate camera ADC quantization
+    //        true,                                // camera_quantization: simulate camera ADC quantization
 
-            true,                                // luminance: apply luminance weighting
+    //        true,                                // luminance: apply luminance weighting
 
-            true,                                // smoothing: enable optical smoothing
+    //        true,                                // smoothing: enable optical smoothing
 
-            true,                                // warp: apply geometric warping
+    //        true,                                // warp: apply geometric warping
 
-            200.0,                               // image_height: mirror circumference [mm]
+    //        200.0,                               // image_height: mirror circumference [mm]
 
-            2464,                                // dest_width: Mako G-507-B sensor width (px)
+    //        2464,                                // dest_width: Mako G-507-B sensor width (px)
 
-            2056,                                // dest_height: Mako G-507-B sensor height (px)
+    //        2056,                                // dest_height: Mako G-507-B sensor height (px)
 
-            0.2745,                              // display_pixel_pitch: display pixel pitch [mm]
+    //        0.2745,                              // display_pixel_pitch: display pixel pitch [mm]
 
-            -650.0,                                 // display_shift_x: lateral display shift x [mm]
+    //        -650.0,                                 // display_shift_x: lateral display shift x [mm]
 
-            -400.0,                                 // display_shift_y: lateral display shift y [mm]
+    //        -400.0,                                 // display_shift_y: lateral display shift y [mm]
 
-            0.0,                                 // display_tilt_x: display tilt around x-axis [rad]
+    //        0.0,                                 // display_tilt_x: display tilt around x-axis [rad]
 
-            0.0,                                 // display_tilt_y: display tilt around y-axis [rad]
+    //        0.0,                                 // display_tilt_y: display tilt around y-axis [rad]
 
-            Shift_mode::GrayValues,        // mode: phase-shift pattern mode
+    //        Shift_mode::GrayValues,        // mode: phase-shift pattern mode
 
-            CalibrationMethod::Passive,             // method: no gray-value calibration
+    //        CalibrationMethod::Passive,             // method: no gray-value calibration
 
-            1920,                                // pattern_width: display width (px)
+    //        1920,                                // pattern_width: display width (px)
 
-            1080,                                // pattern_height: display height (px)
+    //        1080,                                // pattern_height: display height (px)
 
-            10,                                  // n_periods_in_y: number of sinusoidal periods in y
+    //        10,                                  // n_periods_in_y: number of sinusoidal periods in y
 
-            2.4,                                 // aperture_number: f-number (N)
+    //        2.4,                                 // aperture_number: f-number (N)
 
-            3000,                                // distance: camera–mirror distance [mm] (2*f, f=1600)
+    //        3000,                                // distance: camera–mirror distance [mm] (2*f, f=1600)
 
-            6.6,                                 // object_height: sensor height [mm] (2/3" → 6.6 mm)
-            
-            RoiBorders<double>{                  // destination ROI in destination image
-                {200.0, 200.0},                  // left-up corner 
-                { 1800.0, 180.0 },                 // left-down corner
-                { 210.0, 2200.0 },                 // right-up corner
-                { 1900.0, 1900.0 }                 // right-down corner
-            },
-            
-            calibPath                            // path to the stored GrayCalibration values
-            
-        );
+    //        6.6,                                 // object_height: sensor height [mm] (2/3" → 6.6 mm)
+    //        
+    //        RoiBorders<double>{                  // destination ROI in destination image
+    //            {200.0, 200.0},                  // left-up corner 
+    //            { 1800.0, 180.0 },                 // left-down corner
+    //            { 210.0, 2200.0 },                 // right-up corner
+    //            { 1900.0, 1900.0 }                 // right-down corner
+    //        },
+    //        
+    //        calibPath                            // path to the stored GrayCalibration values
+    //        
+    //    );
 
-     meassure.do_grayvalue_calibration(
+     /*meassure.do_grayvalue_calibration(
          real_pattern,
          1,
          1,
          true,
          calibPath,
          CalibrationMethod::Bias_Passive
-     );
+     );*/
+
+    meassure.do_grayvalue_calibration(
+             1,
+             15,
+             true,
+             calibPath,
+             CalibrationMethod::None    
+         );
 
 
     // meassure.calc_response_curve_sections(1, 1, true, path_gray_sections, 8, 6);

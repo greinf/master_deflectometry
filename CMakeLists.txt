@@ -9,13 +9,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 message (STATUS "[${PROJECT_NAME}] Processing ${CMAKE_CURRENT_LIST_FILE}")
 
 # ---------------- Vimba X ----------------
+# Cache variable (so VS / presets can set it)
+set(VIMBAX_ROOT "${VIMBAX_ROOT}" CACHE PATH "Root of Vimba X installation")
+
 # Allow setting via environment variable VIMBAX_ROOT
 if(NOT DEFINED VIMBAX_ROOT AND DEFINED ENV{VIMBAX_ROOT})
     set(VIMBAX_ROOT "$ENV{VIMBAX_ROOT}")
 endif()
-
-# Cache variable (so VS / presets can set it)
-set(VIMBAX_ROOT "${VIMBAX_ROOT}" CACHE PATH "Root of Vimba X installation")
 
 message(STATUS "DEBUG: VIMBAX_ROOT='${VIMBAX_ROOT}'")
 message(STATUS "DEBUG: CMAKE_CACHEFILE_DIR='${CMAKE_CACHEFILE_DIR}'")
@@ -87,7 +87,7 @@ endif ()
 find_package (Threads REQUIRED)
 find_package(Ceres CONFIG REQUIRED)
 # For vcpkg manifest mode (local install)
-set(OpenCV_ROOT "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/share/opencv4")
+
 find_package(OpenCV REQUIRED)
 
 # Include Goldstein headers
@@ -132,6 +132,14 @@ target_include_directories(${PROJECT_NAME}
 ids_peak_deploy(${PROJECT_NAME})
 
 # ---------------- Vimba X runtime deploy (ADD) ----------------
+if (WIN32 AND (NOT VIMBAX_ROOT OR VIMBAX_ROOT STREQUAL ""))
+    if (EXISTS "C:/Program Files/Allied Vision/Vimba X/api/include")
+        set(VIMBAX_ROOT "C:/Program Files/Allied Vision/Vimba X" CACHE PATH "" FORCE)
+    elseif (EXISTS "C:/Program Files/Allied Vision/VimbaX/api/include")
+        set(VIMBAX_ROOT "C:/Program Files/Allied Vision/VimbaX" CACHE PATH "" FORCE)
+    endif()
+endif()
+
 # Copy VimbaX DLLs next to the executable so the app can start.
 if(EXISTS "${VIMBAX_VMBCPP_DLL}")
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

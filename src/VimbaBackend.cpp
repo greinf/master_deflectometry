@@ -29,20 +29,20 @@ namespace {
     }
 }
 
-VimbaBackend::VimbaBackend(std::size_t i):
-    m_running{ false },
-    m_ringBufferPtr{ nullptr } {
+VimbaBackend::VimbaBackend()
+{
     ensureVimbaStarted();
-    m_cam_index = i;
 }
 
-bool VimbaBackend::openCamera(std::size_t camera_index) {
+bool VimbaBackend::openCamera(std::size_t camera_n) {
+
+    m_availableIds.clear();
 
     VmbCPP::VmbSystem& system = VmbCPP::VmbSystem::GetInstance();
     
     std::vector<VmbCPP::CameraPtr> val_cams;
-    
     std::vector<VmbCPP::CameraPtr> cameras;
+
     if (VmbErrorSuccess == system.GetCameras(cameras))
     {
         for (VmbCPP::CameraPtrVector::iterator iter = cameras.begin();
@@ -57,71 +57,135 @@ bool VimbaBackend::openCamera(std::size_t camera_index) {
                 // If the camera is a "Simulator" push into the m_cameras
                 else {
                     val_cams.push_back(*iter);
-                    std::string deviceID;
-                    if (VmbErrorSuccess != (*iter)->GetExtendedID(deviceID)) {
-                        std::cout << "Could not Acquire extended deviceID \n";
-                        return false; // We need this ExtendedID here
-                    }
-                    m_availableIds.push_back(deviceID);
                 }  
             }
         }
     }
-    
+    assert((val_cams.size() >= camera_n) && "Index out of bounds for available cameras \n");
 
-    assert((val_cams.size() > camera_index) && "Index out of bounds for available cameras \n");
-    assert((m_availableIds.size() > camera_index) && "Index out of bounds for available ID´s \n");
+    // --- More Cameras than expected ---
+    if (val_cams.size() > camera_n) {
+        std::cout << "More cameras found than expected \n";
+        int cam_count{1};
+        for (const auto& valid : val_cams) {
+            std::string names, extendedID;
+            if (valid->GetName(names) != VmbErrorSuccess) return false;
+            if (valid->GetExtendedID(extendedID) != VmbErrorSuccess) return false;
+            std::cout << cam_count++ << ") Camera name: " << names <<
+                " ExtendedID: " << extendedID << std::endl;
+        }
+        std::cout << "Select " << camera_n <<
+            " camera numbers, from 1 to " << val_cams.size() << '\n';
 
-    VmbCPP::CameraPtr cam = val_cams[camera_index];
+        int selected_n{};
+        while (1) {
+            int user{};
+            std::cin >> user;
+            if (clearFailedExtraction()) {
+                std::cout << "Input failed \n";
+                continue;
+            }
+            if (user < 1 || user > val_cams.size()) {
+                std::cout << "Invalid Input \n";
+                continue;
+            }
+            auto cameraPtr = val_cams.at(--user);
 
-    // This part Checks before Connecting if we can Access all the function of the camera that we need. 
-    VmbAccessModeType access_mode{};
-    VmbErrorType errP2 = cam->GetPermittedAccess(access_mode);
-    std::cout << "GetPermittedAccess(after open) err=" << errP2
-        << " perm=" << (int)access_mode << "\n";
+            std::string deviceID;
 
-    switch (access_mode) {
-    case(VmbAccessModeNone):
-        std::cout << "Camera opened in a not readable or writeable state \n ";
-        return false;
-    case(VmbAccessModeRead):
-        std::cout << "Camera only readalbe. Features must be set \n";
-        return false;
-    case(VmbAccessModeFull):
-        std::cout << "Full camera Access. Features can be set \n";
-        break;
-    case(VmbAccessModeExclusive):
-        std::cout << "Exclusive Access to the camera. Should be ok \n";
-        break;
-    case(VmbAccessModeExclusive + VmbAccessModeRead + VmbAccessModeFull):
-        std::cout << "Exclusive Acces to the camera with read and write \n";
-        break;
-    case(VmbAccessModeUnknown):
-        std::cout << "Unknown Acces Mode. We do not wnat unknown \n";
-        return false;
-    default:
-        std::cout << "Unknown Access Mode. \n";
-        return false;
-    }
+            if (VmbErrorSuccess != cameraPtr->GetExtendedID(deviceID)) {
+                std::cout << "Could not Acquire extended deviceID \n";
+                return false; 
+            }
 
-    if (cam->Open(VmbAccessModeExclusive) != VmbErrorSuccess) {
-        std::cout << "Opening Camera Failed \n";
-        return false;
-    }
-    else {
-        cam->GetExtendedID(m_active_cam);
-    }
-
-    // one harmless read, no write
-    std::string name;
-    if (cam->GetName(name) != VmbErrorSuccess) {
-        std::cout << "Failed getting the devie name \n";
-    }
-    else {
-        std::cout << "Opened Device " << name << '\n';
+            if (std::any_of(m_availableIds.begin(), m_availableIds.end(),
+                [&](const std::string& id)
+                {
+                    return id == deviceID;
+                })) {
+                std::cout << "This device was already selected. Try again \n";
+                continue;
+            }
+            m_availableIds.push_back(deviceID);
+            ++selected_n;
+            if (selected_n >= camera_n) break;
+        }
     }
     
-    // If we reach this point at least a camera should be opened.
+    if (val_cams.size() == camera_n) {
+        // --- As many Cameras as wanted --- 
+        for (const auto& cam : val_cams)
+        {
+            std::string deviceID;
+            if (VmbErrorSuccess != cam->GetExtendedID(deviceID)) {
+                std::cout << "Could not Acquire extended deviceID \n";
+                return false;
+            }
+            if (std::any_of(m_availableIds.begin(), m_availableIds.end(),
+                [&](const std::string& id)
+                {
+                    return id == deviceID;
+                })) {
+                std::cout << "This device was already selected. Try again \n";
+                continue;
+            }
+            m_availableIds.push_back(deviceID);
+        }
+    }
+    // Here really open the valid Cameras 
+    for (const auto& cam_ID : m_availableIds) {
+        // This part Checks before Connecting if we can Access all the function of the camera that we need. 
+
+        VmbAccessModeType access_mode{};
+
+        auto cam = findCameraByID(cam_ID);
+
+        if (cam == nullptr) return false;
+
+        if (cam->GetPermittedAccess(access_mode) != VmbErrorSuccess)
+        {
+            std::cout << "Could not readout the AccessMode of the camera. \n";
+            return false;
+        }
+
+        switch (access_mode) {
+        case(VmbAccessModeNone):
+            std::cout << "Camera opened in a not readable or writeable state \n ";
+            return false;
+        case(VmbAccessModeRead):
+            std::cout << "Camera only readalbe. Features must be set \n";
+            return false;
+        case(VmbAccessModeFull):
+            std::cout << "Full camera Access. Features can be set \n";
+            break;
+        case(VmbAccessModeExclusive):
+            std::cout << "Exclusive Access to the camera. Should be ok \n";
+            break;
+        case(VmbAccessModeExclusive + VmbAccessModeRead + VmbAccessModeFull):
+            std::cout << "Exclusive Acces to the camera with read and write \n";
+            break;
+        case(VmbAccessModeUnknown):
+            std::cout << "Unknown Acces Mode. We do not wnat unknown \n";
+            return false;
+        default:
+            std::cout << "Unknown Access Mode. \n";
+            return false;
+        }
+
+        if (cam->Open(VmbAccessModeExclusive) != VmbErrorSuccess) {
+            std::cout << "Opening Camera Failed \n";
+            return false;
+        }
+
+        std::string name;
+        if (cam->GetName(name) != VmbErrorSuccess) {
+            std::cout << "Failed getting the devie name \n";
+        }
+        else {
+            std::cout << "Opened Device " << name << '\n';
+        }
+        
+    }
     return true;
 }
 
@@ -139,10 +203,8 @@ void VimbaBackend::closeCamera(std::size_t camera_index) {
 
 VimbaBackend::~VimbaBackend() {
     close();
-    deleteBuffer();
     ensureVimbaClosed();
 }
-
 
 bool VimbaBackend::getFeature(const VmbCPP::CameraPtr& cam,
     const std::vector<std::string>& names,
@@ -181,7 +243,21 @@ bool VimbaBackend::setEnum(const VmbCPP::CameraPtr& cam,
     return f->SetValue(value) == VmbErrorSuccess;
 }
 
+VmbCPP::CameraPtr VimbaBackend::findCameraByID(const std::string& extendedID) {
+    assert(!extendedID.empty());
+    std::size_t index_availableIDs{};
+    for (std::size_t i = 0; i < m_availableIds.size(); ++i) {
+        if (extendedID == m_availableIds[i]) {
+            return findCameraByID(i);
+        }
+    }
+    std::cout << "Extended ID was not found \n";
+    return nullptr;
+}
+
 VmbCPP::CameraPtr VimbaBackend::findCameraByID(const std::size_t i) {
+    assert(i < m_availableIds.size());
+
     std::string wantedID = m_availableIds.at(i);
     VmbCPP::CameraPtrVector cameras;
     auto& system = VmbCPP::VmbSystem::GetInstance();
@@ -197,9 +273,10 @@ VmbCPP::CameraPtr VimbaBackend::findCameraByID(const std::size_t i) {
             }
         }
     }
+
+    std::cout << "According Camera was not found \n";
     return nullptr;
 }
-
 
 bool VimbaBackend::setFloatClamped(const VmbCPP::CameraPtr& cam,
     const std::vector<std::string>& names,
@@ -338,14 +415,10 @@ void VimbaBackend::findFeatures(
     return;
 }
 
-
-
 bool VimbaBackend::forceFreerunTimedExposure(const VmbCPP::CameraPtr& cam)
 {
     // Stop acquisition just in case 
     VmbCPP::FeaturePtr f;
-
-   
 
     // For all entries of Trigger Selector set TriggerMode = OFF
     if (getFeature(cam, std::vector<std::string>{"TriggerSelector"}, f) == VmbErrorSuccess && f) {
@@ -366,7 +439,6 @@ bool VimbaBackend::forceFreerunTimedExposure(const VmbCPP::CameraPtr& cam)
     }
     
     // Trigger Source may be set before the all TriggerEntries are set to Off. 
-
     if (!setEnum(cam, { "TriggerSource" }, "Freerun"))
         std::cout << "WARN: TriggerSource Freerun failed \n";
 
@@ -466,44 +538,83 @@ bool VimbaBackend::setGamma(
 //    VmbFeatureDataNone = 8,        //!< Feature with no data
 //};
 
-bool VimbaBackend::adjustSettings(const std::size_t camera_index) {
+bool VimbaBackend::adjustSettings() 
+{
+    assert(m_availableIds.begin() != m_availableIds.end());
+    for (auto& extendedID : m_availableIds) {
+        auto cam = findCameraByID(extendedID);
+        if (cam == nullptr) return false;
 
-    auto cam = findCameraByID(camera_index);
-    if (!cam) return false;
+        VmbCPP::FeaturePtr f;
 
-    VmbCPP::FeaturePtr f;
-    
-    std::vector<std::string> key{"Frame", "Exposure"};
-    // --- find Features can be used to search in the feature tree for string snippets ---
-    //findFeatures(cam, key);
-    
-    bool forceFree = forceFreerunTimedExposure(cam);
-    bool forceGain = setGain(cam, 0.0);
-    bool exposure = setExposureAbsRobust(cam, 7000.0);
-    bool gamma = setGamma(cam, 1.0);
-    bool roi = setRoi(cam);
-    bool format = setFormat(cam);
-    checkPackagesize(cam);
+        std::vector<std::string> key{ "Frame", "Exposure" };
+        // --- find Features can be used to search in the feature tree for string snippets ---
+        //findFeatures(cam, key);
 
-    // If you want: log which ones failed (feature not present vs not writable)
-    return forceFree && forceGain && exposure && roi && format;
+        double exposure_time{ 10000.0 };
+        double frame_rate{ 5.0 };
+
+        bool forceFree = forceFreerunTimedExposure(cam);
+        bool frameRate = setFrameRate(cam, frame_rate);
+        bool forceGain = setGain(cam, 0.0);
+        bool exposure = setExposureAbsRobust(cam, exposure_time);
+        bool gamma = setGamma(cam, 1.0);
+        bool roi = setRoi(cam);
+        bool format = setFormat(cam);
+        // Package size auf 2500, 9000
+        bool package = checkPackagesize(cam, 9000);
+        if (!(forceFree && forceGain && exposure && roi && format && package && frameRate))
+            return false;
+    }
+    return true;
 }
 
-void VimbaBackend::checkPackagesize(
-    const VmbCPP::CameraPtr& cam) {
-    if (!cam) return;
-    VmbCPP::FeaturePtr pPacketSizeFeature;
-    VmbError_t err = cam->GetFeatureByName("GevSCPSPacketSize", pPacketSizeFeature);
+bool VimbaBackend::setFrameRate(
+    const VmbCPP::CameraPtr& cam,
+    const double rate)
+{
+    assert(rate > 0);
 
-    if (VmbErrorSuccess != err) {
-        std::cout << "Fehler: Feature GevSCPSPacketSize nicht gefunden! Code: " << err << std::endl;
-        return;
+    VmbCPP::FeaturePtr ft;
+    if (cam->GetFeatureByName("AcquisitionFrameRateAbs", ft) != VmbErrorSuccess) {
+        std::cout << "Could not get EexposureTime Feature \n";
+        return false;
+    }
+    if (ft->SetValue(std::ceil(rate)) != VmbErrorSuccess) {
+        std::cout << "Could not set the AcquisitionFrameRateAbs \n";
+        return false;
+    }
+    double real{};
+    if (ft->GetValue(real) != VmbErrorSuccess) {
+        std::cout << "Could not get AcquisitionFrameRateAbs Value \n";
+        return false;
+    }
+
+    std::cout << "The AcquisitionFrameRateAbs is set to " << real << " ." << std::endl;
+    return true;
+}
+
+
+bool VimbaBackend::checkPackagesize(
+    const VmbCPP::CameraPtr& cam,
+    const VmbInt64_t package_size)
+{
+    if (!cam) return false;
+    VmbCPP::FeaturePtr pPacketSizeFeature;
+    if (cam->GetFeatureByName("GevSCPSPacketSize", pPacketSizeFeature) != VmbErrorSuccess) {
+        std::cout << "Could not get feature for Package size \n";
+        return false;
+    }
+
+    if (pPacketSizeFeature->SetValue(package_size) != VmbErrorSuccess) {
+        std::cout << "Could not set the package size to " << package_size << std::endl;
+        return false;
     }
 
     VmbInt64_t val;
     pPacketSizeFeature->GetValue(val);
     std::cout << "Aktuelle Packet Size: " << val << std::endl;
-
+    return true;
 }
 
 bool VimbaBackend::setFormat(
@@ -534,73 +645,112 @@ bool VimbaBackend::setRoi(
 
 
 bool VimbaBackend::allocateBuffer(
-    std::size_t i,
-    int n_buf) {
-    auto cam = findCameraByID(i);
-    VmbCPP::FeaturePtr ft;
-    VmbInt64_t nPLS;
+    int n_buf) 
+{
+    assert(n_buf > 1);
 
-    if (cam->GetFeatureByName("PayloadSize", ft) != VmbErrorSuccess && ft) {
-        std::cout << "Could not get Feature PayloadSize \n";
-        return false;
-    }
-    if (ft->GetValue(nPLS) != VmbErrorSuccess) {
-        std::cout << "Could not get the Payloadsize \n";
-        return false;
+    m_stopping.clear();
+    m_running.clear();
+    m_frame_ptr.clear();
+
+
+    for (std::size_t i = 0; i < m_availableIds.size(); ++i) {
+
+        auto cam = findCameraByID(m_availableIds[i]);
+        if (cam == nullptr) return false;
+
+        VmbCPP::FeaturePtr ft;
+        VmbInt64_t nPLS;
+
+        if (cam->GetFeatureByName("PayloadSize", ft) != VmbErrorSuccess || !ft) {
+            std::cout << "Could not get Feature PayloadSize \n";
+            return false;
+        }
+        
+        if (ft->GetValue(nPLS) != VmbErrorSuccess) {
+            std::cout << "Could not get the Payloadsize \n";
+            return false;
+        }
+        // Create RingBuffer for each Camera 
+        m_ringBufferPtr.push_back(std::make_shared<RingBuffer>(
+            static_cast<std::size_t>(n_buf), 
+            static_cast<std::size_t>(nPLS))
+        );
+
+        assert(m_ringBufferPtr.at(i) != nullptr);
+
+        m_frame_ptr.push_back(std::vector<VmbCPP::FramePtr>(n_buf));
+
+        for (auto& frames : m_frame_ptr.at(i)) {
+            frames.reset(new VmbCPP::Frame(nPLS));
+        }
+
+        m_stopping.emplace_back(false);
+
+        m_running.push_back(false);
+
+        std::cout << "New Ring Buffer and FramePtr for camera " << m_availableIds[i] << " were created \n";
     }
     
-    m_frame_ptr = std::vector<VmbCPP::FramePtr>(n_buf);
-
-    if (m_ringBufferPtr == nullptr) {
-        m_ringBufferPtr = new RingBuffer();
-        std::cout << "Ring Buffer Object is allocated on the Heap \n";
-    }
-
-    for (std::vector<VmbCPP::FramePtr>::iterator iter = m_frame_ptr.begin();
-        iter != m_frame_ptr.end(); ++iter) {
-        (*iter).reset(new VmbCPP::Frame(nPLS));
-    }
+    assert(m_ringBufferPtr.size() == m_frame_ptr.size());
+    assert(m_frame_ptr.size() == m_availableIds.size());
 
     return true;
 }
 
-bool VimbaBackend::runAcquisition(const VmbCPP::CameraPtr& cam) {
-    std::unique_lock<std::mutex> lk(m_mut);
+bool VimbaBackend::runAcquisition() 
+{
+    //std::unique_lock<std::mutex> lk(m_mut);
 
-    if (m_ringBufferPtr == nullptr) {
-        m_ringBufferPtr = new RingBuffer();
-    }
+    assert(
+        m_ringBufferPtr.size() == m_frame_ptr.size() &&
+        m_frame_ptr.size() == m_availableIds.size() &&
+        m_availableIds.size() == m_stopping.size() &&
+        m_stopping.size() == m_running.size()
+    );
 
-    for (const auto& frames : m_frame_ptr) {
-        //auto observer = std::make_shared<FrameObserver>(cam);
-        if (frames->RegisterObserver(VmbCPP::IFrameObserverPtr(
-                new FrameObserver(cam, m_ringBufferPtr, &m_stopping, &m_callbacksInFlight))) != VmbErrorSuccess) {
-            std::cout << "Register Frames to the FramesObserver Failed \n";
+    for(std::size_t i = 0; i < m_availableIds.size(); ++i)
+    {
+        auto cam = findCameraByID(m_availableIds[i]);
+
+        if (cam == nullptr) throw std::runtime_error("Camera index was not found ");
+
+        std::cout << "start Cam " << i << '\n';
+
+        assert(m_ringBufferPtr.at(i) != nullptr);
+        assert(&m_stopping.at(i) != nullptr);
+
+        auto observer = VmbCPP::IFrameObserverPtr(
+            new FrameObserver(cam, m_ringBufferPtr.at(i), &m_stopping.at(i))
+        );
+
+        for (auto& frame : m_frame_ptr.at(i)) {
+            if (frame->RegisterObserver(observer) != VmbErrorSuccess)
+                return false;
+
+            if (cam->AnnounceFrame(frame) != VmbErrorSuccess)
+                return false;
+        }
+        
+        if (cam->StartCapture() != VmbErrorSuccess) {
+            std::cout << "Camera StartUp failed \n";
             return false;
         }
-        //frames->RegisterObserver(VmbCPP::IFrameObserverPtr(std::make_shared<FrameObserver>(cam)));
-        if (cam->AnnounceFrame(frames) != VmbErrorSuccess) {
-            std::cout << "Annoucing Frames to the camera Failed \n";
-            return false;
-        }
-    }
 
-    if (cam->StartCapture() != VmbErrorSuccess) {
-        std::cout << "Camera StartUp failed \n";
-        return false;
-    }
-
-    for (const auto& frame : m_frame_ptr) {
-        if (cam->QueueFrame(frame) != VmbErrorSuccess) {
-            std::cout << "Queue Frames failed \n";
-            return false;
+        for (const auto& frame : m_frame_ptr.at(i)) {
+            if (cam->QueueFrame(frame) != VmbErrorSuccess) {
+                std::cout << "Queue Frames failed \n";
+                return false;
+            }
         }
+
+        VmbCPP::FeaturePtr pFeature;
+        if (cam->GetFeatureByName("AcquisitionStart", pFeature) != VmbErrorSuccess || !pFeature) return false;
+        pFeature->RunCommand();
+        m_running[i] = true;
+        std::cout << "Acquisition started for camera " << m_availableIds[i] << std::endl;
     }
-    
-    VmbCPP::FeaturePtr pFeature;
-    if (cam->GetFeatureByName("AcquisitionStart", pFeature) != VmbErrorSuccess && pFeature) return false;
-    pFeature->RunCommand();
-    m_running = true;
+    //assert(m_ringBufferPtr[0] != m_ringBufferPtr[1]);
     return true;
 }
 
@@ -612,37 +762,38 @@ bool VimbaBackend::open(std::size_t i)
     }
     else return false;
 
-    if (adjustSettings(i)) {
+    if (adjustSettings()) {
         std::cout << "Sucessfully changed the settings \n";
     }
     else return false;
 
     // Hardcoded the Buffer Ammount
-    if (allocateBuffer(i, 10)) {
+    if (allocateBuffer(12)) {
         std::cout << "Sucessfully allocated buffer \n";
     }
     else return false;
+    
+    logging();
 
-    auto cam = findCameraByID(i);
-
-    if (!runAcquisition(cam)) {
+    if (!runAcquisition()) {
         std::cout << "Starting Acquisition failed \n";
         return false;
     }
 
-    logging(i);
     return true;
 }
 
 void VimbaBackend::close(std::size_t i) 
 {
-    auto cam = findCameraByID(m_cam_index);
+    for(std::size_t i = 0; i < m_availableIds.size(); ++i)
+    {
+        if (m_running[i] == false) continue;
 
-    if (!cam) throw std::runtime_error("The CameraPtr is nullptr");
-       
-    m_stopping.store(true, std::memory_order_relaxed);
-    
-    if (m_running) {
+        auto cam = findCameraByID(m_availableIds[i]);
+        if(cam == nullptr) throw std::runtime_error("The CameraPtr is nullptr");
+
+        m_stopping.at(i).store(true, std::memory_order_relaxed);
+
         {
             VmbCPP::FeaturePtr ft;
             if (cam->GetFeatureByName("AcquisitionStop", ft) == VmbErrorSuccess && ft) {
@@ -650,29 +801,35 @@ void VimbaBackend::close(std::size_t i)
                     std::cout << "AcquisitionStop failed \n";
             }
         }
-        if(cam->EndCapture() != VmbErrorSuccess)
+
+        if (cam->EndCapture() != VmbErrorSuccess)
             std::cout << "EndCapture failed \n";
-        
-        
-        if(cam->FlushQueue() != VmbErrorSuccess)
+        if (cam->FlushQueue() != VmbErrorSuccess)
             std::cout << "FlushQueue failed \n";
         if (cam->RevokeAllFrames() != VmbErrorSuccess)
             std::cout << "RevokeAllFrames failed \n";
-        
 
-        for (auto& frames : m_frame_ptr) {
+        for (auto& frames : m_frame_ptr.at(i)) {
             if (frames && frames->UnregisterObserver() != VmbErrorSuccess)
                 std::cout << "UnregisterObserver failed \n";
         }
-        m_frame_ptr.clear();
-        deleteBuffer();
+        m_frame_ptr.at(i).clear();
 
         if (cam->Close() != VmbErrorSuccess)
             std::cout << "Closing the camera failed \n";
-    }
-    
 
-    m_running = false;
+        m_running.at(i) = false;
+        
+    }
+    m_frame_ptr.clear();
+}
+
+void VimbaBackend::logging()
+{
+    assert(m_availableIds.size() > 0);
+    for (std::size_t i = 0; i < m_availableIds.size(); ++i) {
+        logging(i);
+    }
 }
 
 void VimbaBackend::logging(const std::size_t camera_index)
@@ -689,7 +846,7 @@ void VimbaBackend::logging(const std::size_t camera_index)
             return;
         };
 
-    auto cam = findCameraByID(m_cam_index);
+    auto cam = findCameraByID(camera_index);
     if (!cam) throw std::runtime_error("The CameraPtr is nullptr");
     VmbCPP::FeaturePtr f;
     bool readable{ false };
@@ -713,7 +870,7 @@ void VimbaBackend::logging(const std::size_t camera_index)
         it->pixel_x = static_cast<int>(val);
     }
     // AcquisitionModeActive
-    it->acquisition_mode_active = m_running;
+    it->acquisition_mode_active = m_running.at(camera_index);
 
     // ModeName
     std::string modename{};
@@ -756,35 +913,19 @@ void VimbaBackend::logging(const std::size_t camera_index)
     }
 
     it->timestamp = std::chrono::system_clock::now();
-
-    /*check_read_val(cam, f, std::string{})
-    
-
-   
-    if(cam->GetFeatureByName()
-    VmbBool_t writable = false, readable = false;
-    if (f->IsWritable(writable) != VmbErrorSuccess)
-        std::cout << "WARN: Accessing IsWriteable() failed for " << names[0] << std::endl;;
-    if (f->IsReadable(readable) != VmbErrorSuccess)
-        std::cout << "WARN: Accessing IsReadalbe() failed for " << names[0] << std::endl;
-    config.pixel_x = */
 }
 
-void VimbaBackend::deleteBuffer() {
-    if (m_ringBufferPtr == nullptr) return;
-    delete m_ringBufferPtr;
-    m_ringBufferPtr = nullptr;
-}
 
-cv::Mat VimbaBackend::grab(int) { 
-    if (!m_running) {
-        return {};
+std::vector<cv::Mat> VimbaBackend::grab(int) { 
+    std::vector<cv::Mat> output;
+    for (std::size_t i = 0; i < m_ringBufferPtr.size(); ++i)
+    {
+        output.emplace_back(m_ringBufferPtr.at(i)->extractfromRing());
     }
-
-    return m_ringBufferPtr->extract();
+    return output;
 }
 
-bool VimbaBackend::isRunning(std::size_t) { return m_running; }
+bool VimbaBackend::isRunning(std::size_t i) { return m_running.at(i); }
 
 std::vector<defl::CameraConfig> VimbaBackend::getCameraConfig() {
     return m_camera_data;

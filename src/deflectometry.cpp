@@ -605,12 +605,15 @@ cv::Mat Deflectometry::get_difference_debug(const cv::Mat& mat1, const cv::Mat& 
 	return difference;
 }
 
-bool Deflectometry::init() {
+bool Deflectometry::init(std::size_t camera_n) {
 	try {
+		assert(camera_n > 0);
+		// Got back to indexing from zero 
+
 		// This should be at one time changed to unqiue Ptr
 		std::shared_ptr<CameraN> m_camera = std::make_shared<CameraN>(CameraN::Backend::VIMBA);
-
-		m_camera->open();
+		
+		if (!m_camera->open(camera_n)) return false;
 		
 		m_acquisition_controller = std::make_unique<defl::AcquisitionController>();
 		
@@ -1157,19 +1160,19 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 
 	setupCalibration(CalibrationMethod::None, "");
 	
+	// Generate Pattern
 	std::vector<cv::Mat> pattern = 
 		m_pattern->generate_phaseShift(
-			mode, 
-			127.5,
-			127.5,
-			n_periods,
-			1920,
-			1080,
-			UniformRowsCols{});
+		mode,
+		n_periods,
+		127.5,   // Mean Value
+		127.5,   // Amplitude
+		1920,
+		1080,
+		UniformRowsCols{},
+		true);   // if Return value should be double 
 
-
-
-	if (!init()) {
+	if (!init(2)) {
 		std::cerr << "Init Method failed. Stop Meassurment \n"; 
 		return {};
 	}
@@ -1202,7 +1205,7 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 	m_screenDisplay->start();
 	m_acquisition_worker->start();
 	
-	std::cout << "Press ENTER to start gray-value calibration...\n";
+	std::cout << "Press ENTER to start phase shift ...\n";
 	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
 	std::unique_lock img_save_lock(m_acquisition_controller->mtx);
@@ -1369,7 +1372,7 @@ std::vector<cv::Mat> Deflectometry::acquire_img(
 {
 	CV_Assert(n_pics_per_value >= 1);
 
-	if (!init()) {
+	if (!init(2)) {
 		std::cerr << "Init Method failed. Stop GrayValueCalibration\n";
 		return {};
 	}
@@ -1389,7 +1392,7 @@ std::vector<cv::Mat> Deflectometry::acquire_img(
 	// Lock für wait()
 	std::unique_lock lk(m_acquisition_controller->mtx);
 
-	// 3) Für jeden Grauwert
+	// 3) Für jedes Bild
 	for (size_t gray = 0; gray < src.size(); ++gray)
 	{
 		if (iter == iter_end)
@@ -1429,7 +1432,7 @@ std::vector<cv::Mat> Deflectometry::acquire_img(
 {
 	CV_Assert(n_pics_per_value >= 1);
 
-	if (!init()) {
+	if (!init(0)) {
 		std::cerr << "Init Method failed. Stop GrayValueCalibration\n";
 		return {};
 	}
@@ -1500,7 +1503,7 @@ GrayCalibVector Deflectometry::calc_response_curve_sections(
 
 	setupCalibration(CalibrationMethod::None, "");
 
-	if (init()) {
+	if (init(0)) {
 		std::cout << "Hardware connection failed. \nReturn to Caller\n";
 		return {};
 	}
@@ -1623,6 +1626,13 @@ bool Deflectometry::do_grayvalue_calibration(
 	// Creates the pattern
 	std::vector<cv::Mat> gray_calibGT =
 		m_pattern->generateGrayCalibrationSequence(n_steps);
+
+	std::vector<cv::Mat> calibrated;
+	for (const auto& img : gray_calibGT) {
+		cv::Mat img64;
+		img.convertTo(img64, CV_64F);
+		calibrated.emplace_back(m_calibration->applyCalibration(method, img64));
+	}
 
 	std::vector<cv::Mat> gray_calib = acquire_img(
 		gray_calibGT,
@@ -1790,7 +1800,7 @@ std::vector<cv::Mat> Deflectometry::getFrames(
 }
 
 std::vector<cv::Mat> Deflectometry::getFrames(FrameRole role) {
-	if (!init()) {
+	if (!init(0)) {
 		std::cerr << "Init failed. Aborte ...\n";
 		return {};
 	}

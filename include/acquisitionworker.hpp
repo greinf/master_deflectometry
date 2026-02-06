@@ -38,6 +38,7 @@ public:
         m_running.store(false);
         if (m_thread.joinable())
             m_thread.join();
+        
         m_camera->close();
     }
 
@@ -70,28 +71,24 @@ private:
        
         while (m_running.load()) {
             try {
-                cv::Mat view = m_camera->grab();
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+                std::vector<cv::Mat> view = m_camera->grab();
 
                 // empty cv::Mat gets returned if buffer was empty
                 if (view.empty()) continue;
 
-                /*std::cout << "Channels " << view.channels() << '\n';
-                std::cout << "Size " << view.size() << '\n';*/
-                
-                // Always store raw if wanted
-                //m_store->add(FrameRole::RawFrame, gray);
-
-                // Show live preview
-                
                 m_display.showCamera(view);
 
                 // === NEW: SAVE REQUEST LOGIC ===
                 int saveNow = m_pendingSaves.load();
                 if (saveNow > 0) {
-                    //std::this_thread::sleep_for(std::chrono::milliseconds(800));
+                    
                     std::unique_lock m_img_save (m_controller.mtx);
                     m_pendingSaves.fetch_sub(1);
-                    m_store.add(m_controller.mode, view.clone());
+                    for (const auto& img : view) {
+                        m_store.add(m_controller.mode, img.clone());
+                    }
                     m_img_save.unlock();
                     m_controller.cv.notify_one();
                 }

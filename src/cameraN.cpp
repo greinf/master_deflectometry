@@ -22,6 +22,6 @@ CameraN::CameraN(Backend b) {
     }
 }
 
-cv::Mat CameraN::grab(int timeout_ms) {
+std::vector<cv::Mat> CameraN::grab(int timeout_ms) {
     return m_backend->grab(timeout_ms);
 }

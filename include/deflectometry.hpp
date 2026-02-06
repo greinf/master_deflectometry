@@ -385,7 +385,8 @@ private:
 	std::pair<double, double> fitLine1D(const std::vector<double>& y);
 
 	// Methods to connect and Setup Hardware -> Camera and Acquisitionworker class get Setup
-	bool init();
+	// Set camera_n to 1 if only one camera is used. 2 For Two cameras at a time. 
+	bool init(std::size_t camera_n);
 
 
 	// Function applays smoothing on a picture with respect to the distance, focus length and entrance pupil

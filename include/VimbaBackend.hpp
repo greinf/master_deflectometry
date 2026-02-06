@@ -14,23 +14,27 @@
 #include <mutex>
 #include "RingBuffer.hpp"
 #include <atomic>
+#include <deque>
 
 
 class VimbaBackend : public ICameraBackend
 {
 public:
-	VimbaBackend(std::size_t index = 0);
+	VimbaBackend();
 	~VimbaBackend() override;
 
-	// Connects and setup camera directly for acuqisition
+	// Open() Arg1 gives the ammound of camera to be connected !
 	bool open(std::size_t i = 0) override;
 
-	// Does just close the camera. Vimba is not shutdown
+	// This just closes all available Cameras
 	void close(std::size_t i = 0) override;
 	
 	bool isRunning(std::size_t i) override;
+
 	std::vector<defl::CameraConfig> getCameraConfig() override;
-	cv::Mat grab(int timeout_ms) override;
+
+	// Return from all the active newest frame 
+	std::vector<cv::Mat> grab(int timeout_ms) override;
 
 private:
 	std::mutex m_mut;
@@ -39,31 +43,37 @@ private:
 
 	void logging(const std::size_t camera_index);
 
-	std::atomic<bool> m_stopping{ false };
-	std::atomic<int>  m_callbacksInFlight{ 0 };
+	void logging();
 
-	// if multiple camera are used this would not work
-	bool m_running{ false };
+	std::deque<std::atomic<bool>> m_stopping;
+
+	std::vector<bool> m_running{};
 
 	std::string m_active_cam{};
 
 	std::vector<std::string> m_availableIds{};
-	std::size_t m_cam_index{};
 
-	std::vector<VmbCPP::FramePtr> m_frame_ptr{};
+	// m_frame_ptr[
+	// [frame[0] camera 1, frame[1] camera 1 ....],
+	// [frame[0] camera 2, frame[1] camera 2 ....],
+	// ]
+	// VmbCPP::FramePtr -> 
+	std::vector<std::vector<VmbCPP::FramePtr>> m_frame_ptr{};
 
-	RingBuffer* m_ringBufferPtr{ nullptr };
+	std::vector<std::shared_ptr<RingBuffer>> m_ringBufferPtr{};
 
 	// Opens the camera withing m_cameras with index i
 	bool openCamera(const std::size_t i);
 	void closeCamera(const std::size_t i);
-	bool adjustSettings(const std::size_t);
+	bool adjustSettings();
 	
+	// Can be used if index in m_availableIDs is known
 	VmbCPP::CameraPtr findCameraByID(
 		const std::size_t i);
 
-	// Deltes RingBuffer if set and sets to nullptr
-	void deleteBuffer();
+	// Should be Used to call get the cameraPtr for the according cam by extendedID
+	VmbCPP::CameraPtr findCameraByID(
+		const std::string& extendedID);
 
 	static bool getFeature(const VmbCPP::CameraPtr& cam,
 		const std::vector<std::string>& names,
@@ -89,7 +99,8 @@ private:
 	// searches all availables features if the contain the key and puts them out
 	void findFeatures(
 		VmbCPP::CameraPtr& cam,
-		std::vector<std::string> keys) const;
+		std::vector<std::string> keys
+	) const;
 	//bool setupBuffers(const std::size_t i);
 
 	// Sets for every entry of Triggerselector the TrigerMode to Off
@@ -97,15 +108,24 @@ private:
 	// At the end: 
 	// TriggerSource is set to "Freerun" 
 	bool forceFreerunTimedExposure(
-		const VmbCPP::CameraPtr& cam);
+		const VmbCPP::CameraPtr& cam
+	);
 
 	bool setGamma(
 		const VmbCPP::CameraPtr& cam,
 		double gamma
 	);
 
-	void checkPackagesize(
-	const VmbCPP::CameraPtr& cam);
+	bool checkPackagesize(
+		const VmbCPP::CameraPtr& cam,
+		const VmbInt64_t package_sz
+	);
+
+	// If frameRate set to zero the minimal allowed Frame Rate is set 
+	bool setFrameRate(
+		const VmbCPP::CameraPtr& cam,
+		const double frameRate
+	);
 
 	bool setRoi(
 		const VmbCPP::CameraPtr& cam,
@@ -123,53 +143,104 @@ private:
 	// If Frame Received FrameObserver (that has internal Buffer) moves the data into the RingBuffer.
 	// RingBuffer is stores alway the 10 newest Picutres by the FrameObserver
 	bool allocateBuffer(
-		std::size_t i,
-		int n_buf);
+		int n_buf
+	);
 
 	bool setGain(
 		const VmbCPP::CameraPtr& cam,
-		double Gain_dB);
+		double Gain_dB
+	);
 
-	bool setExposureAbsRobust(const VmbCPP::CameraPtr& cam, double targetUs);
+	bool setExposureAbsRobust(
+		const VmbCPP::CameraPtr& cam,
+		double targetUs
+	);
 
-	bool runAcquisition(const VmbCPP::CameraPtr& cam);
+	bool runAcquisition();
 
+	bool clearFailedExtraction()
+	{
+		if (!std::cin)
+		{
+			if (std::cin.eof())
+			{
+				std::exit(0);
+			}
+
+			std::cin.clear();
+			std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+			return true;
+		}
+
+		return false;
+	}
 };
 
 // FrameObserver Class 
 class FrameObserver : public VmbCPP::IFrameObserver
 {
 public:
+
 	FrameObserver(VmbCPP::CameraPtr pCamera, 
-		RingBuffer* buffer, 
-		std::atomic<bool>* stopping,
-		std::atomic<int>* callbacks
+		std::shared_ptr<RingBuffer> buffer, 
+		std::atomic<bool>* stopping
 	)
 		: VmbCPP::IFrameObserver(pCamera)
-		, m_buffer{buffer}
+		, m_buffer{std::move(buffer)}
 		, m_stopping{stopping}
-		, m_callbacksInFlight{callbacks}
-	{}
-	
-	void FrameReceived(const VmbCPP::FramePtr pFrame) override {
-		if (m_buffer == nullptr) {
-			std::cerr << "No buffer Assigned in Frame Observer \n";
-			throw std::runtime_error("No Buffer Assigned in Frame Observer");
-		}
-		// mark callback in flight
-		m_callbacksInFlight->fetch_add(1, std::memory_order_acq_rel);
+	{
+		assert(m_stopping != nullptr);
+		assert(m_buffer != nullptr);
+	}
 
-		// if stopping, don't touch camera, don't requeue
+
+	void FrameReceived(const VmbCPP::FramePtr pFrame) override {
+		// debugging 
+		std::string name;
+		m_pCamera->GetID(name);
+		//std::cout << "Frame Received Called By Camera " << name << '\n';
 		if (m_stopping->load(std::memory_order_relaxed)) {
-			m_callbacksInFlight->fetch_sub(1, std::memory_order_acq_rel);
+			std::cout << "Stopped and reque Frame \n";
+			m_pCamera->QueueFrame(pFrame);
 			return;
 		}
 
-		//std::unique_lock<std::mutex> lock(m_tx);
-		m_buffer->getFrame(pFrame);
-		//lock.unlock();
+		if (m_buffer == nullptr) {
+			std::cerr << "No buffer Assigned in Frame Observer \n";
+			m_pCamera->QueueFrame(pFrame);
+			return;
+		}
+
+		VmbFrameStatusType status;
+
+		auto err = pFrame->GetReceiveStatus(status);
+		if (err != VmbErrorSuccess || status != VmbFrameStatusComplete) {
+			static std::atomic<int> cnt{ 0 };
+			if ((cnt.fetch_add(1) % 5) == 0) { // rate limit
+				std::string cam_name;
+				m_pCamera->GetID(cam_name);
+				std::cout << "[Cam " << cam_name << "] non-complete status=" << status << " err=" << err << "\n";
+			}
+			m_pCamera->QueueFrame(pFrame);
+			return;
+		}
+
+		const std::size_t index =
+			m_buffer->m_counter.fetch_add(1, std::memory_order_relaxed) % m_buffer->m_size;
+		
+		if (!m_buffer->extractData(pFrame, index)) {
+			std::cout << "crashed ? \n";
+			m_pCamera->QueueFrame(pFrame);
+			return;
+		}
+
+		m_buffer->m_counter.store(m_buffer->m_counter.load(std::memory_order_acquire)
+			% m_buffer->m_size, std::memory_order_release);
+
 		m_pCamera->QueueFrame(pFrame);
-		m_callbacksInFlight->fetch_sub(1, std::memory_order_acq_rel);
+
+		m_buffer->start();
 	}
 
 	~FrameObserver() override = default;
@@ -177,9 +248,8 @@ public:
 private:
 	std::mutex m_tx;
 	// pointer to static RingBufferObject
-	RingBuffer* m_buffer = nullptr;
+	std::shared_ptr<RingBuffer> m_buffer;
 	std::atomic<bool>* m_stopping = nullptr;
-	std::atomic<int>* m_callbacksInFlight = nullptr;
 };
 
 
