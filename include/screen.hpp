@@ -11,8 +11,15 @@
 #include <optional>
 #include "config/PhaseShiftConfig.hpp"
 #include "RowPolicy.hpp"
+#include <boost/dynamic_bitset.hpp>
+
+
+//using GrayCode = 
+//std::pair<std::vector<boost::dynamic_bitset<>>, std::vector<boost::dynamic_bitset<>>>;
 
 class ImageStore;
+struct GrayCodeConfig;
+
 
 namespace uniform {
 	constexpr bool is_uniform_rows(UniformRowsCols) { return true; }
@@ -30,6 +37,14 @@ public:
 		max_parameter
 	};
 
+	// Input[0] GrayCodeConfig& config
+	// |-> pixel_x pixel_y: Defines the size of output picture
+	// |-> Start Bit: defines if in the image from left to right und up and down we start with LSB or MSB
+	// |-> Inverse: Defines for each GrayCode a inverse exists. 
+	// The are in the order of img[0] - lowest res X, img[k] -highest resX, img[k+1] lowest resY, img [2k+1] - highest resY
+	// If Inverse is true: this pattern repeats for the inverse images. 
+	std::vector<cv::Mat> generateGrayCodeImg(GrayCodeConfig& config);
+
 	cv::Mat generateCross(
 		const int pixel_x,
 		const int pixel_y,
@@ -45,6 +60,7 @@ public:
 	);
 
 	
+
 	// Input 1 shift mode -> four phase shift or user defined, 2 nperiods in y direction
 	// 3 mean value of pattern, 4 amplitude of pattern, 5 pixelX: pattern width, 6 pixelY: pattern height
 	// 7 RowPolicy: speed up computation if the values only have to be calculate for one row or column. 
@@ -52,7 +68,7 @@ public:
 	// Return Image of width height (pixelX, pixelY) and datatype CV_8U or CV_64F (depends on return_double)
 	template<typename RowPolicy = UniformRowsCols>
 	std::vector<cv::Mat> generate_phaseShift(Shift_mode mode = Shift_mode::four_phase_shift,
-		int n_periods_y = 10,
+		double n_periods_y = 10,
 		double mean = 127.5,
 		double ampl = 127.5,
 		int pixelX = 1920,
@@ -62,7 +78,7 @@ public:
 	{
 		static_assert(is_row_policy_v<RowPolicy>,
 			"RowPolicy must be PerElement or UniformRowsCols");
-		CV_Assert(n_periods_y >= 1);
+		CV_Assert(n_periods_y >= 0);
 		CV_Assert(pixelX >= 1);
 		CV_Assert(pixelY >= 1);
 		const bool uniformRow = uniform::is_uniform_rows(policy);
@@ -119,12 +135,38 @@ private:
 	std::vector<std::shared_ptr<defl::PhaseShiftConfig>> m_cfg;
 	int m_steps{};
 
+	// Generates All gray Codes from Zero to max_num
+	// Input[0]: const int bit_depth -> the Bitdepth effectively std::ceil(std::log2(max_num))
+	// Boost Defaults the LSB as leftmost -> LSB = bit[0]; MSB = bit[N-1]
+	std::vector<boost::dynamic_bitset<>> generateAllGrayCode(
+		const int bit_depth);
+
+	// Input[0]: config file 
+	// Input[1]: GrayCodes to create From
+	// Output std::vector<cv::Mat> with cv::Mat.type() == CV_8U
+	// size and pattenr orientation is defined through the config.
+	std::vector<cv::Mat> generatePatternFromGrayCode(
+		GrayCodeConfig& config,
+		const std::vector<boost::dynamic_bitset<>>& GrayCode
+	);
+
+	std::vector<cv::Mat> generateXGray(
+		GrayCodeConfig& config,
+		const std::vector<boost::dynamic_bitset<>>& GrayCode
+	);
+
+	std::vector<cv::Mat> generateYGray(
+		GrayCodeConfig& config,
+		const std::vector<boost::dynamic_bitset<>>& GrayCode
+	);
+
 	// file with the purpose of holding all images used in this pipeline
 	ImageStore& m_img_store;
 
+	
 	std::vector<cv::Mat> generate_phaseShift(
 		Shift_mode,
-		int n_periods_y = 10,
+		double n_periods_y = 10,
 		double mean = 127.5,
 		double ampl = 127.5,
 		int pixelX = 1920,
@@ -133,7 +175,7 @@ private:
 		bool return_double = false);
 
 	bool prepareShiftParameters(
-		int n_periods_in_y, 
+		double n_periods_in_y, 
 		int m_steps);
 
 	// This method expects a std::vector<cv::Mat> of size() =2

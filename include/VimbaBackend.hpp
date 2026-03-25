@@ -197,18 +197,9 @@ public:
 
 	void FrameReceived(const VmbCPP::FramePtr pFrame) override {
 		// debugging 
-		std::string name;
-		m_pCamera->GetID(name);
-		//std::cout << "Frame Received Called By Camera " << name << '\n';
 		if (m_stopping->load(std::memory_order_relaxed)) {
 			std::cout << "Stopped and reque Frame \n";
-			m_pCamera->QueueFrame(pFrame);
-			return;
-		}
-
-		if (m_buffer == nullptr) {
-			std::cerr << "No buffer Assigned in Frame Observer \n";
-			m_pCamera->QueueFrame(pFrame);
+			//m_pCamera->QueueFrame(pFrame);
 			return;
 		}
 

@@ -107,7 +107,7 @@ private:
 };
 
 // The entry function that calls nearest neighbor resizing with openmp multi-thread
-void resize_nearest(const uchar* src_buf, int src_height, int src_width, int src_linebytes, uchar* dst_buf, int dst_height, int dst_width, int dst_linebytes, const Option& opt)
+void resize_nearest(const uchar* src_buf, int src_height, int src_width, int src_linebytes, uchar* dst_buf, int dst_height, int dst_width, int dst_linebytes, const Option& )
 {
     cv::Size src_size;
     src_size.height = src_height;

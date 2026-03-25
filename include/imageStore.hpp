@@ -8,8 +8,6 @@
 #include <array>
 #include <string>
 
-
-
 // What type of image is stored?
 enum class FrameRole {
     Pattern,           // Pattern generated in Pattern()
@@ -37,9 +35,17 @@ enum class FrameRole {
     DistortErrY,       // Picture that showcases the ammount of Distortion in the Y component
     UndistortErrX,     // Picture that showscases the ammount of Distortion after the undistortion in the X compoment.
     UndistortErrY,     // Picture that showcases the ammound of Distortion after the undistortion in the Y compoment. 
-    PassiveGrayCalib,  // Holds 3 Images:
-                       // [0] gamma, [1] I_max, [2] I_0, [3] r_2 Error [4] RMS_error
-    AcitveGrayCalib,   // Holds 2 Images where the parameters for active calibratino are stored
+    Modell_Active,     // Holds 4 Images: 
+                       // [0] gamma, [1] I_max, [2] I_0, [3] r_2 Error [4] iterations
+    Modell_Passive,    // Like Modell_Active
+    ModellBias_Active, // Like Modell_Active
+    ModellBias_Passive,// Like Modell_Active
+    CalibDisp_Cam,     // Hold the rotation and translation between the main camera and the dispaly
+    ReferenceChecker,  // Picture of the 4x4 Reference Checkerboard to create the referene point
+    CalibDispToCam,    // the Calibration rvec[0] and tvec[1]
+    CalibCamToCam,     // Rvec and Tvec from cam1 to cam 2
+    UnwrapError,       // Unwrap Error 
+    GrayCode,          // GroundTruth GrayCodeImages
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -91,11 +97,16 @@ public:
     // |----...
     void loadRoleXML(FrameRole role, const std::string& filename);
 
+    void loadCalibCamToCam(const std::string& path);
+
     void loadCalibrationMatrix(const std::string& filename);
 
     void saveLut(const std::string& path);
 
     void loadLut(const std::string& path);
+
+
+
 private:
     std::map<FrameRole, std::vector<cv::Mat>> storage_;
     std::array<std::pair<double, double>, 256> LUT_Gray;
@@ -104,12 +115,14 @@ private:
     inline static const std::array<std::string,
         static_cast<size_t>(FrameRole::maxElements)> FrameRole_string{ {
         "Pattern", "PatternDouble", "GrayCalibrationGT", "GrayCalibrationCam", "GrayLUT",
-        "RawPhase", "RawInput", "WrappedPhase","Contrast", 
-        "BaseIntensity", "UnwrappedPhase","CalibrationImg", "CalibrationMatrix", 
+        "RawPhase", "RawInput", "WrappedPhase", "Contrast",
+        "BaseIntensity", "UnwrappedPhase", "CalibrationImg", "CalibrationMatrix",
         "DistortionCoefficients", "CalibrationImagesMarked", "ReprojectionX",
         "ReprojectionY", "Debug", "All", "GridPattern", "DistortionCalib", "DistortErrX",
-        "DistortErrY", "UndistortErrX", "UndistortErrY", "Passive Calibration" ,
-        "Acitve Calibration"
+        "DistortErrY", "UndistortErrX", "UndistortErrY", "Modell_Active", "Modell_Passive",
+        "ModellBias_Active", "ModellBias_Passive",
+        "CalibDisp_Cam", "ReferenceCheckerBoard", "CalibDispToCam",
+        "CalibCamToCam", "UnwrapError"
     } };
     
 };

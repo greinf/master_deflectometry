@@ -2,28 +2,20 @@
 #define GRAYCALIBRATION_HPP
 
 #include <vector>
+#include <type_traits>
 #include <array>
 #include <string>
 #include <algorithm>
 #include <memory>
 #include "RowPolicy.hpp"
 #include <opencv2/core.hpp>
-#include "utils.hpp"
+#include "GrayCalibration_Utils.hpp"
 
-// Tag Dispatching for the GrayCalibration Class
-namespace gr_calib {
-	struct NoCalibration {};
-	struct ActiveCalibration {};
-	struct PassiveCalibration {};
-	struct LUTCalibration {};
-}
 class ImageStore;
 
-struct Gray_Calib_Result;
 
 class GrayCalibration {
 private:
-	//void prepareLUT();
 	
 	ImageStore& m_img_store;
 
@@ -31,19 +23,7 @@ private:
 
 	std::unique_ptr<Impl> m_impl = nullptr;  
 	
-	//void prepareLUT();
-
-	Gray_Calib_Result fitGamma_LM_andBuildLUT(
-		const std::array<double, 256>& measured,
-		double sat_cut_rel = 1,    // Sättigung raus
-		double eps = 1e-12,
-		int max_iters = 100,
-		double tol_rel_sse = 1e-10,
-		double tol_step = 1e-10,
-		double damping = 5.0e-3);
-
-
-	// Fita function of type I_mess = I_max * (x/255)^lambda 
+	// Fits a function of type I_mess = I_max * (x/255)^lambda 
 	// for  the parameters lambda and I_max. This only works if there is no bias 
 	// Parameter eps is used for cutting values nere zero -> val < eps is discarded
 	// paramter sat_cut cuts values that are near the 
@@ -53,26 +33,29 @@ private:
 		const double sat_cut = 1
 	);
 
+    // Method for creating a LUT. Can be used for both active and passive
+    // Mask can be empy. If empty all Pixels processed as valid
 	std::array<std::pair<double, double>, 256> createLut(
 		const std::vector<cv::Mat>& images,
-		const cv::Mat& mask
+		cv::Mat& mask
 	);
 
-	// In place sorting of the according array. 
-	bool prepareLUT(
-		std::array<std::pair<double, double>, 256>&
-	);
+	// Sorts the Lut Array in the impl ptr. 
+	bool prepareLUT();
 
 	cv::Mat applyLut(
-		const cv::Mat&
+		const cv::Mat& img,
+        const cv::Mat& mask
 	);
 
 	double getLutVal(
 		const double val
 	);
 
-	cv::Mat applyPassive(
-		const cv::Mat& img
+	cv::Mat applyModelFit(
+		const cv::Mat& img,
+        const cv::Mat& mask,
+        const std::vector<cv::Mat>& calImages
 	);
 
 	Gray_Calib_Result fitGammaBias_LM(
@@ -81,80 +64,288 @@ private:
 		const double sat_cut = 1
 	);
 
+
+    // Transporter methods to connect the hpp method to impl 
+    void updateLut(const std::array<std::pair<double, double>, 256> LUT);
+
+    void updateModelActive(const std::vector<cv::Mat>);
+
+    void updateModelPassive(const std::vector<cv::Mat>);
+
+    void updateModel_BiasActive(const std::vector<cv::Mat>);
+
+    void updateModel_BiasPassive(const std::vector<cv::Mat>);
+
 public:
+    // GrayCalibration Must have a member reference to the ImageStore instance (internally 
 	explicit GrayCalibration(ImageStore& image_store);
 	~GrayCalibration();
 
-	bool setupCalibrationMethod(gr_calib::NoCalibration) 
-	{ return true; }
-
+    // ***** Setup *****
+    // Input[0]: Specifier for used method. (-> Struct for this in GrayCalibrationUtils.hpp)
+    // Input[1]: const std::string& path 
+    // (->Path to the .xml files for Model or Model Bias - Or .csv for LUT)
+    // Output: bool value if loading data was succesfull
+    
+    // Setup the data for Calibration Method (Active-LUT) in Impl-ptr
+    // Active LUT and passive LUT are done the same way 
 	bool setupCalibrationMethod(
-		const gr_calib::ActiveCalibration,
+		const GrayCalibration_specifier::Active::LUT,
 		const std::string& path);
 
+    // Setup the data for Calibration Method (Active-Model) in Impl-ptr
 	bool setupCalibrationMethod(
-		const gr_calib::PassiveCalibration,
+		const GrayCalibration_specifier::Active::Model,
 		const std::string& path);
 
+    // Setup the data for Calibration Method (Active-ModelBias) in Impl-ptr
 	bool setupCalibrationMethod(
-		const gr_calib::LUTCalibration,
+		const GrayCalibration_specifier::Active::Model_Bias,
 		const std::string& path);
-		
-	/*std::vector<cv::Mat> run_gray_calib(
-		const std::vector<cv::Mat>&);*/
 
-	bool doCalibration(
-		const CalibrationMethod method,
-		const std::vector<cv::Mat>& images,
-		const cv::Mat& mask
-	);
+    // Setup the data for Calibration Method (Passive-LUT) in Impl-ptr
+    // Just calls the Active::LUT method
+	bool setupCalibrationMethod(
+		const GrayCalibration_specifier::Passive::LUT,
+		const std::string& path);
 
-	cv::Mat applyCalibration(
-		const CalibrationMethod method,
-		const cv::Mat& image
-	);
+    // Setup the data for Calibration Method (Passive-Modell) in Impl-ptr
+	bool setupCalibrationMethod(
+		const GrayCalibration_specifier::Passive::Model,
+		const std::string& path);
 
+    // Setup the data for Calibration Method (Passive-ModellBias) in Impl-ptr
+	bool setupCalibrationMethod(
+		const GrayCalibration_specifier::Passive::Model_Bias,
+		const std::string& path);
+
+    // Setup the data for Calibration Method (No Calib)
+    bool setupCalibrationMethod(
+        const GrayCalibration_specifier::NoCalib,
+        const std::string& path) {
+        return true;
+    }
+
+    // **** Apply Calibration ****
+    // Input[0]: Specifier for used method. (-> Struct for this in GrayCalibrationUtils.hpp)
+    // Input[1]: const cv::Mat& -> image to apply calibration on.
+    // Input[2]: const cv::Mat& -> Mask to show the valid pixels 
+    // Output: cv::Mat -> the return value of the image distorted
+    // -> Input[2]: This variable is mainly used for the LUT calibration since the LUT is build over the hole display
+    // Modell/ ModellBias values are stored pixelwise cv::Mats - therefore a mask is not necessary but should still be provided
+    // If Active Calibration is used -> The mask can be set to cv::Mat::ones(image.size(), CV_8U) or given as an empty cv::Mat.
+    
+    // Applies Active-Lut Calibration
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Active::LUT,
+        const cv::Mat& image,
+        cv::Mat& mask
+    );
+
+    // Applies Active-Model Calibration
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Active::Model,
+        const cv::Mat& img,
+        cv::Mat& mask
+    );
+
+    // Applies Active-Model-Bias Calibration
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Active::Model_Bias,
+        const cv::Mat& img,
+        cv::Mat& mask
+    );
+
+    // Applies Passive-Lut Calibratoin
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Passive::LUT,
+        const cv::Mat& img,
+        cv::Mat& mask
+    );
+
+    // Applies Passive-Model Calibration
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Passive::Model,
+        const cv::Mat& img,
+        cv::Mat& mask
+    );
+
+    // Applies Passive-Model-Bias
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Passive::Model_Bias,
+        const cv::Mat& img,
+        cv::Mat& mask
+    );
+
+    // Applies No Calibration -> directly return the input. 
+    static cv::Mat applyCalibration(
+        const GrayCalibration_specifier::NoCalib,
+        const cv::Mat& img,
+        const cv::Mat& mask)
+    {
+        return img;
+    }
+
+    // Input [1]: calib_specfier -> Must be struct that inherits from _Base::Specifier_Base (GrayCalibrationUtils.hpp)
+    // Input [2]: const std::vector<cv::Mat>& images -> Vector of type cv::Mat of Type CV_64FC1
+    // Input [3]: cv::Mat& mask -> Must be CV_8UC1
+    // Output: bool value to show if Calibration was succesfull. 
+    // The calibration Images or Lookup Table are stored in the ImageStoreClass -> (m_img_store)
+    // The Calibration Frames are stored the following:
+    // [0] -> Gamma
+    // [1] -> I_max
+    // [2] -> I_0 (Only Really used in fitGammaBias_LM, esle set to zero)
+    // [3] -> Fitting Error R_2
+    // [4] -> Used Iterations (Only Actively used in Gamma fitGammaBias_LM)
+    // Destinction Between active and passive:
+    // To simplify the procedures, essentially the same algorithm is used. 
+    // - Passive (afterwards):
+    // A mask and 256 gray images must be provided. Since the Mask already shows the allowed pixels no further action is needed
+    // - Active (before Image Capturing):
+    // Since here the Correspondense between Camera and Dispaly Pixel is needed, the 256 images must be evaluate beforehand.
+    // For active Calibration therefore the images must have size of the display (in Pixels) and the mask is expected to be empty or cv::Mat::ones()
+    // Since the Lut calibration uses the median over a the hole array the corropndence is not necessary.
+	template <typename T> 
+    bool doCalibration(
+        T calib_specifier,
+        const std::vector<cv::Mat>& images,
+        cv::Mat& mask,
+        const std::string& path)
+    {
+        // Produces hard error if wrong type is used for the type deduction. 
+        static_assert(std::is_base_of<_Base::specifier_Base, T>::value);
+
+        // If No calibration is selcted we directly return 
+        if constexpr (std::is_same<T, GrayCalibration_specifier::NoCalib>::value) return true;
+
+        CV_Assert(!path.empty());
+        CV_Assert(!images.empty());
+        CV_Assert(std::all_of(images.begin(), images.end(),
+            [&](const cv::Mat& img) {
+                return (images[0].size() == img.size()) &&
+                    (img.type() == CV_64F) && (img.channels() == 1);
+            }));
+        // If NOT empty check if img & maks same size
+        if (!mask.empty()) {
+            CV_Assert(std::all_of(images.begin(), images.end(),
+                [&](const cv::Mat& img) -> bool {
+                    return img.size() == mask.size();
+                }));
+        }
+        // If Mask is empty we create a new o
+        else {
+            mask = cv::Mat::ones(images[0].size(), CV_8U);
+        }
+        CV_Assert(images.size() == 256);
+        CV_Assert(mask.type() == CV_8U);
+        CV_Assert(m_impl != nullptr);
+
+        // Case for Lut both active and passive
+        if constexpr (std::is_same<T, GrayCalibration_specifier::Active::LUT>::value ||
+           std::is_same<T, GrayCalibration_specifier::Passive::LUT>::value)
+        {
+            std::array<std::pair<double, double>, 256> lut =
+                createLut(images, mask);
+
+           m_img_store.add(FrameRole::GrayLUT, lut);
+
+           m_img_store.saveLut(path);
+
+           return true;
+        }
+
+        // All model Based Calibration Methods are created here.
+        cv::Mat gamma(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+        cv::Mat Imax(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+        cv::Mat I_0(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+        cv::Mat errorR2(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+        cv::Mat iter(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+
+        // Parallel iterating over the rows 
+        cv::parallel_for_(cv::Range(0, mask.rows),
+            [&](const cv::Range& range) {
+                for (int r = range.start; r < range.end; ++r) {
+                    // Create Pointers to the currently evaluated pixels 
+                    const uchar* maskPtr = mask.ptr<uchar>(r);
+                    double* gammaPtr = gamma.ptr<double>(r);
+                    double* ImaxPtr = Imax.ptr<double>(r);
+                    double* I_0Ptr = I_0.ptr<double>(r);
+                    double* r2Ptr = errorR2.ptr<double>(r);
+                    double* iterPtr = iter.ptr<double>(r);
+
+                    for (int c = 0; c < mask.cols; ++c) {
+                        if (maskPtr[c] == 0)continue;
+
+                        // Extract an std::array<double, 256> array for each pixel from all the images. 
+                        // The calibration is done for each pixel on these values.
+                        std::array<double, 256> y{};
+                        for (int i = 0; i < 256; ++i) {
+                            y[i] = images[i].ptr<double>(r)[c];
+                        }
+
+                        // This is checked at compile time. Therefore no expensive check is done in each iteration 
+                        if constexpr (std::is_same<T, GrayCalibration_specifier::Active::Model>::value ||
+                            std::is_same<T, GrayCalibration_specifier::Passive::Model>::value) 
+                        {
+                            auto res = fitGamma(y);
+                            gammaPtr[c] = res.stats.gamma;
+                            ImaxPtr[c] = res.stats.Imax;
+                            I_0Ptr[c] = res.stats.I_0;
+                            r2Ptr[c] = res.stats.r2;
+                            iterPtr[c] = res.stats.iters;
+                        }
+
+                        else if constexpr (std::is_same<T, GrayCalibration_specifier::Active::Model_Bias>::value ||
+                            std::is_same<T, GrayCalibration_specifier::Passive::Model_Bias>::value) {
+                            auto res = fitGammaBias_LM(y);
+                            gammaPtr[c] = res.stats.gamma;
+                            ImaxPtr[c] = res.stats.Imax;
+                            I_0Ptr[c] = res.stats.I_0;
+                            r2Ptr[c] = res.stats.r2;
+                            iterPtr[c] = res.stats.iters;
+                        }
+                    }
+                } 
+            });
+
+        // Save the images in Frame Role and directly save to .xml
+        if constexpr (std::is_same<T, GrayCalibration_specifier::Active::Model>::value) {
+            m_img_store.add(FrameRole::Modell_Active, gamma);
+            m_img_store.add(FrameRole::Modell_Active, Imax);
+            m_img_store.add(FrameRole::Modell_Active, I_0);
+            m_img_store.add(FrameRole::Modell_Active, errorR2);
+            m_img_store.add(FrameRole::Modell_Active, iter);
+            // Save to path provided
+            m_img_store.saveRoleXML(FrameRole::Modell_Active, path);
+        }
+        else if constexpr (std::is_same<T, GrayCalibration_specifier::Passive::Model>::value) {
+            m_img_store.add(FrameRole::Modell_Passive, gamma);
+            m_img_store.add(FrameRole::Modell_Passive, Imax);
+            m_img_store.add(FrameRole::Modell_Passive, I_0);
+            m_img_store.add(FrameRole::Modell_Passive, errorR2);
+            m_img_store.add(FrameRole::Modell_Passive, iter);
+            m_img_store.saveRoleXML(FrameRole::Modell_Passive, path);
+        }
+        else if constexpr (std::is_same<T, GrayCalibration_specifier::Active::Model_Bias>::value) {
+            m_img_store.add(FrameRole::ModellBias_Active, gamma);
+            m_img_store.add(FrameRole::ModellBias_Active, Imax);
+            m_img_store.add(FrameRole::ModellBias_Active, I_0);
+            m_img_store.add(FrameRole::ModellBias_Active, errorR2);
+            m_img_store.add(FrameRole::ModellBias_Active, iter);
+            m_img_store.saveRoleXML(FrameRole::ModellBias_Active, path);
+        }
+        else if constexpr (std::is_same<T, GrayCalibration_specifier::Passive::Model_Bias>::value) {
+            m_img_store.add(FrameRole::ModellBias_Passive, gamma);
+            m_img_store.add(FrameRole::ModellBias_Passive, Imax);
+            m_img_store.add(FrameRole::ModellBias_Passive, I_0);
+            m_img_store.add(FrameRole::ModellBias_Passive, errorR2);
+            m_img_store.add(FrameRole::ModellBias_Passive, iter);
+            m_img_store.saveRoleXML(FrameRole::ModellBias_Passive, path);
+        }
+
+        return true;
+    }
 };
 
-/*
-double linear_gray(double);
-
-
-//Look Up Table
-std::optional<std::vector<std::pair<double, double>>> m_LUT{};
-std::vector<std::pair<double, double>> m_sortedLUT{};
-bool m_lut_ready{ false };
-double m_lut_scale_factor{};
-double m_lut_offset{};
-
-
-
-void load_gray_calib_data(std::vector<std::pair<double, double>>&& lut) {
-	if (m_LUT.has_value()) {
-		std::cout << "WARNING: Old LUT gets overridden \n";
-	}
-	m_LUT.emplace(std::move(lut));
-	prepareLUT();
-}
-
-
-// Even more expensive computation
-// Same reasoning as above.
-double mean = mean_value / amplitude;
-pattern = mean * (1.0 + cosine);
-pattern *= amplitude;
-if (m_LUT.has_value()) {
-	cv::parallel_for_(cv::Range(0, pattern.rows),
-		[&](const cv::Range& r) {
-			for (int y = r.start; y < r.end; ++y) {
-				double* ptr = pattern.ptr<double>(y);
-				for (int x = 0; x < pattern.cols; ++x) {
-					ptr[x] = linear_gray(ptr[x]);
-				}
-			}
-		});
-}
-
-*/
 
 #endif // !GRAYCALIB_HPP

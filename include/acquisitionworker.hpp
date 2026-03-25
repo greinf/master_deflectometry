@@ -71,7 +71,7 @@ private:
        
         while (m_running.load()) {
             try {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
                 std::vector<cv::Mat> view = m_camera->grab();
 

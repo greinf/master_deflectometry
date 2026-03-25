@@ -1,6 +1,7 @@
 #include "ImageStore.hpp"
 #include <filesystem>
 #include <fstream>
+#include <opencv2/opencv.hpp>
 
 //std::scoped_lock lock(m1, m2, m3); can lock multple mutex objects
 
@@ -245,16 +246,57 @@ void ImageStore::loadLut(const std::string& basePath)
 void ImageStore::loadCalibrationMatrix(const std::string& path) {
     cv::FileStorage fs(path, cv::FileStorage::READ);
     if (fs.isOpened()) {
-        cv::Mat cam_mat;
-        fs["distortion_coefficients"] >> cam_mat;
-        storage_[FrameRole::DistortionCoeff].push_back(cam_mat);
-        cv::Mat dist_coeffs;
-        fs["camera_matrix"] >> dist_coeffs;
-        storage_[FrameRole::CalibrationMatrix].push_back(dist_coeffs);
+        std::vector<cv::Mat> distCoeffs(2);
+        std::vector<cv::Mat> camMatrix(2);
+        {
+            cv::FileNode distortion(fs["distortion_coefficients"]);
+            if (distortion.empty()) {
+                std::cout << "Loading Camera Data from StereoCalibration \n";
+
+                fs["distortion_coefficients1"] >> distCoeffs.at(0);
+                fs["distortion_coefficients2"] >> distCoeffs.at(1);
+            }
+            else distortion >> distCoeffs.at(0);
+            
+            cv::FileNode camMatrixn(fs["camera_matrix"]);
+            if (camMatrixn.empty()) {
+                fs["camera_matrix1"] >> camMatrix.at(0);
+                fs["camera_matrix2"] >> camMatrix.at(1);
+            }
+
+            for (const auto& mat : camMatrix) {
+                if (mat.empty()) continue;
+                storage_[FrameRole::CalibrationMatrix].push_back(mat);
+            }
+
+            for (const auto& mat : distCoeffs) {
+                if (mat.empty()) continue;
+                storage_[FrameRole::DistortionCoeff].push_back(mat);
+            }
+        }
     }
     else std::cout << "Coudl not open the Storage file ";
     fs.release();
 }
+
+void ImageStore::loadCalibCamToCam(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    storage_[FrameRole::CalibCamToCam].clear();
+    cv::FileStorage fs(path, cv::FileStorage::READ);
+    if (!fs.isOpened())
+        throw std::runtime_error("Could not open XML file: " + path);
+
+    cv::Mat rotationMat, translationMat;
+
+    fs["rotationMat"] >> rotationMat;
+    fs["translationMat"] >> translationMat;
+
+    storage_[FrameRole::CalibCamToCam].push_back(rotationMat);
+    storage_[FrameRole::CalibCamToCam].push_back(translationMat);
+
+}
+
+
 
 void ImageStore::loadRoleXML(FrameRole role, const std::string& basePath)
 {
@@ -265,6 +307,13 @@ void ImageStore::loadRoleXML(FrameRole role, const std::string& basePath)
 
     if (role == FrameRole::CalibrationMatrix) {
         loadCalibrationMatrix(basePath);
+        return;
+    }
+
+    
+
+    if (role == FrameRole::CalibCamToCam) {
+        loadCalibCamToCam(basePath);
         return;
     }
 

@@ -15,6 +15,7 @@ enum class DisplayMode {
 
 enum class UnwrapMode {
 	manually,
+	manually_reference,
 	opencv,
 	max_value
 };
@@ -32,6 +33,11 @@ enum class ReferenceMode {
 enum class Warping {
 	homography,
 	raycasting
+};
+
+enum class Rotation {
+	eulerxy,
+	rodrigeuz
 };
 
 #endif // !1

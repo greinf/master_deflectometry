@@ -7,6 +7,138 @@
 #include <opencv2/opencv.hpp>
 #include "acquisitionworker.hpp"
 #include <filesystem>
+#include <regex>
+#include "GrayCodeConfig.hpp"
+#include "screen.hpp"
+
+
+struct GrayCodeSet {
+    // index 0 corresponds to 1 (Scr01) if your files start at 01
+    std::vector<cv::Mat> x;
+    std::vector<cv::Mat> y;
+
+    // Keep original names so we can save with identical filenames
+    std::vector<std::string> xNames;
+    std::vector<std::string> yNames;
+};
+
+static bool ensureDirExists(const std::filesystem::path& p) {
+    std::error_code ec;
+    if (std::filesystem::exists(p, ec)) return std::filesystem::is_directory(p, ec);
+    return std::filesystem::create_directories(p, ec);
+}
+
+GrayCodeSet loadGrayCodeFromFolder(const std::filesystem::path& folder, bool asGray = true) {
+    if (!std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+        throw std::runtime_error("Folder does not exist or is not a directory: " + folder.string());
+
+    // Matches:
+    // GrayCodeXScr01.bmp
+    // GrayCodeYScr11.bmp
+    // also allows .png/.jpg if you want to extend (currently bmp only, change if needed)
+    const std::regex re(R"(GrayCode([XY])Scr(\d+)\.bmp$)", std::regex::icase);
+
+    struct Entry { char axis; int idx; std::filesystem::path path; std::string name; };
+    std::vector<Entry> entries;
+
+    for (const auto& de : std::filesystem::directory_iterator(folder)) {
+        if (!de.is_regular_file()) continue;
+
+        const std::string fname = de.path().filename().string();
+        std::smatch m;
+        if (std::regex_match(fname, m, re)) {
+            char axis = static_cast<char>(std::toupper(m[1].str()[0])); // 'X' or 'Y'
+            int idx = std::stoi(m[2].str());                           // e.g. 1..11
+            entries.push_back({ axis, idx, de.path(), fname });
+        }
+    }
+
+    if (entries.empty())
+        throw std::runtime_error("No GrayCode[X|Y]ScrXX.bmp files found in: " + folder.string());
+
+    // Sort by axis, then idx
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+        if (a.axis != b.axis) return a.axis < b.axis;
+        return a.idx < b.idx;
+        });
+
+    // Determine max index for X and Y (so we can size vectors)
+    int maxX = 0, maxY = 0;
+    for (const auto& e : entries) {
+        if (e.axis == 'X') maxX = std::max(maxX, e.idx);
+        else               maxY = std::max(maxY, e.idx);
+    }
+
+    GrayCodeSet set;
+    set.x.resize(maxX);
+    set.y.resize(maxY);
+    set.xNames.resize(maxX);
+    set.yNames.resize(maxY);
+
+    const int imreadFlag = asGray ? cv::IMREAD_GRAYSCALE : cv::IMREAD_UNCHANGED;
+
+    for (const auto& e : entries) {
+        cv::Mat img = cv::imread(e.path.string(), imreadFlag);
+        if (img.empty())
+            throw std::runtime_error("Failed to read image: " + e.path.string());
+
+        // idx is 1-based in filename -> store at idx-1
+        const int pos = e.idx - 1;
+        if (pos < 0) throw std::runtime_error("Invalid index in filename: " + e.name);
+
+        if (e.axis == 'X') {
+            if (pos >= static_cast<int>(set.x.size()))
+                throw std::runtime_error("Index out of range for X: " + e.name);
+            set.x[pos] = img;
+            set.xNames[pos] = e.name;
+        }
+        else {
+            if (pos >= static_cast<int>(set.y.size()))
+                throw std::runtime_error("Index out of range for Y: " + e.name);
+            set.y[pos] = img;
+            set.yNames[pos] = e.name;
+        }
+    }
+
+    
+    return set;
+}
+
+static std::string makeName(char axis, size_t i) {
+    std::ostringstream oss;
+    oss << "GrayCode" << axis << "Scr"
+        << std::setw(2) << std::setfill('0') << (i + 1)
+        << ".bmp";
+    return oss.str();
+}
+
+void saveGrayCodeToFolder(const GrayCodeSet& set, const std::filesystem::path& outFolder) {
+    if (!ensureDirExists(outFolder))
+        throw std::runtime_error("Could not create output directory: " + outFolder.string());
+
+    // Save X
+    for (size_t i = 0; i < set.x.size(); ++i) {
+        if (set.x[i].empty()) continue;
+
+        const std::filesystem::path outPath = outFolder /
+            (set.xNames[i].empty() ? makeName('X', i) : set.xNames[i]);
+
+        if (!cv::imwrite(outPath.string(), set.x[i]))
+            throw std::runtime_error("Failed to write: " + outPath.string());
+    }
+
+    // Save Y
+    for (size_t i = 0; i < set.y.size(); ++i) {
+        if (set.y[i].empty()) continue;
+
+        const std::filesystem::path outPath = outFolder /
+            (set.yNames[i].empty() ? makeName('Y', i) : set.yNames[i]);
+
+        if (!cv::imwrite(outPath.string(), set.y[i]))
+            throw std::runtime_error("Failed to write: " + outPath.string());
+    }
+}
+
 
 
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
@@ -33,281 +165,218 @@ auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName 
         cv::waitKey(0);
     };
 
-auto showNormalized = [](const cv::Mat& img) {
-    CV_Assert(img.channels() == 1);
-    cv::Mat gray;
-    if (img.type() != CV_8U) {
-        //img.convertTo(gray, CV_8U);
-        cv::normalize(img, gray, 0, 255, cv::NORM_MINMAX, CV_8U);
-    }
-    else gray = img;
-    cv::imshow("normalized", gray);
-    cv::waitKey(0);
-    cv::destroyWindow("normalized");
-    };
-
-//C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23 GrayLut for Desktop at FH
-//C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-22 GrayLut for Deskotp BMZ
 
 int main()
 {
+
+    std::filesystem::path inFolder = R"(C:\Users\grein\Desktop\Data)";
+    std::filesystem::path outFolder = R"(C:\Users\grein\Desktop\Data_outBigDistance)";
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09Mako-WithGray4Shift" };
+    std::string path{ "C:/Users/grein/Desktop/1Wave" };
 
-    std::string path_gray_sections{ "C:/Users/grein/Desktop/2026-01-19_GrayCalibSections2.csv" };
+    std::string path_gray_sections{ "C:/Users/grein/Desktop/2026-02-15_GrayCalibSections2.csv" };
+
+    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-15_GrayCalibSections" };
     //Path to IDS calibration: Blende geschlossen. 
-    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-01-09MAKO.xml" };
+    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO.xml" };
 
-    std::string calibPath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-02-06TestRun" };
+    std::string camMatrix_path1{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO" };
+
+
+    std::string calibPath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-02-09StereoCalibration" };
+
+    std::string calibrationDisplayCampath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-17_Display_Cam" };
 
     Deflectometry meassure{};
+    Pattern& pat = meassure.img_generation();
 
+    GrayCodeConfig config{};
+    config.creation.inverse = false;
+    config.creation.pixel_x = 1064;
+    config.creation.pixel_y = 1064;
+    config.creation.resolution_x = 1064;
+    config.creation.resolution_y = 1064;
+    config.creation.starBit = config.lsb;
+
+    pat.generateGrayCodeImg(config);
+    
+
+    meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveLut);
+
+    // AbstandsMessung 
     meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
-
     std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
+
+    meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
+    std::vector<cv::Mat> camToCam = meassure.get(FrameRole::CalibCamToCam);
 
     std::vector<cv::Mat> dist_Coeffs = meassure.get(FrameRole::DistortionCoeff);
 
     std::optional<std::vector<cv::Mat>> cameramatrix_distCoeff;
+    cameramatrix_distCoeff.emplace({ camMatrix[0], dist_Coeffs[0] });
+
+    std::vector<cv::Mat> real_pattern =
+        meassure.createSyntheticalImages(
+            Warping::raycasting,                 // Warping: homography-based warping
+
+            cameramatrix_distCoeff,              // camera_matrix (std::optional<std::vector<cv::Mat>>)
+
+            2.2,                                 // gamma: display / camera gamma
+
+            true,                                // display_quantize: quantize display output
+
+            true,                                // camera_quantization: simulate camera ADC quantization
+
+            true,                                // luminance: apply luminance weighting
+
+            true,                                // smoothing: enable optical smoothing
+
+            true,                                // warp: apply geometric warping
+
+            200.0,                               // image_height: mirror circumference [mm]
+
+            2464,                                // dest_width: Mako G-507-B sensor width (px)
+
+            2056,                                // dest_height: Mako G-507-B sensor height (px)
+
+            0.2745,                              // display_pixel_pitch: display pixel pitch [mm]
+
+            0.0,                                 // display_shift_x: lateral display shift x [mm]
+
+            0.0,                                 // display_shift_y: lateral display shift y [mm]
+
+            0.0,                                 // display_tilt_x: display tilt around x-axis [rad]
+
+            0.0,                                 // display_tilt_y: display tilt around y-axis [rad]
+
+            Shift_mode::four_phase_shift,        // mode: phase-shift pattern mode
+
+            _defl_::GrayCal::Method::None,       // method: no gray-value calibration
+
+            1920,                                // pattern_width: display width (px)
+
+            1080,                                // pattern_height: display height (px)
+
+            10,                                  // n_periods_in_y: number of sinusoidal periods in y
+
+            2.4,                                 // aperture_number: f-number (N)
+
+            2000,                                // distance: camera–mirror distance [mm] (2*f, f=1600)
+
+            6.6,                                 // object_height: sensor height [mm] (2/3" → 6.6 mm)
+            
+            RoiBorders<double>{                  // destination ROI in destination image
+                {200.0, 200.0},                  // left-up corner 
+                { 1800.0, 180.0 },                 // left-down corner
+                { 210.0, 2200.0 },                 // right-up corner
+                { 1900.0, 1900.0 }                 // right-down corner
+            },
+            
+            calibPath                            // path to the stored GrayCalibration values
+            
+        );
+
+    meassure.testReprojection(
+        camMatrix_path,
+        path_gray_calibration,
+        path,
+        Shift_mode::four_phase_shift,
+        _defl_::GrayCal::Method::ActiveLut,
+        33.75,
+        false,
+        UnwrapMode::opencv,
+        true);
+
     
-    //cameramatrix_distCoeff.emplace(std::vector<cv::Mat>{camMatrix[0], dist_Coeffs[0]});
+    //// ************ Triangulation *******************
 
+    //auto result = meassure.computeLaserDistanceFrom4Images(
+    //    LaserFr[0], LaserFr[1], LaserFr[2], LaserFr[3],
+    //    camMatrix[0], dist_Coeffs[0], camMatrix[1], dist_Coeffs[1], camToCam[0], camToCam[1]
+    //);
 
-    //std::vector<cv::Mat> real_pattern =
-    //    meassure.createSyntheticalImages(
-    //        Warping::raycasting,                 // Warping: homography-based warping
+    //std::cout << "p1 (px): " << result.p1_px << "\n";
+    //std::cout << "p2 (px): " << result.p2_px << "\n";
+    //std::cout << "3D (cam1): [" << result.X_cam1.x << ", " << result.X_cam1.y << ", " << result.X_cam1.z << "]\n";
+    //std::cout << "distance to cam1: " << result.distance_cam1 << " (same units as T)\n";
 
-    //        cameramatrix_distCoeff,              // camera_matrix (std::optional<std::vector<cv::Mat>>)
+    GrayCodeSet gc = loadGrayCodeFromFolder(inFolder, true);
 
-    //        2.2,                                 // gamma: display / camera gamma
+    std::vector<cv::Mat> grayCodeXY;
 
-    //        true,                                // display_quantize: quantize display output
+    for (const auto& img : gc.x) {
+        grayCodeXY.push_back(img);
+    }
 
-    //        true,                                // camera_quantization: simulate camera ADC quantization
+    for (const auto& img : gc.y) {
+        grayCodeXY.push_back(img);
+    }
 
-    //        true,                                // luminance: apply luminance weighting
-
-    //        true,                                // smoothing: enable optical smoothing
-
-    //        true,                                // warp: apply geometric warping
-
-    //        200.0,                               // image_height: mirror circumference [mm]
-
-    //        2464,                                // dest_width: Mako G-507-B sensor width (px)
-
-    //        2056,                                // dest_height: Mako G-507-B sensor height (px)
-
-    //        0.2745,                              // display_pixel_pitch: display pixel pitch [mm]
-
-    //        -650.0,                                 // display_shift_x: lateral display shift x [mm]
-
-    //        -400.0,                                 // display_shift_y: lateral display shift y [mm]
-
-    //        0.0,                                 // display_tilt_x: display tilt around x-axis [rad]
-
-    //        0.0,                                 // display_tilt_y: display tilt around y-axis [rad]
-
-    //        Shift_mode::GrayValues,        // mode: phase-shift pattern mode
-
-    //        CalibrationMethod::Passive,             // method: no gray-value calibration
-
-    //        1920,                                // pattern_width: display width (px)
-
-    //        1080,                                // pattern_height: display height (px)
-
-    //        10,                                  // n_periods_in_y: number of sinusoidal periods in y
-
-    //        2.4,                                 // aperture_number: f-number (N)
-
-    //        3000,                                // distance: camera–mirror distance [mm] (2*f, f=1600)
-
-    //        6.6,                                 // object_height: sensor height [mm] (2/3" → 6.6 mm)
-    //        
-    //        RoiBorders<double>{                  // destination ROI in destination image
-    //            {200.0, 200.0},                  // left-up corner 
-    //            { 1800.0, 180.0 },                 // left-down corner
-    //            { 210.0, 2200.0 },                 // right-up corner
-    //            { 1900.0, 1900.0 }                 // right-down corner
-    //        },
-    //        
-    //        calibPath                            // path to the stored GrayCalibration values
-    //        
-    //    );
-
-     /*meassure.do_grayvalue_calibration(
-         real_pattern,
-         1,
-         1,
-         true,
-         calibPath,
-         CalibrationMethod::Bias_Passive
-     );*/
-
-    meassure.do_grayvalue_calibration(
-             1,
-             15,
-             true,
-             calibPath,
-             CalibrationMethod::None    
-         );
-
-
-    // meassure.calc_response_curve_sections(1, 1, true, path_gray_sections, 8, 6);
+    std::vector<cv::Mat> grayCode = meassure.acquire_img(grayCodeXY, FrameRole::Debug, 1);
     
+    gc.x = std::vector<cv::Mat>(grayCode.begin(), std::next(grayCode.begin(), 11));
+    gc.y = std::vector<cv::Mat>(std::next(grayCode.begin(),11), grayCode.end());
+
+
+
+    double pixelpitch = 0.2745;
+
+    std::vector<cv::Mat> pattern10 =
+        meassure.generatePattern(Shift_mode::four_phase_shift, _defl_::GrayCal::Method::None, path_gray_calibration, FrameRole::Debug, false, " ", 10);
+
     
-
-    //meassure.do_camera_calibration();
-
-    // White balance
-    /* std::vector<cv::Mat> frames =
-        meassure.getFrames(FrameRole::Debug);
-
-    std::array<double, 3> gain = meassure.doWhiteBalance(frames);*/
-
-    //meassure.saveSingleImage(FrameRole::Debug, frames[0], true, "C:/Users/grein/Desktop/Master");
-    //std::cout << "Gain values ";
-    //for (const auto& val : gain) {
-    //    std::cout << val << '\n';
-    //}
-    
-    /*meassure.load(FrameRole::PatternDouble, path);
-    std::vector<cv::Mat> pattern = meassure.get(FrameRole::PatternDouble);*/
-    
-    /*meassure.load(FrameRole::Contrast, path);
-    std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
-
-    meassure.load(FrameRole::ReprojectionY, path);
-    std::vector<cv::Mat> repro = meassure.get(FrameRole::ReprojectionY);
-
-    cv::Mat mask000 = meassure.getMask(contrast, 0.3, true);
-
-    cv::Mat subtracted =
-        meassure.subtractSurface(contrast[0], mask000, true);*/
-
-    std::vector<cv::Mat> raw_input =
-        meassure.do_phase_measurement(Shift_mode::four_phase_shift, 5, true, path, 10);
-
     std::vector<cv::Mat> wrappedPhase =
-        meassure.do_wrapped_phase(raw_input, 5, 4, true, path);
-    
-    meassure.load(FrameRole::Contrast, path);
+        meassure.do_wrapped_phase(pattern10, 1, 4, true, path);
+
+    //meassure.load(FrameRole::Contrast, path);
     std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
 
-    cv::Mat mask = meassure.getMask(contrastPhase, 0.3, false);
+    cv::Mat mask = meassure.getMask(contrastPhase, 0.0, false);
 
     std::vector<cv::Mat> unwrappedPhase =
-        meassure.do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::manually, true, path);
+        meassure.do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::manually, true, path, 108);
 
-    cv::Mat reference_img = meassure.generate_reference_Pattern(ReferenceMode::checkerboard, (int)4, true, path);
+    cv::Mat reference_img =
+        meassure.generate_reference_Pattern(ReferenceMode::checkerboard, (int)4, true, path);
 
-    std::vector<cv::Mat> reference =
-        meassure.getFrames(FrameRole::Debug, reference_img);
+   /* std::vector<cv::Mat> reference =
+        meassure.getFrames(FrameRole::Debug, 1, reference_img);*/
 
-    mask = meassure.getMask(contrastPhase, 0.3, true);
+    mask = meassure.getMask(contrastPhase, 0.0, true);
 
     std::vector<cv::Vec2d> ref_point =
-        meassure.getReferencePoint(reference, ReferenceMode::checkerboard, mask);
+        meassure.getReferencePoint(
+            std::vector<cv::Mat>{reference_img},
+            ReferenceMode::checkerboard, 
+            mask);
 
-
-    // Method for projecting the reference pattern and getting camera images.
-    /*std::vector<cv::Mat> cam_pattern 
-        meassure.getFrames(FrameRole::all, pattern);*/
-
-    //show1to1(pattern);
-
-    //cv::Mat mask;// (pattern.size(), CV_8U);
-    //std::vector<cv::Mat> pattern_vec{ pattern };
-
-    std::cout << ref_point.size() << " Reference Point found. \n";
-    for (const auto& point : ref_point) {
-        std::cout << point << '\n';
-    }
-
-    /*meassure.load(FrameRole::RawPhase, path);
-    std::vector<cv::Mat> unwrappedPhase = meassure.get(FrameRole::RawPhase);*/
-
-    
-    
-    
-    //// Calibrated Gray Value 4 Phase Shift - 
-   /* meassure.load(FrameRole::UnwrappedPhase, path);
-    std::vector<cv::Mat> unwrappedPhase = meassure.get(FrameRole::UnwrappedPhase);*/
-
-    /*double min1, max1;
-    cv::Point minLoc;
-
-    cv::minMaxLoc(unwrappedPhase[0], &min1, &max1, &minLoc);
-    std::cout << "min " << min1 << '\n' << "max " << max1 << '\n';
-
-    cv::drawMarker(unwrappedPhase[0], minLoc, cv::Scalar(111), 0, 20);
-    showNormalized(unwrappedPhase[0]);*/
-
-    //cv::Mat cam_Matrix = cv::Mat::eye(3, 3, CV_64F);
-    //cam_Matrix *= 2320;
-    //cam_Matrix.at<double>(0, 2) = unwrappedPhase[0].cols / 2.0;
-    //cam_Matrix.at<double>(1, 2) = unwrappedPhase[0].rows / 2.0;
-    //cam_Matrix.at<double>(2, 2) = 1;
-
-    ////cv::Size imageSize = unwrappedPhase[0].size();
-    //std::vector<double> dist_coeff{ 0.094484605499573868 , 0.50993684205766665 , 0, -0, 0.13234471663910974 }; //     -0.0, 0.0, 0.0 , 0.0, 0.0
-    //cv::Mat dist_coeffs(dist_coeff, true);
-
-
-    /*std::cout << "Matrix: " << cam_Matrix << '\n';*/
-
-    
-
-    /*std::vector<cv::Mat> cartesian = 
-        meassure.generateCartesian(true, path, 1080/100, 1920/100);*/
-
-    /*cv::Mat coordinateimg = meassure.generateCoordinateImg(true, path);*/
-
-    
-    /*meassure.load(FrameRole::WrappedPhase, path);
-    std::vector<cv::Mat> wrappedPhase = meassure.get(FrameRole::WrappedPhase);*/
-
-
-    /*std::vector<cv::Vec2d> startPts;
-
-    for (std::size_t x = 0; x < 1920; ++x) {
-        for (std::size_t y = 0; y < 1080; ++y) {
-            startPts.emplace_back(cv::Vec2d(x, y));
-        }
-    }*/
-   
-    //meassure.distortionPipelineTest(cam_Matrix, dist_coeffs, startPts);
-
-    /*std::vector<cv::Mat> pattern_distorted;
+    std::vector<cv::Mat> pattern_distorted;
     for (auto& img : unwrappedPhase) {
-        pattern_distorted.emplace_back(meassure.distortImage_manual(img, cam_Matrix, dist_coeffs));
-    }*/
-    
- /* std::vector<cv::Mat> undistorted1;
-    for (auto& img : pattern_distorted) {
-        undistorted1.emplace_back(meassure.undistortImage(img, cam_Matrix, dist_coeffs));
+        pattern_distorted.emplace_back(meassure.distortImage_manual(img, camMatrix[0], dist_Coeffs[0]));
     }
 
-    std::vector<cv::Mat> undistorted2;
-    for (auto& img : pattern_distorted) {
-        undistorted2.emplace_back(meassure.undistortImageManuell(img, cam_Matrix, dist_coeffs));
-    }
 
-    cv::Mat distortionError1 =
-        meassure.calcDistortionError(undistorted1[0]);
+    std::vector<cv::Mat> reprojection = meassure.do_reprojection(
+        pattern_distorted,
+        mask,
+        ref_point[0],
+        camMatrix[0],
+        dist_Coeffs[0],
+        108.0,
+        unwrappedPhase[0].cols,
+        unwrappedPhase[0].rows,
+        0.2745, //PixelPitch  FH 0.277    BMZ: 
+        true,
+        path,
+        532, //Dispaly Width  FH    BMZ: 527.04
+        299.2 //Dispaly Height FH:      BMZ: 296.46
+    );
 
-    cv::Mat distortionError2 =
-        meassure.calcDistortionError(undistorted2[0]);
-
-    meassure.saveSingleImage(FrameRole::DistortErrX, distortionError1, true, path);
-
-    meassure.saveSingleImage(FrameRole::DistortErrX, distortionError2, true, path);*/
-
-    //dist_coeffs[0] = cv::Mat(5, 1, CV_64FC1, cv::Scalar(0));
 
     mask = meassure.getMask(contrastPhase, 0.3, true);
 
-    std::vector<cv::Mat> reprojection = meassure.do_reprojection(
+    std::vector<cv::Mat> reprojection1 = meassure.do_reprojection(
         unwrappedPhase,
         mask,
         ref_point[0],

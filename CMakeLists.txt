@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.2...3.12 FATAL_ERROR)
 project(open_camera_cpp LANGUAGES CXX)
 
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -40,7 +39,6 @@ endif()
 
 find_library(VIMBAX_VMBC_LIB NAMES VmbC PATHS "${VIMBAX_LIB_DIR}" NO_DEFAULT_PATH)
 
-
 # DLL paths
 set(VIMBAX_VMBCPP_DLL "${VIMBAX_BIN_DIR}/VmbCPP.dll")
 set(VIMBAX_VMBC_DLL   "${VIMBAX_BIN_DIR}/VmbC.dll")
@@ -62,13 +60,13 @@ endif()
 
 # Setup target executable with the same name as our project
 add_executable (${PROJECT_NAME}
-    src/camera.cpp
+    #src/camera.cpp
     src/screen.cpp
     src/main.cpp
     src/deflectometry.cpp
     src/imgProcessing.cpp
     src/imageStore.cpp
- "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp")
+ "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp" "src/GrayCodeDecoder.cpp")
 
 
 #Debug 
@@ -77,43 +75,31 @@ message(STATUS "DEBUG: VCPKG_TARGET_TRIPLET='${VCPKG_TARGET_TRIPLET}'")
 message(STATUS "DEBUG: CMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'")
 
 
-# Find packages
-if (NOT TARGET ids_peak)
-    find_package (ids_peak REQUIRED
-        HINTS 
-            ../../../../../../../lib/
-    )
-endif ()
+# --- Find packages ---
+#if (NOT TARGET ids_peak)
+#    find_package (ids_peak REQUIRED
+#        HINTS 
+#            ../../../../../../../lib/
+#    )
+
+#endif ()
+
+set(Boost_NO_BOOST_CMAKE ON)
+
 find_package (Threads REQUIRED)
 find_package(Ceres CONFIG REQUIRED)
-# For vcpkg manifest mode (local install)
+find_package(OpenCV REQUIRED) # Normal OpenCV find
 
-find_package(OpenCV REQUIRED)
-
-# Include Goldstein headers
-include_directories(
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/include
-)
-
-# Add Goldstein source files to your executable
-target_sources(${PROJECT_NAME}
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/extract.c
-        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/grad.c
-        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/goldstein.c
-        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/Queue.c
-        ${CMAKE_SOURCE_DIR}/../parallel-Goldstein/src/util.c
-	${CMAKE_SOURCE_DIR}/src/GoldsteinWrapper.cpp    # our new wrapper
-)
+find_package(BoostdCONFIG REQUIRED)
 
 # Link against libraries
 target_link_libraries (${PROJECT_NAME}
-    ids_peak
+    #ids_peak
     ${CMAKE_THREAD_LIBS_INIT}
     ${OpenCV_LIBS}
     VimbaX::VmbCPP 
     Ceres::ceres
+    Boost::boost
 )
 
 
@@ -129,7 +115,7 @@ target_include_directories(${PROJECT_NAME}
 
 # Call deploy function
 # This function will add a post-build steps to your target in order to copy all needed files (e.g. DLL's) to the output directory.
-ids_peak_deploy(${PROJECT_NAME})
+#ids_peak_deploy(${PROJECT_NAME})
 
 # ---------------- Vimba X runtime deploy (ADD) ----------------
 if (WIN32 AND (NOT VIMBAX_ROOT OR VIMBAX_ROOT STREQUAL ""))
@@ -159,16 +145,11 @@ if(EXISTS "${VIMBAX_VMBC_DLL}")
     )
 endif()
 
-
-
-
 set_target_properties(${PROJECT_NAME} PROPERTIES
-     CXX_STANDARD 17
+    CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS NO
 )
-
-
 
 # Enable multiprocessing for MSVC
 if (MSVC)
@@ -176,15 +157,6 @@ if (MSVC)
         PRIVATE "/MP"
     )
 endif ()
-
-# For unix Build we need the environment variable GENICAM_GENTL32_PATH respectivily GENICAM_GENTL64_PATH to find the GenTL producer libraries.
-# To set these environment variables a shell script is used. This script can be automatically generated via ids_peak_generate_starter_script.
-# The shell script will be saved at ${CMAKE_CURRENT_BINARY_DIR}/${targetName}.sh and automatically copied to the output directory during post-build.
-
-# To run the samples run this script, not the binary.
-if(UNIX)
-    ids_peak_generate_starter_script(${PROJECT_NAME})
-endif()
 
 if (MSVC)
     add_compile_definitions(NOMINMAX)

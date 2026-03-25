@@ -61,6 +61,9 @@ bool VimbaBackend::openCamera(std::size_t camera_n) {
             }
         }
     }
+
+    // Primary Camera at index [0]
+
     assert((val_cams.size() >= camera_n) && "Index out of bounds for available cameras \n");
 
     // --- More Cameras than expected ---
@@ -131,7 +134,14 @@ bool VimbaBackend::openCamera(std::size_t camera_n) {
             }
             m_availableIds.push_back(deviceID);
         }
+        // Select Primary Camera
+        // Input the DeviceID of the specific cmaera. If no occurence found swap the places
+        if (m_availableIds[0].find("DEV_000F315C298F", 0) == std::string::npos) {
+            std::swap(m_availableIds[0], m_availableIds[1]);
+        }
     }
+
+
     // Here really open the valid Cameras 
     for (const auto& cam_ID : m_availableIds) {
         // This part Checks before Connecting if we can Access all the function of the camera that we need. 
@@ -172,7 +182,7 @@ bool VimbaBackend::openCamera(std::size_t camera_n) {
             return false;
         }
 
-        if (cam->Open(VmbAccessModeExclusive) != VmbErrorSuccess) {
+        if (cam->Open(VmbAccessModeFull) != VmbErrorSuccess) { //VmbAccessModeExclusive
             std::cout << "Opening Camera Failed \n";
             return false;
         }
@@ -551,8 +561,8 @@ bool VimbaBackend::adjustSettings()
         // --- find Features can be used to search in the feature tree for string snippets ---
         //findFeatures(cam, key);
 
-        double exposure_time{ 10000.0 };
-        double frame_rate{ 5.0 };
+        double exposure_time{ 100000.0 };
+        double frame_rate{ 3.0 };
 
         bool forceFree = forceFreerunTimedExposure(cam);
         bool frameRate = setFrameRate(cam, frame_rate);
@@ -561,8 +571,8 @@ bool VimbaBackend::adjustSettings()
         bool gamma = setGamma(cam, 1.0);
         bool roi = setRoi(cam);
         bool format = setFormat(cam);
-        // Package size auf 2500, 9000
-        bool package = checkPackagesize(cam, 9000);
+        // Package size auf 2500, 9000---------------
+        bool package = checkPackagesize(cam, 1500);
         if (!(forceFree && forceGain && exposure && roi && format && package && frameRate))
             return false;
     }
@@ -773,7 +783,7 @@ bool VimbaBackend::open(std::size_t i)
     }
     else return false;
     
-    logging();
+    //logging();
 
     if (!runAcquisition()) {
         std::cout << "Starting Acquisition failed \n";
@@ -787,32 +797,40 @@ void VimbaBackend::close(std::size_t i)
 {
     for(std::size_t i = 0; i < m_availableIds.size(); ++i)
     {
+        
         if (m_running[i] == false) continue;
 
         auto cam = findCameraByID(m_availableIds[i]);
         if(cam == nullptr) throw std::runtime_error("The CameraPtr is nullptr");
-
-        m_stopping.at(i).store(true, std::memory_order_relaxed);
 
         {
             VmbCPP::FeaturePtr ft;
             if (cam->GetFeatureByName("AcquisitionStop", ft) == VmbErrorSuccess && ft) {
                 if (ft->RunCommand() != VmbErrorSuccess)
                     std::cout << "AcquisitionStop failed \n";
+                //std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
         }
 
+        m_stopping[i] = true;
+
         if (cam->EndCapture() != VmbErrorSuccess)
             std::cout << "EndCapture failed \n";
-        if (cam->FlushQueue() != VmbErrorSuccess)
-            std::cout << "FlushQueue failed \n";
-        if (cam->RevokeAllFrames() != VmbErrorSuccess)
-            std::cout << "RevokeAllFrames failed \n";
 
         for (auto& frames : m_frame_ptr.at(i)) {
             if (frames && frames->UnregisterObserver() != VmbErrorSuccess)
                 std::cout << "UnregisterObserver failed \n";
         }
+
+        //std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        if (cam->FlushQueue() != VmbErrorSuccess)
+            std::cout << "FlushQueue failed \n";
+        
+        if (cam->RevokeAllFrames() != VmbErrorSuccess)
+            std::cout << "RevokeAllFrames failed \n";
+
+        
         m_frame_ptr.at(i).clear();
 
         if (cam->Close() != VmbErrorSuccess)

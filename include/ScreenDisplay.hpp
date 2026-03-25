@@ -33,6 +33,8 @@ public:
     void showCamera(const std::vector<cv::Mat>& img)
     {
         CV_Assert(img.size() <= 2);
+        CV_Assert(img[0].type() == CV_8U);
+
         std::lock_guard<std::mutex> lock(m_mutex);
         std::vector<cv::Mat> images(img.size());
 
@@ -40,7 +42,7 @@ public:
             if (img[i].empty()) continue;
             if (ptr) images[i] = ptr(img[i]);
             else images[i] = img[i];
-            images[i] = ptr(img[i]);
+            //images[i] = ptr(img[i]);
             (i % 2) ? (images[1].copyTo(m_camFrame1)) : images[0].copyTo(m_camFrame0);
         }
     }
@@ -48,7 +50,7 @@ public:
     // Push camera frame to display
     void showCamera(const cv::Mat& img) {
         {
-            std::cout << "Frame at Screen Dispaly \n";
+            CV_Assert(img.type() == CV_8U);
             std::lock_guard<std::mutex> lock(m_mutex);
             cv::Mat image;
             if (ptr) image = ptr(img);
@@ -60,6 +62,7 @@ public:
     // Push pattern frame to display
     void showPattern(const cv::Mat& img) {
         {
+            CV_Assert(img.type() == CV_8U);
             std::lock_guard<std::mutex> lock(m_mutex);
             img.copyTo(m_patternFrame);
         }
@@ -68,6 +71,7 @@ public:
     // Push processed image
     void showProcessed(const cv::Mat& img) {
         {
+            CV_Assert(img.type() == CV_8U);
             std::lock_guard<std::mutex> lock(m_mutex);
             img.copyTo(m_procFrame);
         }

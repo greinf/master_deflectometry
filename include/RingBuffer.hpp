@@ -114,9 +114,6 @@ inline bool RingBuffer::extractData(
 	//std::cout << "Extract Data " << '\n' <<
 	//	"Index " << index << '\n';
 
-	if (m_raw.empty())
-		throw std::runtime_error("RingBuffer empty");
-
 	VmbUint32_t bufferSize = 0;
 	if (pFrame->GetBufferSize(bufferSize) != VmbErrorSuccess || bufferSize == 0)
 		throw std::runtime_error("GetBufferSize failed");
@@ -142,8 +139,6 @@ inline bool RingBuffer::extractData(
 
 	m_last_success.store(static_cast<int>(index),
 		std::memory_order_release);
-	
-	//std::cout << "Successfull frame into ringbuffer with index " << m_last_success.load() << '\n';
 
 	return true;
 }

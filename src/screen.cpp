@@ -7,11 +7,178 @@
 #include <opencv2/core.hpp>
 #include "config/PhaseShiftConfig.hpp"
 #include "RowPolicy.hpp"
+#include "GrayCodeConfig.hpp"
+#include <bitset>
+#include <boost/dynamic_bitset.hpp>
+#include <numeric>
 
 
 Pattern::Pattern(ImageStore& img_store) :
 	m_img_store { img_store }
 {  }
+
+
+std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config) 
+{
+	CV_Assert(config.creation.pixel_x && config.creation.pixel_y);
+	CV_Assert(config.creation.resolution_x && config.creation.resolution_y);
+	CV_Assert(config.creation.pixel_x >= config.creation.resolution_x);
+	CV_Assert(config.creation.pixel_y >= config.creation.resolution_y);
+	
+	// Auto& is necessary here. Both the member EvalParamter as well as the decleration are private
+	// with a public getterfunction. This leads to the case the type is "officially" not known outside the 
+	// GrayCodeConfig struct. 
+	auto& eval = config.getEvalParameter();
+
+	const int bit_depth_x = eval.bitdepth_x = 
+		static_cast<int>(std::ceil(std::log2(config.creation.resolution_x)));
+	const int bit_depth_y = eval.bitdepth_y = 
+		static_cast<int>(std::ceil(std::log2(config.creation.resolution_y)));
+
+	CV_Assert(bit_depth_x < 27 && bit_depth_y < 27);
+
+	// Create all Graycode according to the biggest needed Value
+	const int dominant_bit_depth = (bit_depth_x > bit_depth_y) ?
+		bit_depth_x : bit_depth_y;
+
+	const int dominant_pixel_n = (config.creation.pixel_x > config.creation.pixel_y) ?
+		config.creation.pixel_x : config.creation.pixel_y;
+
+	std::vector<boost::dynamic_bitset<>> grayCodes =
+		generateAllGrayCode(dominant_bit_depth);
+
+	std::vector<cv::Mat> grayCodeImages =
+		generatePatternFromGrayCode(config, grayCodes);
+	
+	return{};
+}
+
+
+std::vector<cv::Mat> Pattern::generatePatternFromGrayCode(
+	GrayCodeConfig& config,
+	const std::vector<boost::dynamic_bitset<>>& GrayCode)
+{
+	CV_Assert(!GrayCode.empty());
+	
+	std::vector<cv::Mat> x_GrayCode = generateXGray(config, GrayCode);
+
+	/*for (const auto img : x_GrayCode) {
+		cv::imshow("GrayCode", img);
+		cv::waitKey(0);
+	}*/
+
+
+	std::vector<cv::Mat> y_GrayCode = generateYGray(config, GrayCode);
+
+	for (const auto img : y_GrayCode) {
+		cv::imshow("GrayCode", img);
+		cv::waitKey(0);
+	}
+
+	// We start always with x-direction
+	std::vector<cv::Mat> images(config.creation.resolution_x+config.creation.resolution_y);
+	
+	return{};
+
+}
+
+// This generate Gray Code | | | | ...
+// 1 lowest res, 2, 3, ... 1 2 3 4 ...
+std::vector<cv::Mat> Pattern::generateXGray(
+	GrayCodeConfig& config,
+	const std::vector<boost::dynamic_bitset<>>& grayCode)
+{
+	CV_Assert(config.creation.pixel_x % 2 != 1);
+	CV_Assert(grayCode.size() >= config.creation.pixel_x);
+
+	const std::size_t n_pics = static_cast<std::size_t>(
+		std::ceil(std::log2(config.creation.resolution_x)));
+	std::vector<cv::Mat> grayCodeimgX(n_pics);
+	std::size_t n_bit = grayCode[0].size();
+
+	cv::parallel_for_(cv::Range(0, n_pics),
+		[&](const cv::Range& range) {
+			for (int i = range.start; i < range.end; ++i) {
+				cv::Mat line(1, config.creation.pixel_x, CV_8U);
+				uchar* line_ptr = line.ptr<uchar>(0);
+				for (std::size_t u = 0; u < config.creation.pixel_x; ++u) {
+					// MSB 0, LSB 1
+					std::size_t count;
+					if (config.creation.starBit == GrayCodeConfig::lsb) //MSB
+					{
+						count = (n_bit - 1) - i;
+					}
+					else count = i;
+
+					line_ptr[u] = (grayCode[u][count]) ? (0) : (255);
+				}
+				cv::Mat img = cv::repeat(line, config.creation.pixel_y, 1);
+				grayCodeimgX[i] = img;
+			}
+		});
+
+	return grayCodeimgX;
+}
+
+// Generate Gray code ------
+std::vector<cv::Mat> Pattern::generateYGray(
+	GrayCodeConfig& config,
+	const std::vector<boost::dynamic_bitset<>>& grayCode)
+{
+	CV_Assert(config.creation.pixel_y % 2 != 1);
+	CV_Assert(grayCode.size() >= config.creation.pixel_y);
+
+	const std::size_t n_pics = static_cast<std::size_t>(
+		std::ceil(std::log2(config.creation.resolution_y)));
+	std::vector<cv::Mat> grayCodeimgY(n_pics);
+	std::size_t n_bit = grayCode[0].size();
+
+	cv::parallel_for_(cv::Range(0, n_pics),
+		[&](const cv::Range& range) {
+			for (int i = range.start; i < range.end; ++i) {
+				cv::Mat line(1, config.creation.pixel_y, CV_8U);
+				uchar* line_ptr = line.ptr<uchar>(0);
+				for (std::size_t u = 0; u < config.creation.pixel_y; ++u) {
+					// MSB 0, LSB 1
+					std::size_t count;
+					if (config.creation.starBit == GrayCodeConfig::lsb) //MSB
+					{
+						count = (n_bit - 1) - i;
+					}
+					else count = i;
+
+					line_ptr[u] = (grayCode[u][count]) ? (0) : (255);
+				}
+				cv::Mat img = cv::repeat(line.t(), 1, config.creation.pixel_x);
+				grayCodeimgY[i] = img;
+			}
+		});
+
+	return grayCodeimgY;
+}
+
+std::vector<boost::dynamic_bitset<>> Pattern::generateAllGrayCode(
+	const int max_bit_depth)
+{
+	CV_Assert(max_bit_depth > 0);
+	const std::size_t max_num{ static_cast<std::size_t>(std::pow(2, max_bit_depth)) };
+	// Create Vector to work the on the decimals
+	std::vector<int> decimal_num(max_num);
+	std::iota(decimal_num.begin(), decimal_num.end(), 0);
+	std::vector < boost::dynamic_bitset<>> gray_codes(max_num);
+	const std::size_t bit_depth= static_cast<std::size_t>(max_bit_depth);
+
+	cv::parallel_for_(cv::Range(0, static_cast<int>(max_num)),
+		[&](const cv::Range& range) {
+			for (int i = range.start; i < range.end; ++i)
+			{
+				gray_codes[static_cast<std::size_t>(i)] = 
+					GrayCode::grayCode(static_cast<unsigned long>(i), bit_depth);
+			}
+		});
+
+	return gray_codes;
+}
 
 
 // n_checkersize in pixel
@@ -123,7 +290,7 @@ std::vector<cv::Mat> Pattern::generateGrayCalibrationSequence(
 	(pixel_x != m_pixel_x) ? (W = pixel_x) : (W = m_pixel_x);
 	(pixel_y != m_pixel_y) ? (H = pixel_y) : (H = m_pixel_y);
 
-	for (int val = 0; val <= 255; val += stepwidth)
+	for (int val = 0; val < 256; val += stepwidth)
 	{
 		cv::Mat frame(H, W, CV_8UC1);
 
@@ -221,11 +388,17 @@ std::vector<cv::Vec2i> Pattern::getCartesianGridpoints(
 }
 
 
-bool Pattern::prepareShiftParameters(int n_periods_in_y, int steps) {
+bool Pattern::prepareShiftParameters(double n_periods_in_y, int steps) {
 	try {
 		CV_Assert(m_pixel_x > 0 && m_pixel_y > 0);
 		CV_Assert(n_periods_in_y >= 1);
 		CV_Assert(steps >= 1);
+		if (n_periods_in_y == 1.0) {
+			m_wavelength = 0;
+			m_steps = steps;
+			m_shift_length = 0;
+			return true;
+		}
 		m_steps = steps;
 		m_wavelength = static_cast<double>(m_pixel_y) / static_cast<double>(n_periods_in_y); //Number of periods is bound to the y-Axis here! 
 		m_shift_length = ((CV_2PI) / static_cast<double>(steps));
@@ -245,8 +418,7 @@ std::vector<cv::Mat> Pattern::generatePhase(
 	double wavelength) 
 {
 	try {
-		CV_Assert(wavelength > 0);
-
+		CV_Assert(wavelength >= 0);
 		cv::Mat row = generateRowPhase(pixel_x, wavelength);       // 1 × pixel_x
 		cv::Mat col = generateColumnPhase(pixel_y, wavelength);    // pixely x 1
 
@@ -347,10 +519,13 @@ std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 			cv::Mat pattern64 = mean_value + amplitude * cosine;  // range [mean-ampl, mean+ampl]
 
 			m_img_store.add(FrameRole::PatternDouble, pattern64.clone());
+
 			cv::Mat pattern8;
 			//cv::normalize(pattern64, pattern8, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+			// Here Changed to double OUTPUT 
 			pattern64.convertTo(pattern8, CV_8U, 1.0, 0.0);
-			outPatterns.push_back(pattern8);
+			outPatterns.push_back(pattern8);  // Instead of pattern8 !!!!!!!!!!1
 		}
 	}
 	return outPatterns;
@@ -358,7 +533,9 @@ std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 
 cv::Mat Pattern::generateColumnPhase(int pixel_y, double wave_length) {
 	try {
-		CV_Assert(wave_length > 0 && pixel_y > 0);
+		CV_Assert(wave_length >= 0 && pixel_y > 0);
+
+		if (wave_length == 0) wave_length = pixel_y;
 
 		cv::Mat column(pixel_y, 1, CV_64F);
 		
@@ -380,7 +557,9 @@ cv::Mat Pattern::generateColumnPhase(int pixel_y, double wave_length) {
 
 cv::Mat Pattern::generateRowPhase(int pixel_x, double wave_length) {
 	try {
-		CV_Assert(wave_length > 0 && pixel_x > 0);
+		CV_Assert(wave_length >= 0 && pixel_x > 0);
+
+		if (wave_length == 0) wave_length = pixel_x;
 
 		cv::Mat row(1, pixel_x, CV_64F);
 		double* ptr = row.ptr<double>(0);
@@ -408,7 +587,7 @@ void Pattern::generate_optimalPhase() {
 
 std::vector<cv::Mat> Pattern::generate_phaseShift(
 	Shift_mode mode, 
-	int n_periods_in_y, 
+	double n_periods_in_y, 
 	double mean,
 	double ampl,
 	int pixelX,
@@ -488,6 +667,7 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 
 		return patterns;
 	}
+	return{};
 }
 
 std::vector<defl::PhaseShiftConfig> Pattern::getPhaseConfig() const

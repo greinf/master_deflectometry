@@ -1,10 +1,10 @@
 ﻿#include "imgProcessing.hpp"
 
+#include "enums.hpp"
 #include <opencv2/opencv.hpp>
 #include <cassert>
 #include <math.h>
 #include <opencv2/phase_unwrapping/histogramphaseunwrapping.hpp>
-#include "GoldsteinWrapper.hpp"
 #include <filesystem>
 #include <array>
 #include <vector>
@@ -20,6 +20,7 @@
 #include <cmath>
 #include "GrayCalibVector.hpp"
 #include "utils.hpp"
+
 
 
 auto normalizeAndDisplay = [](const cv::Mat& img) -> void {
@@ -676,6 +677,143 @@ std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
     return {};
 }
 
+std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
+    const cv::Mat& img,
+    const cv::Mat& mask,
+    const cv::Size pattern_size) const
+{
+    CV_Assert(!img.empty() && !mask.empty());
+    CV_Assert(img.type() == CV_8U);
+    CV_Assert(mask.type() == CV_8U);
+
+    double upscale = 2;
+    std::vector<cv::Vec2f> centers;
+    
+    cv::Mat gray;
+    img.copyTo(gray);
+    
+    cv::medianBlur(gray, gray, 3);
+    cv::GaussianBlur(gray, gray, { 5,5 }, 0);
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    if (contours.empty()) return {};
+
+    auto it = std::max_element(contours.begin(), contours.end(),
+        [](const auto& a, const auto& b) { return cv::contourArea(a) < cv::contourArea(b); });
+    
+    int roiPadding = 20;
+
+    cv::Rect roi = cv::boundingRect(*it);
+    roi.x = std::max(0, roi.x - roiPadding);
+    roi.y = std::max(0, roi.y - roiPadding);
+    roi.width = std::min(mask.cols - roi.x, roi.width + 2 * roiPadding);
+    roi.height = std::min(mask.rows - roi.y, roi.height + 2 * roiPadding);
+
+    cv::Mat roiGray = img(roi).clone();
+
+    // 2) Upscale to make blobs easier
+    cv::Mat up;
+    if (upscale > 1.0) {
+        cv::resize(roiGray, up, cv::Size(), upscale, upscale, cv::INTER_CUBIC);
+    }
+    else {
+        up = roiGray;
+    }
+
+    //normalizeAndDisplay(up);
+
+    // 3) Preprocess inside ROI: increase local contrast a bit (optional but helps)
+    // CLAHE is often good for uneven illumination
+    {
+        cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(15, 15));
+        clahe->apply(up, up);
+    }
+
+    //normalizeAndDisplay(up);
+
+    cv::GaussianBlur(up, up, cv::Size(3, 3), 0);
+
+    cv::Mat bin;
+    cv::threshold(up, bin, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+    normalizeAndDisplay(bin);
+
+    cv::GaussianBlur(bin, bin, cv::Size(5, 5), 0);
+
+    //normalizeAndDisplay(bin);
+
+    cv::SimpleBlobDetector::Params p;
+    p.filterByColor = true;
+    p.blobColor = 0;                 // dunkle Punkte
+
+    p.filterByArea = true;
+    p.minArea = 8;                   // anpassen!
+    p.maxArea = 50;                 // anpassen!
+
+    p.minDistBetweenBlobs = 13;
+
+    p.filterByCircularity = false;   // erst mal aus
+
+    //p.minCircularity = 0.5;
+    p.filterByInertia = false;
+    p.filterByConvexity = false;
+
+    auto detector = cv::SimpleBlobDetector::create(p);
+
+    bool ok = cv::findCirclesGrid(
+        bin, pattern_size, centers,
+        cv::CALIB_CB_SYMMETRIC_GRID, //| cv::CALIB_CB_CLUSTERING,
+        detector
+    );
+
+    cv::Mat imagePointsstart = bin.clone();
+    cv::drawChessboardCorners(imagePointsstart, pattern_size, centers, ok);
+
+    normalizeAndDisplay(imagePointsstart);
+
+    // Map points back to original image coordinates
+    std::vector<cv::Vec2f> centersUp;
+    for (const auto& pt : centers) {
+        cv::Point2f p0 = pt;
+        if (upscale > 1.0) p0 *= (1.0f / static_cast<float>(upscale));
+        p0.x += static_cast<float>(roi.x);
+        p0.y += static_cast<float>(roi.y);
+        centersUp.push_back(p0);
+    }
+
+    std::vector<cv::Vec2d> doubleval;
+    for (auto& vec : centersUp) {
+        doubleval.push_back(cv::Vec2d(vec));
+    }
+
+    return doubleval;
+}
+
+
+std::vector<cv::Vec3d> ImageProcessing::createCalibPatternObjectPoints(
+    const cv::Size& pattern_size,
+    const double distance)
+{
+    CV_Assert(pattern_size.area() > 0);
+    CV_Assert(distance > 0);
+    
+    std::vector<cv::Vec3d> calibrationObjectPoints;
+
+    for (int row = 0; row < pattern_size.height; ++row) {
+        for (int col = 0; col < pattern_size.width; ++col) {
+            calibrationObjectPoints.emplace_back(
+                cv::Vec3d(
+                    static_cast<double>(row) * distance,
+                    static_cast<double>(col) * distance,
+                    0.0)
+            );
+        }
+    }
+
+    return calibrationObjectPoints;
+}
+
 
 std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_calibration_Points(
     const std::vector<cv::Mat>& unwrapped,
@@ -684,24 +822,18 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
     const double wavelength,
     const int gridX,
     const int gridY,
-    const double pixe_pitch_mm,
-    const double screenWidth_mm,
-    const double screenHeight_mm) 
+    const double pixe_pitch_mm) 
 {
     CV_Assert(unwrapped.size() == 2);
     CV_Assert(unwrapped[0].type() == CV_64F);
     CV_Assert(unwrapped[0].size() == unwrapped[1].size());
     CV_Assert(unwrapped[0].size() == mask.size());
     CV_Assert(gridX >= 0 && gridY >= 0);
-    CV_Assert(screenWidth_mm > 0 && screenHeight_mm > 0);
-    CV_Assert((refPoint.val[0] > 0) && (refPoint.val[0] < unwrapped[0].rows));
-    CV_Assert((refPoint.val[1] > 0) && (refPoint.val[1] < unwrapped[1].cols));
-
+   
 
     std::vector<cv::Vec2d> imagePoints;
     std::vector<cv::Vec3d> objectPoints;
     std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> output;
-
 
     cv::Size sz = unwrapped[0].size();
     const double step_X = static_cast<double>(sz.width) / gridX;
@@ -712,15 +844,23 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
     cv::cvtColor(debug, debug, cv::COLOR_GRAY2BGR);
 
     // --- Get the intenisty values at the reference point ---
-    const double phiRefX = bilinearInterpolation(unwrapped[0], refPoint);
-    const double phiRefY = bilinearInterpolation(unwrapped[1], refPoint);
+    const double phiRefX{ 0 };
+    const double phiRefY{ 0 };
+
+    cv::Mat mask64;
+    mask.convertTo(mask64, CV_64F);
+
+    if (refPoint.val[0] > 0  && refPoint.val[1] > 0) {
+        const double phiRefX = bilinearInterpolation(unwrapped[0], refPoint);
+        const double phiRefY = bilinearInterpolation(unwrapped[1], refPoint);
+        CV_Assert(bilinearInterpolation(mask64, refPoint));
+    }
    
     // Sanity check if ref is invalid, you can't anchor the coordinate system
     CV_Assert(std::isfinite(phiRefX) && std::isfinite(phiRefY));
     // Checks if the referencePoint is marked as valid on the mask  
-    cv::Mat mask64;
-    mask.convertTo(mask64, CV_64F);
-    CV_Assert(bilinearInterpolation(mask64, refPoint));
+    
+    
 
     // --- Debug ---
     double minX = std::numeric_limits<double>::infinity();
@@ -946,6 +1086,219 @@ std::pair<double, double> ImageProcessing::fitLine1D(const std::vector<double>& 
     double b = (sumy - a * sumx) / N;
     
     return { a, b };
+}
+
+
+// Left handed Coordiante System is created
+void ImageProcessing::calculatehousholder(
+    const cv::Mat& rvec_mirror, 
+    const cv::Mat& tvec_mirror,
+    cv::Mat& tvec_virt,
+    cv::Mat& H) 
+{
+
+    cv::Mat R_mirror;
+    cv::Rodrigues(rvec_mirror, R_mirror);
+
+    // Z-Axis should be equal to the normal of the surface. Extract z col
+    cv::Vec3d n = R_mirror.col(2);
+
+    // 3. Berechne den Abstand d der Kamera zur Ebene (Hesse-Normalform)
+    // d = n * P. Da die Kamera bei (0,0,0) ist, nutzen wir tvec_mirror als Punkt auf der Ebene.
+    double d = n.dot(cv::Vec3d(tvec_mirror.at<double>(0),
+        tvec_mirror.at<double>(1),
+        tvec_mirror.at<double>(2)));
+
+    // 4. Position der virtuellen Kamera (tvec_virt)
+    // Spiegelung des Ursprungs (0,0,0) an der Ebene: P' = P - 2*(n*P - d)*n
+    // Da P = (0,0,0), vereinfacht es sich zu: P' = 2 * d * n
+    cv::Mat t_virt = cv::Mat(2.0 * d * cv::Mat(n));
+    t_virt.copyTo(tvec_virt);
+
+    // 5. Orientierung der virtuellen Kamera (R_virt)
+    // Wir spiegeln die Achsen der echten Kamera an der Ebene.
+    // Reflexionsmatrix Householder: H = I - 2 * n * n^T
+    cv::Mat I = cv::Mat::eye(3, 3, CV_64F);
+    cv::Mat n_mat = cv::Mat(n);
+    H = I - 2.0 * n_mat * n_mat.t();
+    
+    cv::Mat R_virt_mat = H * I; 
+}
+
+
+/**
+ * Spiegelt Objektpunkte an einer Ebene, um sie für eine virtuelle Kamera nutzbar zu machen.
+ * @param realPoints    Die originalen 3D-Punkte (z.B. deine Löcher in der Oberfläche)
+ * @param rvec_mirror   Rotation des Spiegels (aus der vorigen Resektion)
+ * @param tvec_mirror   Translation des Spiegels (aus der vorigen Resektion)
+ * @return              Vektor mit den gespiegelten 3D-Punkten
+ */
+std::vector<cv::Point3d> ImageProcessing::transformPointsToMirrorWorld(
+    const std::vector<cv::Point3d>& realPoints,
+    const cv::Mat& housholder,
+    const cv::Mat& tvec_mirror,
+    const cv::Mat& rvec_cam_mir)
+{
+    cv::Vec3d t_vec = tvec_mirror.col(0);
+
+    cv::Matx33d house(housholder);
+
+    cv::Matx33d rot_cam_mir;
+
+    cv::Rodrigues(rvec_cam_mir, rot_cam_mir);
+
+    cv::Matx33d rot_cam_mir_inv = rot_cam_mir.t();
+
+    cv::Vec3d translation_back = -rot_cam_mir_inv * t_vec;
+
+
+    std::vector<cv::Point3d> mirrorPoints;
+    for (const auto& P : realPoints) {
+        
+        cv::Vec3d P_vec(P.x, P.y, P.z);
+        
+        cv::Matx33d Rx_fast(1, 0, 0,
+            0, 1, 0,
+            0, 0, 1);
+
+        cv::Vec3d disp_inMirror = (rot_cam_mir * P_vec) + t_vec;
+        
+        cv::Vec3d mir_pt = (house * disp_inMirror);
+
+        // back to world
+
+        cv::Vec3d wordPt = (rot_cam_mir_inv * mir_pt) + translation_back;
+
+        cv::Vec3d mirror_ax = Rx_fast * wordPt;
+
+        mirrorPoints.push_back(mirror_ax);
+    }
+
+    return mirrorPoints;
+}
+
+
+
+std::vector<cv::Point3d> prepareDisplayPoints(
+    const std::vector<cv::Point3d>& displayLocalPoints, // Die (x,y,0) Werte vom Display
+    const cv::Mat& housholder,                          // Deine H-Matrix
+    const cv::Mat& tvec_mirror)                         // Wo der Spiegel steht
+{
+    std::vector<cv::Point3d> mirrorWorldPoints;
+
+    // Initiale Schätzung der Display-Lage zur Kamera (BEVOR Spiegelung)
+    // 20cm rechts (X=200), 5cm unten (Y=50), Display schaut nach vorne (Z=0)
+    cv::Vec3d displayOffset(200.0, 50.0, 0.0);
+
+    for (const auto& pt : displayLocalPoints) {
+        // 1. Punkt in das Kamera-Koordinatensystem bringen (reale Welt)
+        // Wenn das Display kaum rotiert ist, addieren wir einfach den Offset
+        cv::Vec3d p_real = cv::Vec3d(pt.x, pt.y, pt.z) + displayOffset;
+
+        // 2. Jetzt diesen Punkt an der Spiegelebene spiegeln
+        // Formel: P' = H * (P - A) + A  (A ist ein Punkt auf dem Spiegel)
+        cv::Mat p_mirror_mat = housholder * (cv::Mat(p_real) - tvec_mirror) + tvec_mirror;
+
+        cv::Vec3d p_final = cv::Vec3d(p_mirror_mat);
+        mirrorWorldPoints.push_back(cv::Point3d(p_final[0], p_final[1], p_final[2]));
+    }
+
+    return mirrorWorldPoints;
+}
+
+
+auto createaffine = [](const cv::Mat& r_vec,
+    const cv::Mat& tvec,
+    cv::Matx44d& out)
+    {
+        cv::Mat R;
+        cv::Rodrigues(r_vec, R);
+
+        // 2. Die 4x4 Matrix initialisieren
+        out = cv::Matx44d::eye(); // Erzeugt Einheitsmatrix (unten steht schon 0,0,0,1)
+
+        cv::Mat R_d, t_d;
+        R.convertTo(R_d, CV_64F);
+        tvec.convertTo(t_d, CV_64F);
+
+        // 3. R und tvec in T kopieren
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                out(i, j) = R.at<double>(i, j);
+            }
+            out(i, 3) = tvec.at<double>(i, 0);
+        }
+    };
+
+
+void ImageProcessing::backToWorld(
+    cv::Mat& rvec_w,
+    cv::Mat& tvec_w,
+    const cv::Mat& rvec_c,
+    const cv::Mat& tvec_c,
+    const cv::Mat& housholder,
+    const cv::Mat& cam_mirror_rvec,
+    const cv::Mat& cam_mirror_trans)
+{
+
+    cv::Matx44d observer;
+
+    // Create Transform from VirtualMirror to cam.
+
+    cv::Matx44d affine_virt_mirr_to_cam;
+
+    createaffine(rvec_c, tvec_c, affine_virt_mirr_to_cam);
+
+    observer = affine_virt_mirr_to_cam;
+
+    // Create Transofrm from Cam to mirror
+    
+    cv::Mat rot_mirror_cam_inv;
+    cv::Rodrigues(-cam_mirror_rvec, rot_mirror_cam_inv);
+
+    cv::Mat cam_mirror_trans_inv = -rot_mirror_cam_inv * cam_mirror_trans;
+
+    cv::Matx44d affine_cam_to_mirr;
+
+    createaffine(-cam_mirror_rvec, cam_mirror_trans_inv, affine_cam_to_mirr);
+
+    observer = affine_cam_to_mirr * affine_virt_mirr_to_cam;
+
+    // In the mirror coordiante System apply the mirroring
+
+    cv::Mat M = cv::Mat::eye(4, 4, housholder.type());
+
+    M.at<double>(3, 3) = -1;
+
+    cv::Matx44d householder(M);
+
+    observer = householder * affine_cam_to_mirr * affine_virt_mirr_to_cam;
+
+    // And now back Mirror -> cam
+
+    cv::Matx44d mirror_to_cam;
+
+    createaffine(cam_mirror_rvec, cam_mirror_trans, mirror_to_cam);
+    
+    observer = mirror_to_cam * householder * affine_cam_to_mirr * affine_virt_mirr_to_cam;
+
+    // Cam to real Disp
+
+   /* cv::Matx44d cam_to_real_disp;
+
+    cv::Mat cam_disp_rvec_inv;
+
+    cv::Rodrigues(-rvec_c, cam_disp_rvec_inv);
+
+    cv::Mat cam_disp_tvec_inv = -cam_disp_rvec_inv * tvec_c;
+
+    createaffine(-rvec_c, cam_disp_tvec_inv, cam_to_real_disp);
+
+    observer = cam_to_real_disp * mirror_to_cam * householder * affine_cam_to_mirr * affine_virt_mirr_to_cam;*/
+    cv::Mat dd(observer);
+    tvec_w = dd;
+
+    //rvec_w = cv::Mat(observer.get_minor<3, 3>(0, 0)).clone();
 }
 
 std::vector<std::pair<double,double>> ImageProcessing::find_ParallelogramCorners(const cv::Mat& bin)
@@ -1532,6 +1885,63 @@ cv::Mat ImageProcessing::quantizeImage(
     return output;
 }
 
+cv::Mat_<cv::Vec3d> ImageProcessing::getReflectedRays(
+    const cv::Mat_<cv::Vec3d>& rays,
+    const cv::Vec3d& normalVec,
+    const cv::Mat& mask)
+{
+    CV_Assert(rays.size() == mask.size());
+    CV_Assert(!rays.empty() && !mask.empty());
+    CV_Assert(cv::norm(normalVec) != 0);
+
+    cv::Vec3d n = normalVec / cv::norm(normalVec);
+
+    // All the unimportant rays are set to zero. 
+    cv::Mat_<cv::Vec3d> refelcted_rays(rays.size(), cv::Vec3d(0,0,0));
+
+    cv::parallel_for_(cv::Range(0, rays.rows),
+        [&](const cv::Range& range) {
+            for (int row = range.start; row < range.end; ++row) {
+                const cv::Vec3d* ray_ptr = rays.ptr<cv::Vec3d>(row);
+                const uchar* mask_ptr = mask.ptr<uchar>(row);
+                cv::Vec3d* reflected_ray_ptr = refelcted_rays.ptr<cv::Vec3d>(row);
+                for (int cols = 0; cols < rays.cols; ++cols) {
+                    if (cv::norm(mask_ptr[cols]) == 0) continue;
+
+                    double dot = ray_ptr[cols].ddot(n);
+
+                    cv::Vec3d subtract = 2 * dot * n;
+
+                    reflected_ray_ptr[cols] = ray_ptr[cols] - subtract;
+                }
+            }
+        });
+    return refelcted_rays;
+}
+
+
+
+cv::Vec3d ImageProcessing::getNormalofPlane(
+    cv::Mat_<cv::Vec3d> objectPoints)
+{
+    CV_Assert(!objectPoints.empty());
+    CV_Assert(objectPoints.rows > 2 && objectPoints.cols > 2);
+
+    int center_x = objectPoints.cols / 2;
+    int center_y = objectPoints.rows / 2;
+
+    cv::Vec3d x_axis = objectPoints.at<cv::Vec3d>(center_y, center_x + 1) -
+        objectPoints.at<cv::Vec3d>(center_y, center_x);
+    cv::Vec3d y_axis = objectPoints.at<cv::Vec3d>(center_y + 1, center_x) -
+        objectPoints.at<cv::Vec3d>(center_y, center_x);
+
+    cv::Vec3d n = x_axis.cross(y_axis);
+
+    n /= cv::norm(n);
+
+    return n;
+}
+
 std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
     const cv::Mat_<cv::Vec3d> rays,
     const cv::Mat_<cv::Vec3d> display_coordiantes)
@@ -1582,6 +1992,14 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
             double* angle_ptr = angle.ptr<double>(r);
             for (int col = 0; col < rays.cols; ++col) {
                 cv::Vec3d ray = drow[col];
+
+                // If Ray is set to {-1,-1,-1} they are masked as invalid and we jump this part
+                if (ray[0] == -1 && ray[1] == -1 && ray[2] == -1) {
+                    t_ptr[col] = std::numeric_limits<double>::quiet_NaN();
+                    hit[col] = cv::Vec3d(0, 0, 0);
+                    hit_ptr[col] = 0;
+                    continue;
+                }
                 const double denom =
                     surface_normal.ddot(ray);
 
@@ -1829,28 +2247,42 @@ cv::Mat ImageProcessing::calcCoordinateImage(
 
 cv::Mat ImageProcessing::rotateCoordinatedGrid(
     const cv::Mat& img,
-    const cv::Vec3d& rotVector)
+    const cv::Vec3d& rotVector,
+    Rotation rot)
 {
     CV_Assert(!img.empty());
     CV_Assert(img.channels() == 3);
    
     if (rotVector[0] == 0 && rotVector[1] == 0 && rotVector[2] == 0) return img;
+    cv::Matx33d R;
 
-    cv::Matx33d Rx(
-        1, 0, 0,
-        0, std::cos(rotVector[0]), -sin(rotVector[0]),
-        0, std::sin(rotVector[0]), std::cos(rotVector[0])
-    );
+    switch (rot) {
+    case(Rotation::eulerxy):
+    {
+        cv::Matx33d Rx(
+            1, 0, 0,
+            0, std::cos(rotVector[0]), -sin(rotVector[0]),
+            0, std::sin(rotVector[0]), std::cos(rotVector[0])
+        );
 
-    cv::Matx33d Ry(
-        std::cos(rotVector[1]), 0, std::sin(rotVector[1]),
-        0, 1, 0,
-        -std::sin(rotVector[1]), 0, std::cos(rotVector[1])
-    );
+        cv::Matx33d Ry(
+            std::cos(rotVector[1]), 0, std::sin(rotVector[1]),
+            0, 1, 0,
+            -std::sin(rotVector[1]), 0, std::cos(rotVector[1])
+        );
 
-    // choose order: usually Ry * Rx (but depends on your convention)
-    cv::Matx33d R = Ry * Rx;
-
+        R = Ry * Rx;
+        break;
+    }
+    case(Rotation::rodrigeuz):
+    {
+        cv::Mat rot;
+        cv::Rodrigues(rotVector, rot);
+        R = cv::Matx33d(rot);
+        break;
+    } 
+    }
+    
     cv::Mat_<cv::Vec3d> output(img.rows, img.cols);
 
     cv::parallel_for_(cv::Range(0, img.rows),
@@ -1935,24 +2367,32 @@ cv::Mat ImageProcessing::angle_camera_toScreenNormal(
 
 
 cv::Mat ImageProcessing::grayCalibMask(const std::vector<cv::Mat>& img) {
-    CV_Assert(!img.empty());
     CV_Assert(img.size() == 2);
+    CV_Assert(img[0].size() == img[1].size());
+    CV_Assert(img[0].channels() == 1 && img[1].channels() == 1);
 
-    std::vector<cv::Mat> img64;
-    if (img[0].type() != CV_64F) {
-        for (const auto& image : img) {
-            cv::Mat mat64F;
-            image.convertTo(mat64F, CV_64F);
-            img64.push_back(mat64F);
-        }
+    std::vector<cv::Mat> img64(2);
+    for (int i = 0; i < 2; ++i) {
+        if (img[i].depth() != CV_64F)
+            img[i].convertTo(img64[i], CV_64F);
+        else
+            img64[i] = img[i];
     }
-    else img64 = img;
 
-    cv::Mat mask = img64[1] - img64[0];
+    cv::Mat diff = img64[1] - img64[0];
+
+    double minVal, maxVal;
+    cv::minMaxLoc(diff, &minVal, &maxVal);
+
     cv::Mat mask8u;
-    cv::normalize(mask, mask8u, 0, 255, cv::NORM_MINMAX, CV_8U);
-    
-    cv::threshold(mask8u, mask8u, 255 * 0.4, 255, CV_8U);
+    if (maxVal <= 1.0) {
+        cv::threshold(diff, mask8u, 0.4, 255, cv::THRESH_BINARY);
+    }
+    else {
+        cv::threshold(diff, mask8u, 255.0 * 0.4, 255, cv::THRESH_BINARY);
+    }
+
+    mask8u.convertTo(mask8u, CV_8U);
     return mask8u;
 }
 
@@ -2313,7 +2753,7 @@ std::vector<cv::Mat> ImageProcessing::do_wrapped_Phase(const std::vector<cv::Mat
 
                         wp[x] = std::atan2(-a, b);
                         mp[x] = std::sqrt(a * a + b * b);
-                        cp[x] = (2.0f * mp[x]) / c;
+                        cp[x] = (2.0 * mp[x]) / c;
                     }
                 }
             });
@@ -2323,6 +2763,63 @@ std::vector<cv::Mat> ImageProcessing::do_wrapped_Phase(const std::vector<cv::Mat
     for (auto& m : contrast) { return_container.push_back(std::move(m)); }
     for (auto& m : baseIntensity) { return_container.push_back(std::move(m)); }
     return return_container;
+}
+
+
+void ImageProcessing::unwrap_row(
+    const cv::Mat& wrapped,
+    const cv::Mat& wrapped_reference,
+    cv::Mat& unwrapped,
+    const double wavelength,
+    const cv::Mat& mask,
+    int row)
+{
+    CV_Assert(wrapped.size() == wrapped_reference.size());
+    CV_Assert(wavelength > 0);
+    CV_Assert(row >= 0 && row < wrapped.rows);
+    minmaxloc data = get_minmaxloc(wrapped_reference);
+    CV_Assert(data.minval >= 0);
+
+    cv::Mat wrapped64;
+    if (wrapped.type() != CV_64F) {
+        wrapped.convertTo(wrapped64, CV_64F);
+    }
+    else wrapped64 = wrapped;
+
+    cv::Mat wrappedref64;
+    if (wrapped_reference.type() != CV_64F) {
+        wrapped_reference.convertTo(wrappedref64, CV_64F);
+    }
+    else wrappedref64 = wrapped_reference;
+
+    int k = 0;
+
+    int pixel_x = wrappedref64.cols;
+
+    double n_periods = static_cast<double>(pixel_x) / wavelength;
+
+    /*wrappedref64 *= n_periods;*/
+
+    const uchar* mask_ptr = mask.ptr<uchar>(row);
+    
+    const double* wrapped_ptr = wrapped64.ptr<double>(row);
+
+    const double* wrapped_ref_ptr = wrappedref64.ptr<double>(row);
+
+    double* unwrap_ptr = unwrapped.ptr<double>(row);
+
+    for (int col = 0; col < wrapped.cols; ++col)
+    {
+        if (mask_ptr[col] == 0) continue;
+
+        double ref = wrapped_ref_ptr[col];
+
+        double real = wrapped_ptr[col];
+
+        k = static_cast<int>(std::round((ref - real) / CV_2PI));
+        
+        unwrap_ptr[col] = wrapped_ptr[col] + k * CV_2PI;
+    }
 }
 
 void ImageProcessing::unwrap_row(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int row)
@@ -2406,22 +2903,195 @@ void ImageProcessing::unwrap_column(const cv::Mat& wrapped, cv::Mat& unwrapped, 
     }
 }
 
+void ImageProcessing::unwrap_column(
+    const cv::Mat& wrapped,
+    const cv::Mat& wrapped_reference,
+    cv::Mat& unwrapped,
+    const double wavelength,
+    const cv::Mat& mask,
+    int col)
+{
+    CV_Assert(wrapped.size() == wrapped_reference.size());;
+    CV_Assert(wavelength > 0);
+    CV_Assert(col >= 0 && col < wrapped.cols);
+    minmaxloc data = get_minmaxloc(wrapped_reference);
+    //CV_Assert(data.minval > 0);
+
+    cv::Mat wrapped64;
+    if (wrapped.type() != CV_64F) {
+        wrapped.convertTo(wrapped64, CV_64F);
+    }
+    else wrapped64 = wrapped;
+
+    cv::Mat wrappedref64;
+    if (wrapped_reference.type() != CV_64F) {
+        wrapped_reference.convertTo(wrappedref64, CV_64F);
+    }
+    else wrappedref64 = wrapped_reference;
+
+    int k = 0;
+
+    int pixel_y = wrappedref64.rows;
+
+    double n_periods = static_cast<double>(pixel_y) / wavelength;
+
+    //wrapped64 *= n_periods;
+
+    for (int row = 0; row < wrapped.rows; ++row)
+    {
+        if (mask.ptr<uchar>(row)[col] == 0) continue;
+
+        const double wrapped = wrapped64.ptr<double>(row)[col];
+
+        const double wrapped_ref = wrappedref64.ptr<double>(row)[col];
+
+        k = static_cast<int>(std::round((wrapped_ref - wrapped) / CV_2PI));
+
+        unwrapped.ptr<double>(row)[col] = wrapped + k * CV_2PI;
+    }
+}
+
+auto wrapTo0_2pirow = [](cv::Mat& phi)
+    {
+        CV_Assert(phi.type() == CV_64F);
+
+        for (int y = 0; y < phi.rows; ++y)
+        {
+            double* ptr = phi.ptr<double>(y);
+            for (int x = 0; x < phi.cols; ++x)
+            {
+
+                if (ptr[x] < 0.0) {
+                    if (x < phi.cols / 2) {
+                        ptr[x] = 0;
+                        continue;
+                    }
+                    ptr[x] += 2.0 * CV_PI;
+                }
+            }
+        }
+    };
+
+auto wrapTo0_2picol = [](cv::Mat& phi)
+    {
+        CV_Assert(phi.type() == CV_64F);
+
+        for (int y = 0; y < phi.rows; ++y)
+        {
+            if (y < phi.rows / 2) { continue; }
+            double* ptr = phi.ptr<double>(y);
+            for (int x = 0; x < phi.cols; ++x)
+            {
+
+                if (ptr[x] < 0.0) {
+                    
+                    ptr[x] += 2.0 * CV_PI;
+                }
+            }
+        }
+    };
+
+
+
+std::vector<cv::Mat>ImageProcessing::manual_phaseUnwrapRef(
+    const std::vector<cv::Mat>& wrapped,
+    const cv::Mat& mask,
+    const double wavelength)
+{
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(wrapped.size() == 4);
+    CV_Assert(wrapped[0].size() == mask.size());
+    CV_Assert(wrapped[2].size() == mask.size());
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(wrapped[0].type() == CV_64F);
+    CV_Assert(wrapped[2].type() == CV_64F);
+
+    std::vector<cv::Mat> unwrapped_phase(2);
+    for (auto& img : unwrapped_phase) {
+        img.create(mask.size(), CV_64F);
+    }
+
+   /* normalizeAndDisplay(wrapped[0]);
+    normalizeAndDisplay(wrapped[1]);*/
+
+    // [0] real phase shift horizontal
+    // [1] reference phase shift horizontal
+    // [2] real phase shift vertical
+    // [3] reference phase shift veritcal
+
+    // i % 2 == 0  -> horizontal shift
+    // i % 2 == 2 -> vertical shift
+    for (std::size_t i = 0; i < unwrapped_phase.size(); ++i) {
+        if (i == 0) {
+            cv::Mat ref_wrapped = wrapped[1];
+            minmaxloc data = get_minmaxloc(ref_wrapped);
+            if (data.minval < 0) wrapTo0_2pirow(ref_wrapped);
+
+            double n_periods = 1920.0 / wavelength;
+
+            minmaxloc ref_wrappeddatadd{ get_minmaxloc(ref_wrapped) };
+
+            ref_wrapped *= n_periods;
+
+            minmaxloc ref_wrappeddata{ get_minmaxloc(ref_wrapped) };
+
+            cv::parallel_for_(cv::Range(0, ref_wrapped.rows),
+                [&](const cv::Range& range) {
+                    for (int row = range.start; row < range.end; ++row) {
+                        unwrap_row(wrapped[0], ref_wrapped, unwrapped_phase[i], wavelength, mask, row);
+                    }
+                }
+            );
+
+            /*minmaxloc data22{ get_minmaxloc(unwrapped_phase[0]) };
+            normalizeAndDisplay(unwrapped_phase[0]);*/
+
+            //return unwrapped_phase;
+        }
+        if (i == 1) {
+            cv::Mat ref_wrapped = wrapped[3];
+            minmaxloc data = get_minmaxloc(ref_wrapped);
+            if (data.minval < 0)  wrapTo0_2picol(ref_wrapped);
+            double n_periods = 1080.0 / wavelength;
+
+            ref_wrapped *= n_periods;
+
+            data = get_minmaxloc(ref_wrapped);
+
+
+            cv::parallel_for_(cv::Range(0, ref_wrapped.cols),
+                [&](const cv::Range& range) {
+                    for (int col = range.start; col < range.end; ++col) {
+                        unwrap_column(wrapped[2], ref_wrapped, unwrapped_phase[i], wavelength, mask, col);
+                    }
+                }
+            );
+            //normalizeAndDisplay(unwrapped_phase[1]);
+            
+        }
+    }
+    return unwrapped_phase;
+}
+
+
 std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
     const std::vector<cv::Mat>& wrapped,
-    const cv::Mat& mask) 
+    const cv::Mat& mask
+    
+    )
 {
     CV_Assert(!wrapped.empty());
     //CV_Assert(wrapped[0].type() == mask.type());
     CV_Assert(wrapped[0].size() == mask.size());
 
-
+    
     std::vector<cv::Mat> unwrapped_phase(2);
     for (auto& m : unwrapped_phase) { m = cv::Mat::zeros(wrapped[0].size(), CV_64F); }
     
     for (std::size_t count = 0; count < wrapped.size(); count++) {
 
         if (count == 0)
-        {
+        {   
             // horizontal unwrap
             for (int row = 0; row < wrapped[0].rows; ++row)
                 unwrap_row(wrapped[0], unwrapped_phase[count], mask, row);
@@ -2466,7 +3136,7 @@ cv::Mat ImageProcessing::createMask(
     minmaxloc data{ get_minmaxloc(mask_8u) };
     // Threshold
 
-    cv::threshold(mask_8u, maskbin, threshold * data.maxval, 1, cv::THRESH_BINARY);
+    cv::threshold(mask_8u, maskbin, threshold * data.maxval, 255, cv::THRESH_BINARY);
     //normalizeAndDisplay(maskbin);
     // Create Structuring Element for opening&closing
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
@@ -2476,7 +3146,7 @@ cv::Mat ImageProcessing::createMask(
     // Shrink the allowed values since we have a reference Point that is in the middle of the image.
     if(dilate) cv::morphologyEx(maskbin, maskbin, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 50);
    
-    normalizeAndDisplay(maskbin);
+    //ormalizeAndDisplay(maskbin);
 
     return maskbin;
 }

@@ -2,14 +2,16 @@
 #include <iostream>
 #include <stdexcept>
 
-#include "camera.hpp"          // IDS backend (Camera : ICameraBackend)
+//#include "camera.hpp"          // IDS backend (Camera : ICameraBackend)
 #include "VimbaBackend.hpp"    // Vimba backend (VimbaBackend : ICameraBackend)
 
 CameraN::CameraN(Backend b) {
     switch (b) {
     case Backend::IDS:
-        m_backend = std::make_unique<Camera>();
-        std::cout << "Try to connect to IDS Backend\n";
+        // IDS backend was delted because the hole project was continued with Mako Cameras. 
+        std::cout << "Ids Backend depracted \n";
+        throw std::runtime_error("Not possible at this point");
+       
         break;
 
     case Backend::VIMBA:

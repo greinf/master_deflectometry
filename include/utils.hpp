@@ -57,21 +57,12 @@ struct RoiBorders < T, typename std::enable_if<
 	}
 };
 
-
 // All datapoints are stored as (x,y)
 struct Gray_section_data {
 	RoiBorders<int> roi_img{};
 	RoiBorders<double> roi_obj{};
 	std::vector<double> gray_val{}; // mean val
 	std::vector<double> s_deviation{}; //standard deviation over the 
-};
-
-enum class CalibrationMethod {
-	None,
-	Lut,
-	Active,
-	Passive,
-	Bias_Passive
 };
 
 #endif

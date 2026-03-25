@@ -18,11 +18,11 @@
 #include "GrayCalibVector.hpp"
 #include "utils.hpp" 
 #include "RowPolicy.hpp"
+#include "enums.hpp"
 
 using CalibPairF = std::pair<std::vector<cv::Point2f>, std::vector<cv::Point3f>>;
 using CalibPairD = std::pair<std::vector<cv::Point2d>, std::vector<cv::Point3d>>;
 class ImageStore;
-
 
 class ImageProcessing {
 public:
@@ -86,14 +86,41 @@ public:
 	
 	// ---------------------------------------   Depracted End ----------------------------------------------------------
 
-
-
 	ImageProcessing(ImageStore& img_store) :
 		m_imgStore{ img_store } {
 	}
 
 	std::vector<std::pair<double,double>> find_ParallelogramCorners(const cv::Mat& bin);
 
+	std::vector<cv::Point3d> prepareDisplayPoints(
+		const std::vector<cv::Point3d>& displayLocalPoints,
+		const cv::Mat& housholder,
+		const cv::Mat& tvec_mirror);
+
+	std::vector<cv::Mat> manual_phaseUnwrapRef(
+		const std::vector<cv::Mat>& wrapped,
+		const cv::Mat& mask,
+		const double wavelength);
+	
+	void backToWorld(
+		cv::Mat& rvec_w,
+		cv::Mat& tvec_w,
+		const cv::Mat& rvec_c,
+		const cv::Mat& tvec_c,
+		const cv::Mat& housholder,
+		const cv::Mat& cam_mirror_rvec,
+		const cv::Mat& cam_mirror_trans);
+
+	void calculatehousholder(const cv::Mat& rvec_mirror, const cv::Mat& tvec_mirror,
+		cv::Mat& tvec_virt, cv::Mat& H);
+
+	std::vector<cv::Point3d> transformPointsToMirrorWorld(
+		const std::vector<cv::Point3d>& realPoints,
+		const cv::Mat& housholder,
+		const cv::Mat& tvec_mirror,
+		const cv::Mat& rvec_cam_mir);
+
+	
 	// A functon to simulate luminance over the dispaly (more or less)
 	// If no function is given, a lambda emitter is assumed. 
 	// Input: 
@@ -129,6 +156,20 @@ public:
 		const double max_allowed = 255.0,
 		const double min_allowed = 0.0
 	);
+
+
+	template<typename RowPolicy = UniformRowsCols>
+	std::vector<cv::Mat> do_gamma_distortion(
+		const double gamma,
+		const std::vector<cv::Mat>& images,
+		RowPolicy = {})
+	{
+		std::vector<cv::Mat> distorted;
+		for (const auto& img : images) {
+			distorted.push_back(do_gamma_distortion(gamma, img, RowPolicy{}));
+		}
+		return distorted;
+	}
 
 
 	// Input 1: double value for gamma distortion must be >=0
@@ -170,8 +211,8 @@ public:
 				case(true): {
 					cv::Mat col(img64.rows, 1, CV_64F);
 					for (int row = 0; row < img64.rows; ++row) {
-						*col.ptr<double>(row) = std::round(
-							255.0 * std::pow(*img64.ptr<double>(row)/255.0, gamma));
+						*col.ptr<double>(row) = 
+							255.0 * std::pow(*img64.ptr<double>(row)/255.0, gamma);
 					}
 					imgGamma = cv::repeat(col, 1, img64.cols);
 					break;
@@ -181,7 +222,7 @@ public:
 					double* row_ptr = row.ptr<double>(0);
 					double* img_ptr = img64.ptr<double>(img64.rows / 2);
 					for (int col = 0; col < img64.cols; ++col) {
-						row_ptr[col] = std::round(255.0 * std::pow(img_ptr[col]/ 255.0, gamma));
+						row_ptr[col] = 255.0 * std::pow(img_ptr[col]/ 255.0, gamma);
 					}
 					imgGamma = cv::repeat(row, img64.rows, 1);
 					break;
@@ -192,8 +233,8 @@ public:
 			imgGamma.create(img64.size(), CV_64F);
 			for (int row = 0; row < img8U.rows; ++row) {
 				for (int col = 0; col < img8U.cols; ++col) {
-					imgGamma.ptr<double>(row)[col] = std::round(
-						255.0 * std::pow(img8U.ptr<double>(row)[col]/255.0, gamma));
+					imgGamma.ptr<double>(row)[col] = 
+						255.0 * std::pow(img8U.ptr<double>(row)[col]/255.0, gamma);
 				}
 			}
 		}
@@ -205,6 +246,41 @@ public:
 		const std::vector<cv::Mat>&, 
 		int pics_per_val, 
 		int stepwidth);
+
+	// Calculates the Centers of the Circles located in a image
+	// 1. In - Image with symmetrical Circle grid with type CV_8U
+	// 2. In - Masking image of Type CV_8U. Must be same sice as 1. 
+	// 3. In - Size of the circle Grid to be expected (Here 20 x 20 circel Grid)
+	// Return vector of cv::Vec2f with center coordinates 
+	std::vector<cv::Vec2d> getCircleCoordinates(
+		const cv::Mat& img,
+		const cv::Mat& mask,
+		const cv::Size sz
+	) const;
+
+	// Creates a vector of Object Coordinates R^3 for Pose solving
+	// 1. In - Size of the pattern calibration Pattern
+	// 2. In - The distance between to calibration Points on the pattern. 
+	// 3. Return a std::vector of pattern_size.area() 
+	std::vector<cv::Vec3d> createCalibPatternObjectPoints(
+		const cv::Size& pattern_size,
+		const double distance
+	);
+
+	// Calculates the Normal for the easy case the the ObjectPoints lie
+	// on a cartesian grid.
+	// Take two orthogonal vector in display coordantes and calcualte the normal
+	cv::Vec3d getNormalofPlane(
+		cv::Mat_<cv::Vec3d> objectPoints
+		);
+
+
+	cv::Mat_<cv::Vec3d> getReflectedRays(
+		const cv::Mat_<cv::Vec3d>& rays,
+		const cv::Vec3d& normalVec,
+		const cv::Mat& mask
+	);
+
 
 	// Return a std::vector<cv:Mat> with 6 entries
 	// 0-1 Wrapped phase (horizontal - vertical)
@@ -256,8 +332,8 @@ public:
 	);
 
 	// Input: 2 Images of the gray calib -> brightes & darkest
-	// gray[0] -> darkest; gray[1] brightest !! No check with in the function
-	// returns -> treshold(brightest - darkest)  
+	// gray[0] -> darkest; gray[1] brightest
+	// Output cv::Mat with size gray[0].size(), gray[0].type() = CV_8U 
 	cv::Mat grayCalibMask(
 		const std::vector<cv::Mat>& gray);
 	
@@ -324,8 +400,8 @@ public:
 	// n_shifts = int Information how many Shifts per 
 	std::vector<cv::Mat> manual_phaseUnwrap(
 		const std::vector<cv::Mat>& wrapped,
-		const cv::Mat& mask);
-
+		const cv::Mat& mask		
+		);
 
 	std::vector<double> ImageProcessing::extract_Column(const cv::Mat& picture, const cv::Mat& mask, int col = 0);
 
@@ -470,9 +546,7 @@ public:
 		const double wavelength,
 		const int gridX,
 		const int gridY,
-		const double pixel_pitch_mm,
-		const double screenWidth_mm,
-		const double screenHeight_mm
+		const double pixel_pitch_mm
 	);
 
 	cv::Mat do_reprojection_error(
@@ -495,7 +569,7 @@ public:
 	// Input
 	// 1 3x3 Camera Matrix of floating point CV_32F || CV_64F
 	// 2 dist coeffs matrix 1x5 || 1x6 of CV_32F || cv_64F
-	// 3 cv::Mat of pixely x pixelx as CV_8U 
+	// 3 cv::Mat of pixel in sensor coordiantes pixels as cv::Vec2d 
 	// Output cv::Mat_<cv::Vec3d> of size pixel_y x pixel_x
 	cv::Mat calulateRays(
 		const cv::Mat& camera,
@@ -515,14 +589,17 @@ public:
 		const double shift_y
 	);
 
-	// Takes grid (cv::Mat_<Vec3d> of coordinate points. 
-	// this get roation with rotatoin matrix and retured
-	// The rotation Vector is enterpreted as: 
-	// 1. angle around 2. angle around y 3. angel around z
-	// The order ist (rot z) * (rot y) * (rot x)
+	// Method calculates a rotation of a coordianted grid stored as cv::Mat_<cv::Vec3d>
+	// 1. [In] - Image of type cv::Vec3d
+	// 2. [In] - cv::Vec3d 
+	// 3. [In] - AngleInterpretation: 
+	// if euler -> euler xy cv::Vec3d(rotation around x, rotatoin around y, rotaton around z is discarded)
+	// if Rodrigeus -> the Vector is interpreted as Rodrigeuz vector. See openCV
+	// 4. Return the a cv::Mat_<cv::Vec3d> with for each entry rotated coordiantes. 
 	cv::Mat rotateCoordinatedGrid(
 		const cv::Mat& img,
-		const cv::Vec3d& rotVector
+		const cv::Vec3d& rotVector,
+		Rotation rot = Rotation::eulerxy
 	);
 
 	// Takes 1 grid (cv::Mat_<Vec3d> of coordinate points. 
@@ -538,6 +615,7 @@ public:
 	// 2 cv::Mat_<cv::vec3d> of Objekt Points
 	// return a cv::Mat<Vec3d> of the all impact points.
 	// No impact is (0,0,0)
+	// Rays can be masked as invalid rays when set to {-1,-1,-1}
 	std::vector<cv::Mat> calculateHitPoints(
 		const cv::Mat_<cv::Vec3d> rays,
 		const cv::Mat_<cv::Vec3d> display_coordiantes
@@ -591,9 +669,33 @@ private:
 
 	cv::Mat m_mask;
 	
-	void unwrap_row(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int row);
+	void unwrap_row(
+		const cv::Mat& wrapped,
+		cv::Mat& unwrapped,
+		const cv::Mat& mask,
+		int row);
 
-	void unwrap_column(const cv::Mat& wrapped, cv::Mat& unwrapped, const cv::Mat& mask, int colunn);
+	void unwrap_row(
+		const cv::Mat& wrapped,
+		const cv::Mat& wrapped_reference,
+		cv::Mat& unwrapped,
+		const double wavelength,
+		const cv::Mat& mask,
+		int row);
+
+	void unwrap_column(
+		const cv::Mat& wrapped,
+		cv::Mat& unwrapped,
+		const cv::Mat& mask,
+		int colunn);
+
+	void unwrap_column(
+		const cv::Mat& wrapped,
+		const cv::Mat& wrapped_reference,
+		cv::Mat& unwrapped,
+		const double wavelength,
+		const cv::Mat& mask,
+		int column);
 
 	std::string path{ "C:\\Users\\grein\\Desktop\\Master\\Project\\deflectometrie\\out" };
 
