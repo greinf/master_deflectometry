@@ -2,6 +2,7 @@
 #define GRAYCODECONFIG_HPP	
 
 #include <vector>
+#include <array>
 #include <opencv2/opencv.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <cassert>
@@ -47,10 +48,23 @@ private:
 
 	Eval_parameter decoding{};
 
+	struct Results {
+		std::array<cv::Mat, 2> result_img{};
+	};
+
 public:
 	generationParamter creation{};
+
+	Results results{};
 	
 	Eval_parameter& getEvalParameter() { return decoding; }
+
+	operator std::vector<cv::Mat>() {
+		std::vector<cv::Mat> out(2);
+		out[0] = results.result_img[0];
+		out[1] = results.result_img[1];
+		return out;
+	}
 };
 
 namespace GrayCode {

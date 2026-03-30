@@ -96,6 +96,8 @@ size_t ImageStore::count(FrameRole role) const {
 void ImageStore::show(FrameRole role) const {
     std::scoped_lock lock(mtx_);
     auto it = storage_.find(role);
+    const std::string& name = FrameRole_string[static_cast<std::size_t>(role)];
+    
     if (it != storage_.end()) {
         std::cout << "Valid Key. \n" <<
             "Press Button for iterating \n" <<
@@ -107,9 +109,9 @@ void ImageStore::show(FrameRole role) const {
                 cv::normalize(image, uchar, 0, 255, cv::NORM_MINMAX, CV_8U);
             }
             else uchar = image;
-            cv::imshow("Map", uchar);
+            cv::imshow(name, uchar);
             u = cv::waitKey(0);
-            cv::destroyWindow("Map");
+            cv::destroyWindow(name);
             if (std::toupper(u) == 'Q') break;
         }
     }
@@ -148,7 +150,27 @@ void ImageStore::saveLut(const std::string& basePath)
     for (const auto& [x, y] : LUT_Gray)
         file << x << "," << y << "\n";
     file.close();
+}
 
+std::pair<std::vector<cv::Mat>::const_iterator, std::vector<cv::Mat>::const_iterator>
+ImageStore::getIter(FrameRole role) const 
+{
+    // GrayLut is not stored as a container.
+    CV_Assert(role != FrameRole::GrayLUT);
+    
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    std::pair<std::vector<cv::Mat>::const_iterator, std::vector<cv::Mat>::const_iterator> iters{};
+
+    auto it = storage_.find(role);
+    if (it == storage_.end())
+    {
+        std::cerr << "Frame role not created \n";
+        return {};
+    }
+    iters.first = it->second.begin();
+    iters.second = it->second.end();
+    return iters;
 }
 
 void ImageStore::saveRole(FrameRole role, const std::string& path)

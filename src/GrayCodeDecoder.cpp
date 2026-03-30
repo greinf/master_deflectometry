@@ -1,6 +1,232 @@
 #include "GrayCodeDecoder.hpp"
 #include "GrayCodeConfig.hpp"
 
+#include <opencv2/opencv.hpp>
+#include <vector>
+#include <iterator>
+#include <algorithm>
+#include <imgProcessing.hpp>
+
+
+void GrayCodeDecoder::decoding(GrayCodeConfig& config)
+{
+	auto eval_params = config.getEvalParameter();
+
+	// Extract for x and y
+	std::vector<cv::Mat> grayConfig(eval_params.start, eval_params.end);
+
+	std::vector<cv::Mat> grayBinaries = binaries(grayConfig, config);
+	const std::size_t contain_size = grayBinaries.size();
+
+	const std::vector<cv::Mat> grayBinaries_X
+		(grayBinaries.begin(), std::next(grayBinaries.begin(), eval_params.bitdepth_x));
+
+	/*for (const auto& img : grayBinaries_X) {
+		cv::imshow("bin", img);
+		cv::waitKey(0);
+	}*/
+
+	const std::vector<cv::Mat> grayBinaries_Y
+		(std::next(grayBinaries.begin(), eval_params.bitdepth_x), std::prev(grayBinaries.end()));
+
+	/*for (const auto& img : grayBinaries_Y) {
+		cv::imshow("bin", img);
+		cv::waitKey(0);
+	}*/
+	
+	CV_Assert(grayBinaries_X.size() == grayBinaries_Y.size());
+
+	// Create the output images
+	for (auto& img : config.results.result_img) {
+		img.create(grayConfig[0].size(), CV_8U);
+	}
+
+	cv::parallel_for_(cv::Range(0, config.creation.pixel_y),
+		[&](const cv::Range& range) {
+			for (int row = range.start; row < range.end; ++row) {
+				const uchar* mask_ptr = grayBinaries[contain_size-1].ptr<uchar>(row);
+				for (int cols = 0; cols < config.creation.pixel_x; ++cols) {
+					if (mask_ptr[cols] == 0) continue;
+					Samples sample_x{}, sample_y{};
+					sample_x.pixel_x = sample_y.pixel_x = cols;
+					sample_x.pixel_y = sample_y.pixel_y = row;
+
+					sample_x.orientation = Samples::orientation::x_dir;
+					extractSample(
+						grayBinaries_X,
+						config,
+						sample_x);
+
+					sample_y.orientation = Samples::orientation::y_dir;
+					extractSample(
+						grayBinaries_Y,
+						config,
+						sample_y
+					);
+
+					gray2dec(config, sample_x);
+					gray2dec(config, sample_y);
+
+					// Just copy the value in the output container ! 
+					config.results.result_img[0].ptr<uchar>(sample_x.pixel_y)[sample_x.pixel_x] =
+						sample_x.m_result;
+					config.results.result_img[1].ptr<uchar>(sample_y.pixel_y)[sample_y.pixel_x] =
+						sample_y.m_result;
+				}
+			}
+		});
+
+	for (const auto& img : config.results.result_img) {
+		cv::imshow("img", img);
+		cv::waitKey(0);
+	}
+
+}
+
+void GrayCodeDecoder::gray2dec(
+	GrayCodeConfig& config,
+	Samples& sam)
+{
+	CV_Assert(sam.pixel_x != -1 && sam.pixel_y != -1);
+
+	const auto& eval = config.getEvalParameter();
+
+	const std::size_t bit_depth = (sam.orientation == Samples::x_dir) ?
+		(eval.bitdepth_x) : (eval.bitdepth_y);
+
+	boost::dynamic_bitset<> output(bit_depth, 0);
+	bool last_bit = false;
+
+	for (int i = bit_depth - 1; i >= 0; --i)
+	{
+		bool current_gray_bit = sam.m_data.test(i);
+
+		
+		bool binary_bit = current_gray_bit ^ last_bit;
+
+		if (binary_bit) {
+			output.set(i);
+		}
+
+		last_bit = binary_bit;
+	}
+
+	sam.m_result = static_cast<int>(output.to_ulong());
+
+	return;
+}
+
+
+void GrayCodeDecoder::extractSample(
+	const std::vector<cv::Mat>& img,
+	GrayCodeConfig& config,
+	Samples& sam)
+{
+	CV_Assert(sam.pixel_x >= 0 && sam.pixel_y >= 0);
+	CV_Assert(std::all_of(img.begin(), img.end(),
+		[](const cv::Mat& img) -> bool {
+			return (img.type() == CV_8U) &&
+				(img.channels() == 1);
+		}));
+
+	const std::size_t bin_size{ img.size() };
+	const auto& eval = config.getEvalParameter();
+
+	const int bitdepth = (sam.orientation == Samples::orientation::x_dir) ?
+		(eval.bitdepth_x) : (eval.bitdepth_y);
+
+	CV_Assert(static_cast<std::size_t>(bitdepth) == bin_size);
+
+	sam.m_data = boost::dynamic_bitset(static_cast<std::size_t>(bitdepth), 0);
+	
+	for (std::size_t i = 0; i < bin_size; ++i)
+	{
+		std::size_t counter;
+		if (eval.startbit == GrayCodeConfig::msb) {
+			counter = static_cast<std::size_t>(bitdepth) - 1 - i;
+		}
+		else counter = i;
+
+		const uchar* bin_ptr = img[i].ptr<uchar>(sam.pixel_y);
+		bool bit = static_cast<bool>(bin_ptr[sam.pixel_x] != 0);
+		sam.m_data.set(counter, bit);
+	}
+
+	return;
+}
+
+
+std::vector<cv::Mat> GrayCodeDecoder::binaries(
+	const std::vector<cv::Mat>& img,
+	GrayCodeConfig& config)
+{
+	CV_Assert(!img.empty());
+	CV_Assert(std::all_of(img.begin(), img.end(),
+		[](const cv::Mat& pic) -> bool {
+			return (pic.type() == CV_8U) &&
+				(pic.channels() == 1);
+		}));
+
+	// The White black images is appended to the back
+	// The GrayCode images are only of img.size() - 2
+	const std::size_t sz = img.size(); 
+	const auto& eval_param = config.getEvalParameter();
+	std::vector<cv::Mat> binary;
+	
+	const cv::Mat mask = m_img_processing.grayCalibMask(
+		std::vector<cv::Mat>{*std::prev(img.end()), *std::prev(img.end(), 2)});
+
+	if (config.creation.inverse)
+	{
+		// double for each bitdepth and two images for masking
+		const int expected{ eval_param.bitdepth_x * 2 + eval_param.bitdepth_y * 2 + 2};
+		CV_Assert(expected == static_cast<int>(sz));
+		CV_Assert(sz % 2 != 1);
+
+		for (std::size_t i = 0; i < ((sz-2)/2); ++i) {
+			// Change type to double
+			cv::Mat gray64, gray_inv64, gray64mask, gray_inv64mask;
+			img[i].convertTo(gray64, CV_64F);
+			img[i + eval_param.bitdepth_x].convertTo(gray_inv64, CV_64F);
+
+			// Mask the images
+			gray64mask = gray64.setTo(0, ~mask);
+			gray_inv64mask = gray_inv64.setTo(0, ~mask);
+
+			cv::Mat sub = gray64mask - gray_inv64mask; // Subract inverse from normal GrayCode
+			sub = cv::max(sub, 0);
+			cv::Mat sub_bin;
+			cv::threshold(sub, sub_bin, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
+			binary.push_back(sub_bin);
+		}
+	}
+
+	else {
+		const int expected{ eval_param.bitdepth_x + eval_param.bitdepth_y + 2 };
+		CV_Assert(expected == static_cast<int>(sz));
+		
+		for (std::size_t i = 0; i < (sz - 2); ++i) {
+			// Mask the image
+			cv::Mat gray_masked, gray_masked_bin;
+
+			gray_masked = img[i].clone().setTo(0, ~mask);
+			cv::threshold(gray_masked, gray_masked_bin, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
+
+			binary.push_back(gray_masked_bin);
+		}
+	}
+
+	/*for (const auto& img : binary) {
+		cv::imshow("binaries", img);
+		cv::waitKey(0);
+	}*/
+
+	// Append the mask at the end of the Container.
+	binary.push_back(mask);
+
+	return binary;
+
+}
 
 
 

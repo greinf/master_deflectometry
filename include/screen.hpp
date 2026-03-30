@@ -41,9 +41,12 @@ public:
 	// |-> pixel_x pixel_y: Defines the size of output picture
 	// |-> Start Bit: defines if in the image from left to right und up and down we start with LSB or MSB
 	// |-> Inverse: Defines for each GrayCode a inverse exists. 
-	// The are in the order of img[0] - lowest res X, img[k] -highest resX, img[k+1] lowest resY, img [2k+1] - highest resY
-	// If Inverse is true: this pattern repeats for the inverse images. 
-	std::vector<cv::Mat> generateGrayCodeImg(GrayCodeConfig& config);
+	// The are in the order of img[0] - lowest res X, img[k] -highest resX, img[k+1] lowest resY, img [2k+1] - highest resY,
+	// img[n-1] white, img[n] black
+	// If Inverse is true: the pattern repeats for the inverse images.
+	// Black and white is always appended to the back;
+	std::vector<cv::Mat> generateGrayCodeImg(
+		GrayCodeConfig& config);
 
 	cv::Mat generateCross(
 		const int pixel_x,
@@ -59,7 +62,12 @@ public:
 		const int n_checker_size
 	);
 
-	
+	// Input[0]: Size of the images
+	// Ouptput std::vector<cv::Mat> -> two Images
+	// Type CV_8U; [0] is 255 [1] is 0
+	std::vector<cv::Mat> generateMaskingImg(
+		const cv::Size& sz
+	);
 
 	// Input 1 shift mode -> four phase shift or user defined, 2 nperiods in y direction
 	// 3 mean value of pattern, 4 amplitude of pattern, 5 pixelX: pattern width, 6 pixelY: pattern height

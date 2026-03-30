@@ -90,7 +90,7 @@ find_package (Threads REQUIRED)
 find_package(Ceres CONFIG REQUIRED)
 find_package(OpenCV REQUIRED) # Normal OpenCV find
 
-find_package(BoostdCONFIG REQUIRED)
+find_package(Boost CONFIG REQUIRED)
 
 # Link against libraries
 target_link_libraries (${PROJECT_NAME}

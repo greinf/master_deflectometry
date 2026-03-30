@@ -30,7 +30,7 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 	// GrayCodeConfig struct. 
 	auto& eval = config.getEvalParameter();
 
-	const int bit_depth_x = eval.bitdepth_x = 
+	const int bit_depth_x = eval.bitdepth_x =
 		static_cast<int>(std::ceil(std::log2(config.creation.resolution_x)));
 	const int bit_depth_y = eval.bitdepth_y = 
 		static_cast<int>(std::ceil(std::log2(config.creation.resolution_y)));
@@ -49,8 +49,51 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 
 	std::vector<cv::Mat> grayCodeImages =
 		generatePatternFromGrayCode(config, grayCodes);
+
+	// Creates Masking images and appens to the G
+	const cv::Size sz{ config.creation.pixel_x, config.creation.pixel_y };
+	std::vector<cv::Mat> masking_img =
+		generateMaskingImg(sz);
+	grayCodeImages.push_back(masking_img[0]); // White 
+	grayCodeImages.push_back(masking_img[1]); // Black
 	
-	return{};
+	eval.inverse = config.creation.inverse;
+	eval.startbit = config.creation.starBit;
+	
+	// Save To FrameStore
+	for (const auto& img : grayCodeImages) {
+		m_img_store.add(FrameRole::GrayCode, img);
+	}
+
+	auto iters = m_img_store.getIter(FrameRole::GrayCode);
+
+	// Abort if container ist emtpy
+	CV_Assert(iters.first != iters.second);
+
+	eval.start = iters.first;
+	eval.end = iters.second;
+
+	m_img_store.show(FrameRole::GrayCode);
+
+	return grayCodeImages;
+}
+
+
+std::vector<cv::Mat> Pattern::generateMaskingImg(
+	const cv::Size& sz)
+{
+	CV_Assert(sz.area() > 0);
+	
+	std::vector<cv::Mat> output;
+	cv::Mat white, black;
+
+	white = cv::Mat::ones(sz, CV_8U) * 255;
+	black = cv::Mat::zeros(sz, CV_8U);
+
+	output.push_back(white);
+	output.push_back(black);
+
+	return output;
 }
 
 
@@ -62,24 +105,30 @@ std::vector<cv::Mat> Pattern::generatePatternFromGrayCode(
 	
 	std::vector<cv::Mat> x_GrayCode = generateXGray(config, GrayCode);
 
-	/*for (const auto img : x_GrayCode) {
+	std::vector<cv::Mat> y_GrayCode = generateYGray(config, GrayCode);
+
+	std::vector<cv::Mat> xy_GrayCode{ x_GrayCode };
+
+	for (const auto& img : y_GrayCode) {
+		xy_GrayCode.push_back(img);
+	}
+
+	// Create inverted images and append to the back 
+	if (config.creation.inverse == true) {
+		const std::size_t n_element{ xy_GrayCode.size() };
+		for (std::size_t i = 0; i < n_element; ++i) {
+			cv::Mat inv = cv::Mat::ones(xy_GrayCode[i].size(), CV_8U);
+			inv.setTo(255, ~xy_GrayCode[i]);
+			xy_GrayCode.push_back(inv);
+		}
+	}
+
+	/*for (const auto img : xy_GrayCode) {
 		cv::imshow("GrayCode", img);
 		cv::waitKey(0);
 	}*/
 
-
-	std::vector<cv::Mat> y_GrayCode = generateYGray(config, GrayCode);
-
-	for (const auto img : y_GrayCode) {
-		cv::imshow("GrayCode", img);
-		cv::waitKey(0);
-	}
-
-	// We start always with x-direction
-	std::vector<cv::Mat> images(config.creation.resolution_x+config.creation.resolution_y);
-	
-	return{};
-
+	return xy_GrayCode;
 }
 
 // This generate Gray Code | | | | ...
@@ -91,8 +140,10 @@ std::vector<cv::Mat> Pattern::generateXGray(
 	CV_Assert(config.creation.pixel_x % 2 != 1);
 	CV_Assert(grayCode.size() >= config.creation.pixel_x);
 
-	const std::size_t n_pics = static_cast<std::size_t>(
-		std::ceil(std::log2(config.creation.resolution_x)));
+	const auto& eval = config.getEvalParameter();
+
+	const std::size_t n_pics = static_cast<std::size_t>(eval.bitdepth_x);
+
 	std::vector<cv::Mat> grayCodeimgX(n_pics);
 	std::size_t n_bit = grayCode[0].size();
 
@@ -101,16 +152,18 @@ std::vector<cv::Mat> Pattern::generateXGray(
 			for (int i = range.start; i < range.end; ++i) {
 				cv::Mat line(1, config.creation.pixel_x, CV_8U);
 				uchar* line_ptr = line.ptr<uchar>(0);
-				for (std::size_t u = 0; u < config.creation.pixel_x; ++u) {
-					// MSB 0, LSB 1
-					std::size_t count;
-					if (config.creation.starBit == GrayCodeConfig::lsb) //MSB
-					{
-						count = (n_bit - 1) - i;
-					}
-					else count = i;
 
-					line_ptr[u] = (grayCode[u][count]) ? (0) : (255);
+				// MSB 0, LSB 1
+				std::size_t count;
+				if (config.creation.starBit == GrayCodeConfig::msb) //MSB
+				{
+					count = (n_bit - 1) - i;
+				}
+				else count = i;
+
+				for (std::size_t u = 0; u < config.creation.pixel_x; ++u) {
+					line_ptr[static_cast<std::size_t>(u)] = 
+						(grayCode[static_cast<std::size_t>(u)][count]) ? (255) : (0);
 				}
 				cv::Mat img = cv::repeat(line, config.creation.pixel_y, 1);
 				grayCodeimgX[i] = img;
@@ -128,8 +181,10 @@ std::vector<cv::Mat> Pattern::generateYGray(
 	CV_Assert(config.creation.pixel_y % 2 != 1);
 	CV_Assert(grayCode.size() >= config.creation.pixel_y);
 
-	const std::size_t n_pics = static_cast<std::size_t>(
-		std::ceil(std::log2(config.creation.resolution_y)));
+	const auto& eval = config.getEvalParameter();
+
+	const std::size_t n_pics = static_cast<std::size_t>(eval.bitdepth_y);
+
 	std::vector<cv::Mat> grayCodeimgY(n_pics);
 	std::size_t n_bit = grayCode[0].size();
 
@@ -141,13 +196,14 @@ std::vector<cv::Mat> Pattern::generateYGray(
 				for (std::size_t u = 0; u < config.creation.pixel_y; ++u) {
 					// MSB 0, LSB 1
 					std::size_t count;
-					if (config.creation.starBit == GrayCodeConfig::lsb) //MSB
+					if (config.creation.starBit == GrayCodeConfig::msb) //MSB
 					{
 						count = (n_bit - 1) - i;
 					}
 					else count = i;
 
-					line_ptr[u] = (grayCode[u][count]) ? (0) : (255);
+					line_ptr[static_cast<std::size_t>(u)] = 
+						(grayCode[static_cast<std::size_t>(u)][count]) ? (255) : (0);
 				}
 				cv::Mat img = cv::repeat(line.t(), 1, config.creation.pixel_x);
 				grayCodeimgY[i] = img;

@@ -8,7 +8,7 @@
 #include "acquisitionworker.hpp"
 #include <filesystem>
 #include <regex>
-#include "GrayCodeConfig.hpp"
+#include "GrayCodeDecoder.hpp"
 #include "screen.hpp"
 
 
@@ -190,18 +190,22 @@ int main()
 
     Deflectometry meassure{};
     Pattern& pat = meassure.img_generation();
+    ImageProcessing& processing = meassure.processing();
 
     GrayCodeConfig config{};
     config.creation.inverse = false;
-    config.creation.pixel_x = 1064;
-    config.creation.pixel_y = 1064;
-    config.creation.resolution_x = 1064;
-    config.creation.resolution_y = 1064;
-    config.creation.starBit = config.lsb;
+    config.creation.pixel_x = 1000;
+    config.creation.pixel_y = 1000;
+    config.creation.resolution_x = 1000;
+    config.creation.resolution_y = 1000;
+    config.creation.starBit = config.msb;
 
     pat.generateGrayCodeImg(config);
-    
 
+    GrayCodeDecoder dec(processing);
+
+    dec.decoding(config);
+    
     meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveLut);
 
     // AbstandsMessung 

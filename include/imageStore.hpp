@@ -46,6 +46,7 @@ enum class FrameRole {
     CalibCamToCam,     // Rvec and Tvec from cam1 to cam 2
     UnwrapError,       // Unwrap Error 
     GrayCode,          // GroundTruth GrayCodeImages
+    GrayCode_Result,   // The Result of the GrayCode evaluation - should be 2 images. 
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -61,6 +62,12 @@ public:
 
     // Access images by category
     std::vector<cv::Mat> get(FrameRole role) const;
+    
+    // Return iterator to the start and end of container
+    // The container is not locked. The iterator might be invalidated
+    std::pair < std::vector<cv::Mat>::const_iterator, std::vector<cv::Mat>::const_iterator>
+        getIter(FrameRole role) const;
+
     std::array<std::pair<double, double>, 256> getLut() const;
 
     // Only get last image of category
@@ -80,9 +87,6 @@ public:
 
     // Shows the hole vector of image category
     void show(FrameRole role) const;
-
-    //void moveRawInputTo(FrameRole role);
-
 
     // I/O Functionality of Image Store.
     void saveRole(FrameRole role, const std::string& path);
@@ -122,7 +126,7 @@ private:
         "DistortErrY", "UndistortErrX", "UndistortErrY", "Modell_Active", "Modell_Passive",
         "ModellBias_Active", "ModellBias_Passive",
         "CalibDisp_Cam", "ReferenceCheckerBoard", "CalibDispToCam",
-        "CalibCamToCam", "UnwrapError"
+        "CalibCamToCam", "GrayCode", "GrayCode_Result", "UnwrapError"
     } };
     
 };

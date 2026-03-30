@@ -2381,6 +2381,8 @@ cv::Mat ImageProcessing::grayCalibMask(const std::vector<cv::Mat>& img) {
 
     cv::Mat diff = img64[1] - img64[0];
 
+    diff = cv::max(diff, 0);
+
     double minVal, maxVal;
     cv::minMaxLoc(diff, &minVal, &maxVal);
 
@@ -2389,7 +2391,7 @@ cv::Mat ImageProcessing::grayCalibMask(const std::vector<cv::Mat>& img) {
         cv::threshold(diff, mask8u, 0.4, 255, cv::THRESH_BINARY);
     }
     else {
-        cv::threshold(diff, mask8u, 255.0 * 0.4, 255, cv::THRESH_BINARY);
+        cv::threshold(diff, mask8u, maxVal * 0.4, 255, cv::THRESH_BINARY);
     }
 
     mask8u.convertTo(mask8u, CV_8U);
