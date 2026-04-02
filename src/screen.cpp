@@ -30,9 +30,15 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 	// GrayCodeConfig struct. 
 	auto& eval = config.getEvalParameter();
 
-	const int bit_depth_x = eval.bitdepth_x =
+	// Necessary to generate the GrayCode
+	const int max_bitdepth_x = static_cast<int>(std::ceil(std::log2(config.creation.pixel_x)));
+	const int max_bitdpeth_y = static_cast<int>(std::ceil(std::log2(config.creation.pixel_y)));
+	const int grayCodeBitdepth = (max_bitdepth_x > max_bitdpeth_y) ? max_bitdepth_x : max_bitdpeth_y;
+
+	// Used for the decoding. Also saved in eval struct
+	const int bit_depth_x = eval.bitdepth_x = 
 		static_cast<int>(std::ceil(std::log2(config.creation.resolution_x)));
-	const int bit_depth_y = eval.bitdepth_y = 
+	const int bit_depth_y = eval.bitdepth_y =
 		static_cast<int>(std::ceil(std::log2(config.creation.resolution_y)));
 
 	CV_Assert(bit_depth_x < 27 && bit_depth_y < 27);
@@ -45,7 +51,7 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 		config.creation.pixel_x : config.creation.pixel_y;
 
 	std::vector<boost::dynamic_bitset<>> grayCodes =
-		generateAllGrayCode(dominant_bit_depth);
+		generateAllGrayCode(grayCodeBitdepth);
 
 	std::vector<cv::Mat> grayCodeImages =
 		generatePatternFromGrayCode(config, grayCodes);
@@ -60,6 +66,16 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 	eval.inverse = config.creation.inverse;
 	eval.startbit = config.creation.starBit;
 	
+	//// ----- Debugging --------
+	cv::Size goal(800, 800);
+	std::vector<cv::Mat> grayCodeImagesDebug(grayCodeImages.size());
+	cv::Rect roi(100, 100, grayCodeImages[0].cols, grayCodeImages[1].rows);
+	for (std::size_t i = 0; i < grayCodeImages.size(); ++i) {
+		grayCodeImagesDebug[i] = cv::Mat::ones(goal, CV_8U);
+		grayCodeImages[i].copyTo(grayCodeImagesDebug[i](roi));
+	}
+	grayCodeImages = grayCodeImagesDebug;
+
 	// Save To FrameStore
 	for (const auto& img : grayCodeImages) {
 		m_img_store.add(FrameRole::GrayCode, img);
@@ -138,7 +154,7 @@ std::vector<cv::Mat> Pattern::generateXGray(
 	const std::vector<boost::dynamic_bitset<>>& grayCode)
 {
 	CV_Assert(config.creation.pixel_x % 2 != 1);
-	CV_Assert(grayCode.size() >= config.creation.pixel_x);
+	//CV_Assert(grayCode.size() >= config.creation.pixel_x);
 
 	const auto& eval = config.getEvalParameter();
 
@@ -179,7 +195,7 @@ std::vector<cv::Mat> Pattern::generateYGray(
 	const std::vector<boost::dynamic_bitset<>>& grayCode)
 {
 	CV_Assert(config.creation.pixel_y % 2 != 1);
-	CV_Assert(grayCode.size() >= config.creation.pixel_y);
+	//CV_Assert(grayCode.size() >= config.creation.pixel_y);
 
 	const auto& eval = config.getEvalParameter();
 

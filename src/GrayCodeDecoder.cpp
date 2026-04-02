@@ -6,9 +6,10 @@
 #include <iterator>
 #include <algorithm>
 #include <imgProcessing.hpp>
+#include <limits>
 
 
-void GrayCodeDecoder::decoding(GrayCodeConfig& config)
+std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 {
 	auto eval_params = config.getEvalParameter();
 
@@ -18,33 +19,30 @@ void GrayCodeDecoder::decoding(GrayCodeConfig& config)
 	std::vector<cv::Mat> grayBinaries = binaries(grayConfig, config);
 	const std::size_t contain_size = grayBinaries.size();
 
-	const std::vector<cv::Mat> grayBinaries_X
-		(grayBinaries.begin(), std::next(grayBinaries.begin(), eval_params.bitdepth_x));
+	// X-Bilder extrahieren
+	auto it_start_x = grayBinaries.begin();
+	auto it_end_x = it_start_x + eval_params.bitdepth_x;
+	std::vector<cv::Mat> grayBinaries_X(it_start_x, it_end_x);
 
-	/*for (const auto& img : grayBinaries_X) {
-		cv::imshow("bin", img);
-		cv::waitKey(0);
-	}*/
+	// Y-Bilder extrahieren 
+	auto it_start_y = it_end_x;
+	auto it_end_y = it_start_y + eval_params.bitdepth_y;
+	std::vector<cv::Mat> grayBinaries_Y(it_start_y, it_end_y);
 
-	const std::vector<cv::Mat> grayBinaries_Y
-		(std::next(grayBinaries.begin(), eval_params.bitdepth_x), std::prev(grayBinaries.end()));
-
-	/*for (const auto& img : grayBinaries_Y) {
-		cv::imshow("bin", img);
-		cv::waitKey(0);
-	}*/
-	
-	CV_Assert(grayBinaries_X.size() == grayBinaries_Y.size());
+	// Sicherstellen, dass die Maske danach noch kommt
+	CV_Assert(grayBinaries.size() >= (eval_params.bitdepth_x + eval_params.bitdepth_y + 1));
 
 	// Create the output images
 	for (auto& img : config.results.result_img) {
-		img.create(grayConfig[0].size(), CV_8U);
+		img = cv::Mat(grayConfig[0].size(), 
+			CV_32F, 
+			cv::Scalar(std::numeric_limits<float>::quiet_NaN()));
 	}
 
 	cv::parallel_for_(cv::Range(0, config.creation.pixel_y),
 		[&](const cv::Range& range) {
 			for (int row = range.start; row < range.end; ++row) {
-				const uchar* mask_ptr = grayBinaries[contain_size-1].ptr<uchar>(row);
+				const uchar* mask_ptr = grayBinaries[contain_size - 1].ptr<uchar>(row);
 				for (int cols = 0; cols < config.creation.pixel_x; ++cols) {
 					if (mask_ptr[cols] == 0) continue;
 					Samples sample_x{}, sample_y{};
@@ -68,19 +66,23 @@ void GrayCodeDecoder::decoding(GrayCodeConfig& config)
 					gray2dec(config, sample_y);
 
 					// Just copy the value in the output container ! 
-					config.results.result_img[0].ptr<uchar>(sample_x.pixel_y)[sample_x.pixel_x] =
+					config.results.result_img[0].ptr<float>(sample_x.pixel_y)[sample_x.pixel_x] =
 						sample_x.m_result;
-					config.results.result_img[1].ptr<uchar>(sample_y.pixel_y)[sample_y.pixel_x] =
+					config.results.result_img[1].ptr<float>(sample_y.pixel_y)[sample_y.pixel_x] =
 						sample_y.m_result;
 				}
 			}
 		});
 
 	for (const auto& img : config.results.result_img) {
-		cv::imshow("img", img);
+		cv::Mat norm;
+		cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+		cv::imshow("img", norm);
 		cv::waitKey(0);
 	}
 
+	// Overloaded typecast std::vector<cv::Mat> only return the result images.
+	return config;
 }
 
 void GrayCodeDecoder::gray2dec(
@@ -96,18 +98,19 @@ void GrayCodeDecoder::gray2dec(
 
 	boost::dynamic_bitset<> output(bit_depth, 0);
 	bool last_bit = false;
+	unsigned long binary_val = 0;
 
 	for (int i = bit_depth - 1; i >= 0; --i)
 	{
 		bool current_gray_bit = sam.m_data.test(i);
 
-		
 		bool binary_bit = current_gray_bit ^ last_bit;
 
 		if (binary_bit) {
-			output.set(i);
-		}
 
+			output.set(i);
+
+		}
 		last_bit = binary_bit;
 	}
 
@@ -173,7 +176,7 @@ std::vector<cv::Mat> GrayCodeDecoder::binaries(
 	const auto& eval_param = config.getEvalParameter();
 	std::vector<cv::Mat> binary;
 	
-	const cv::Mat mask = m_img_processing.grayCalibMask(
+	const cv::Mat mask = config.results.mask = m_img_processing.grayCalibMask(
 		std::vector<cv::Mat>{*std::prev(img.end()), *std::prev(img.end(), 2)});
 
 	if (config.creation.inverse)

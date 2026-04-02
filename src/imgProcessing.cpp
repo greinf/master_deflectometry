@@ -1177,9 +1177,137 @@ std::vector<cv::Point3d> ImageProcessing::transformPointsToMirrorWorld(
     return mirrorPoints;
 }
 
+std::vector<cv::Mat> ImageProcessing::remapCameraToScreen(
+    const std::vector<cv::Mat>& img,
+    const std::vector<cv::Mat>& mapping_img)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(std::all_of(img.begin(), img.end(),
+        [&](const cv::Mat& img) ->bool {
+            return (img.channels() == 1);
+        }));
+
+    std::vector<cv::Mat> remapped(img.size()); // Create vector of same size as input
+    
+    for (std::size_t i = 0; i < img.size(); ++i) {
+        remapped[i] = remapCameraToScreen(
+            img[i],
+            mapping_img);
+    }
+
+    for (const auto& image : remapped) {
+        cv::Mat img8U;
+        cv::normalize(image, img8U, 0, 255, cv::NORM_MINMAX, CV_8U);
+        cv::imshow("Remaped", img8U);
+        cv::waitKey(0);
+    }
+    
+    return remapped;
+}
+
+cv::Mat ImageProcessing::remapCameraToScreen(
+    const cv::Mat& img,
+    const std::vector<cv::Mat>& mapping_img)
+{
+    CV_Assert(mapping_img.size() == 2);
+    CV_Assert(mapping_img[0].channels() == 1 &&
+        mapping_img[1].channels() == 1);
+    CV_Assert(img.size().area() > 0);
+
+    cv::Mat warped, img64;
+    if (img.type() != CV_64F) img.convertTo(img64, CV_64F);
+    else img64 = img;
+
+    cv::remap(img64, warped, mapping_img[0], mapping_img[1], cv::INTER_LINEAR);
+    
+    return warped;
+}
+
+cv::Mat ImageProcessing::createHomographyFromGrayCode(
+    const std::vector<cv::Mat>& grayCode_img,
+    const cv::Size& sz)
+{
+    CV_Assert(grayCode_img.size() == 2);
+    CV_Assert((grayCode_img[0].type() == CV_32F) &&
+        (grayCode_img[1].type() == CV_32F));
+    CV_Assert(grayCode_img[0].channels() == 1 &&
+        grayCode_img[1].channels() == 1);
+    CV_Assert(grayCode_img[0].size() == grayCode_img[1].size());
+    
+    const cv::Size img_size = grayCode_img[0].size();
+
+    std::vector<cv::Point2f> src_pts, dst_pts;
+
+    /*cv::parallel_for_(cv::Range(1, img_size.height),
+        [&](const cv::Range& range) {
+            for (int row = range.start; row < range.end; ++row)*/
+            for (int row = 1; row < img_size.height; ++row){
+                const float* x_ptr = 
+                    grayCode_img[0].ptr<float>(row);
+                const float* y_ptr = 
+                    grayCode_img[1].ptr<float>(row);
+                // Ptr to previous row 
+                const float* y_ptr_prev =
+                    grayCode_img[1].ptr<float>(row - 1);
+                for (int cols = 1; cols < img_size.width; ++cols) {
+                    // Check for nan values 
+                    if (std::isnan(x_ptr[cols - 1]) || std::isnan(y_ptr[cols - 1])) continue;
+                    if (std::isnan(x_ptr[cols]) || std::isnan(y_ptr[cols])) continue;
+
+                    // This is done because we expect some Steps within the GrayCode results
+                    // The most accurate Values shoud be the values that are at the Edge of a step
+                    // Therefor this check is applied to only take values if they are near a rising edge. 
+                    // Src are the "normal" pixel coordinates. The dst holds the dispaly coordinates in camera space. 
+                    if (x_ptr[cols] > x_ptr[cols - 1] && y_ptr[cols] > y_ptr_prev[cols]) {
+                        dst_pts.push_back(
+                            cv::Point2f(static_cast<float>(cols), static_cast<float>(row)));
+                        src_pts.push_back(
+                            cv::Point2f(static_cast<float>(x_ptr[cols]), static_cast<float>(y_ptr[cols])));
+                    }  
+                }
+            }
+    /*    });*/
+
+    CV_Assert(dst_pts.size() == src_pts.size());
+
+    return cv::findHomography(src_pts, dst_pts, cv::RANSAC);
+}
+
+std::vector<cv::Mat> ImageProcessing::createMappingfromHomography(
+    const cv::Mat& homography,
+    const cv::Size& sz)
+{
+    CV_Assert(homography.size() == cv::Size(3, 3));
+    CV_Assert(homography.type() == CV_64F);
+    CV_Assert(sz.area() > 0);
+
+    std::vector<cv::Mat> mapping(2);
+
+    cv::Mat& mappingX = mapping[0];
+    cv::Mat& mappingY = mapping[1];
+
+    mappingX.create(sz, CV_32F), mappingY.create(sz, CV_32F);
+
+    for (int row = 0; row < sz.height; ++row) {
+        float* x_ptr = mappingX.ptr<float>(row);
+        float* y_ptr = mappingY.ptr<float>(row);
+
+        for (int col = 0; col < sz.width; ++col) {
+            std::vector<cv::Point2f> dst{ cv::Point2f(static_cast<float>(col),
+                                                      static_cast<float>(row)) };
+            std::vector<cv::Point2f> src;
+
+            cv::perspectiveTransform(dst, src, homography);
+
+            x_ptr[col] = src[0].x;
+            y_ptr[col] = src[0].y;
+        }
+    }
+    return mapping;
+}
 
 
-std::vector<cv::Point3d> prepareDisplayPoints(
+std::vector<cv::Point3d> ImageProcessing::prepareDisplayPoints(
     const std::vector<cv::Point3d>& displayLocalPoints, // Die (x,y,0) Werte vom Display
     const cv::Mat& housholder,                          // Deine H-Matrix
     const cv::Mat& tvec_mirror)                         // Wo der Spiegel steht

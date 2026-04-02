@@ -50,6 +50,7 @@ private:
 
 	struct Results {
 		std::array<cv::Mat, 2> result_img{};
+		cv::Mat mask{};
 	};
 
 public:

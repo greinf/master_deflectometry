@@ -10,6 +10,7 @@
 #include <regex>
 #include "GrayCodeDecoder.hpp"
 #include "screen.hpp"
+#include "imgProcessing.hpp"
 
 
 struct GrayCodeSet {
@@ -194,17 +195,26 @@ int main()
 
     GrayCodeConfig config{};
     config.creation.inverse = false;
-    config.creation.pixel_x = 1000;
-    config.creation.pixel_y = 1000;
-    config.creation.resolution_x = 1000;
-    config.creation.resolution_y = 1000;
+    config.creation.pixel_x = 500;
+    config.creation.pixel_y = 500;
+    config.creation.resolution_x = 500;
+    config.creation.resolution_y = 500;
     config.creation.starBit = config.msb;
-
-    pat.generateGrayCodeImg(config);
+    
+    std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
 
     GrayCodeDecoder dec(processing);
 
-    dec.decoding(config);
+    std::vector<cv::Mat> decoding = dec.decoding(config);
+    
+    cv::Mat homography = 
+        processing.createHomographyFromGrayCode(config, cv::Size(1920, 1080));
+
+    std::vector<cv::Mat> maps = processing.createMappingfromHomography(homography, { 500, 500 });
+
+    std::vector<cv::Mat> grayCodemapped = processing.remapCameraToScreen(grayCode1, maps);
+
+
     
     meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveLut);
 

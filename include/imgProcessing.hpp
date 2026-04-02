@@ -120,6 +120,24 @@ public:
 		const cv::Mat& tvec_mirror,
 		const cv::Mat& rvec_cam_mir);
 
+	std::vector<cv::Mat> remapCameraToScreen(
+		const std::vector<cv::Mat>& image,
+		const std::vector<cv::Mat>& mapping_img
+	);
+
+	cv::Mat createHomographyFromGrayCode(
+		const std::vector<cv::Mat>&,
+		const cv::Size& sz
+	);
+
+	std::vector<cv::Mat> createMappingfromHomography(
+		const cv::Mat& homography,
+		const cv::Size& sz);
+
+	cv::Mat remapCameraToScreen(
+		const cv::Mat& img,
+		const std::vector<cv::Mat>& mapping_img
+	);
 	
 	// A functon to simulate luminance over the dispaly (more or less)
 	// If no function is given, a lambda emitter is assumed. 

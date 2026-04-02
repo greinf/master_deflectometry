@@ -65,9 +65,10 @@ public:
 		:m_img_processing{imgProcess}
 	{ }
 
-	void decoding(GrayCodeConfig&);
-
-
+	// Input[0]: GrayCodeConfig holds the necessary data 
+	// |-> EvalParameters holds Iterator to the Images for readout. (Order can be found in GrayCodeGeneration)
+	// |-> Results: Holds two images for the output [0]: x direction, [1]: y direction, 
+	std::vector<cv::Mat> decoding(GrayCodeConfig&);
 };
 
 #endif
