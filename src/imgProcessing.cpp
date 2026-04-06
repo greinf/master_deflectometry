@@ -2079,36 +2079,39 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
     CV_Assert(display_coordiantes.rows >= 2 && display_coordiantes.cols >= 2);
     CV_Assert(!rays.empty());
     CV_Assert(rays.type() == CV_64FC3);
-    CV_Assert(rays.type() == CV_64FC3);
     CV_Assert(rays.rows >= 2 && rays.cols >= 2);
 
-    // Because ideal Plane just take two Vector for normal
     const double eps = 1e-10;
 
+    // Because ideal Plane just take two Vector for normal 
     const int r0 = display_coordiantes.rows / 2;
     const int c0 = display_coordiantes.cols / 2;
 
-    const cv::Vec3d p0 = display_coordiantes(r0, c0); // mittlepunkt display
+    // This is not necessarily the "real" display origin but should be very close 
+    // Since p0 is only used to calculate the Surface normal this is does not affect the result
+    const cv::Vec3d p0 = display_coordiantes(r0, c0); 
 
     cv::Vec3d x = display_coordiantes.at<cv::Vec3d>(r0, c0+1);
     cv::Vec3d y = display_coordiantes.at<cv::Vec3d>(r0+1, c0);
 
-    cv::Vec3d u = x - p0;
-    cv::Vec3d v = y - p0;
-    cv::Vec3d n = u.cross(v);
+    cv::Vec3d u = x - p0; // u-Base Vektor of display in column direction
+    cv::Vec3d v = y - p0; // v-Base Vector of display in Row direction
+    cv::Vec3d n = u.cross(v); // z-Base Vector of display in 
 
-    double nn = cv::norm(n);
-
-    n /= nn;
+    double nn = cv::norm(n); 
+    n /= nn;// Normalise the Surface normal
 
     const cv::Vec3d surface_normal(n);
 
     const double numer = surface_normal.ddot(p0);
 
+    // hitpoints: Holds the for all rays the intersectionpoint with the surface (surface without boundaries)
     cv::Mat_<cv::Vec3d> hitpoints(rays.size());
+    // t_map: Holds for each rays the distance t to the surface
     cv::Mat t_map(rays.size(), CV_64F, cv::Scalar(0));
+    // hitMask: Holds for each rays a bool value if a hit occured
     cv::Mat hitMask(rays.size(), CV_8U, cv::Scalar(0));
-
+    // angle: Holds for each ray a double value that defines at which angel to the surface normal the rays hit the surface.
     cv::Mat angle(rays.size(), CV_64F, cv::Scalar(0));
 
     cv::parallel_for_(cv::Range(0, rays.rows), [&](const cv::Range& range) {
@@ -2118,8 +2121,10 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
             double* t_ptr = t_map.ptr<double>(r);
             uchar* hit_ptr = hitMask.ptr<uchar>(r);
             double* angle_ptr = angle.ptr<double>(r);
+
             for (int col = 0; col < rays.cols; ++col) {
-                cv::Vec3d ray = drow[col];
+
+                const cv::Vec3d ray = drow[col];
 
                 // If Ray is set to {-1,-1,-1} they are masked as invalid and we jump this part
                 if (ray[0] == -1 && ray[1] == -1 && ray[2] == -1) {
@@ -2241,8 +2246,7 @@ cv::Mat ImageProcessing::mapHitPointsToDisplayCoords(
     const double inv_det = 1.0 / det;
 
     cv::Mat uv(hitpoints.size(), CV_64FC2, cv::Scalar(-1.0, -1.0));
-
-    
+  
     const double eps = 1e-5;
 
     cv::parallel_for_(cv::Range(0, hitpoints.rows), [&](const cv::Range& range) {
@@ -2252,14 +2256,12 @@ cv::Mat ImageProcessing::mapHitPointsToDisplayCoords(
 
             for (int c = 0; c < hitpoints.cols; ++c) {
                 const cv::Vec3d X = hp[c];
-
                
                 const cv::Vec3d d = X - P00;
 
                 const double ad = A.dot(d);
                 const double bd = B.dot(d);
 
-                
                 const double u = (bb * ad - ab * bd) * inv_det; // col coordinate (float)
                 const double v = (-ab * ad + aa * bd) * inv_det; // row coordinate (float)
 

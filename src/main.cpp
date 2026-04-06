@@ -11,6 +11,7 @@
 #include "GrayCodeDecoder.hpp"
 #include "screen.hpp"
 #include "imgProcessing.hpp"
+#include "CameraSimulation.hpp"
 
 
 struct GrayCodeSet {
@@ -193,6 +194,11 @@ int main()
     Pattern& pat = meassure.img_generation();
     ImageProcessing& processing = meassure.processing();
 
+    meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
+    std::vector<cv::Mat> camMatrix_test_simulation = meassure.get(FrameRole::CalibrationMatrix);
+    std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
+
+    /*
     GrayCodeConfig config{};
     config.creation.inverse = false;
     config.creation.pixel_x = 500;
@@ -202,17 +208,43 @@ int main()
     config.creation.starBit = config.msb;
     
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
+    */
+
+    CameraSimulation simulate(processing);
+
+    std::vector<cv::Mat> something = pat.generate_phaseShift();
+
+    /*std::vector<cv::Mat> someImage{ cv::Mat(1920,1080, CV_64F) };
+    cv::RNG rand = cv::RNG::RNG();
+    rand.fill(someImage[0], cv::RNG::UNIFORM, 0, 256);*/
+
+    // Most Values are defaulted to the right value
+    CameraSimulationConfig Sim_config;
+    Sim_config.camera.camera_mat = camMatrix_test_simulation[0];
+    Sim_config.camera.dist_coeffs = distCoeffs[0];
+    Sim_config.scene.disp_shift_z = 4000.0;
+    Sim_config.scene.disp_shift_x = -1920 /2.0 * 0.2745;
+    Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745;
+        
+    Sim_config.scene.disp_tilt_x = CV_PI / 6.0;
+    Sim_config.scene.disp_tilt_y = CV_PI/6.0;
+    Sim_config.disp.gamma = 1.1;
+    Sim_config.data.begin = something.begin()._Ptr;
+    Sim_config.data.end = something.end()._Ptr;
+    
+    std::vector<cv::Mat> simulate1 = 
+        simulate.simulate(Sim_config);
 
     GrayCodeDecoder dec(processing);
 
-    std::vector<cv::Mat> decoding = dec.decoding(config);
+    /*std::vector<cv::Mat> decoding = dec.decoding(config);
     
     cv::Mat homography = 
         processing.createHomographyFromGrayCode(config, cv::Size(1920, 1080));
 
     std::vector<cv::Mat> maps = processing.createMappingfromHomography(homography, { 500, 500 });
 
-    std::vector<cv::Mat> grayCodemapped = processing.remapCameraToScreen(grayCode1, maps);
+    std::vector<cv::Mat> grayCodemapped = processing.remapCameraToScreen(grayCode1, maps);*/
 
 
     

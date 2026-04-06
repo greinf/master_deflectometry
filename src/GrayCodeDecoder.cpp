@@ -67,9 +67,9 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 
 					// Just copy the value in the output container ! 
 					config.results.result_img[0].ptr<float>(sample_x.pixel_y)[sample_x.pixel_x] =
-						sample_x.m_result;
+						static_cast<float>(sample_x.m_result);
 					config.results.result_img[1].ptr<float>(sample_y.pixel_y)[sample_y.pixel_x] =
-						sample_y.m_result;
+						static_cast<float>(sample_y.m_result);
 				}
 			}
 		});

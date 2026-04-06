@@ -47,6 +47,7 @@ enum class FrameRole {
     UnwrapError,       // Unwrap Error 
     GrayCode,          // GroundTruth GrayCodeImages
     GrayCode_Result,   // The Result of the GrayCode evaluation - should be 2 images. 
+    CameraSimulation,  // Resulting Images of the Camera Calibration
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -67,6 +68,9 @@ public:
     // The container is not locked. The iterator might be invalidated
     std::pair < std::vector<cv::Mat>::const_iterator, std::vector<cv::Mat>::const_iterator>
         getIter(FrameRole role) const;
+
+    // Returns a ptr to the container of the specific FrameRole
+    std::vector<cv::Mat>* getPtr(FrameRole role);
 
     std::array<std::pair<double, double>, 256> getLut() const;
 
@@ -126,7 +130,7 @@ private:
         "DistortErrY", "UndistortErrX", "UndistortErrY", "Modell_Active", "Modell_Passive",
         "ModellBias_Active", "ModellBias_Passive",
         "CalibDisp_Cam", "ReferenceCheckerBoard", "CalibDispToCam",
-        "CalibCamToCam", "GrayCode", "GrayCode_Result", "UnwrapError"
+        "CalibCamToCam", "GrayCode", "GrayCode_Result", "CameraSimulation", "UnwrapError"
     } };
     
 };

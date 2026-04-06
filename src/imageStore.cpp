@@ -27,6 +27,7 @@ void ImageStore::add(
 
 
 void ImageStore::add(FrameRole role, const std::array<std::pair<double, double>, 256>& LUT) {
+    CV_Assert(role == FrameRole::GrayLUT);
     std::scoped_lock lock(mtx_);
     LUT_Gray = LUT;
 }
@@ -116,6 +117,15 @@ void ImageStore::show(FrameRole role) const {
         }
     }
     else std::cout << "Not a valid Key \n";
+}
+
+std::vector<cv::Mat>* ImageStore::getPtr(const FrameRole role)
+{
+    std::scoped_lock lock(mtx_);
+    CV_Assert(has(role));
+    auto it = storage_.find(role);
+
+    return &(it->second);
 }
 
 

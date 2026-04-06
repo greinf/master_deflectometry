@@ -249,10 +249,10 @@ public:
 		}
 		else {
 			imgGamma.create(img64.size(), CV_64F);
-			for (int row = 0; row < img8U.rows; ++row) {
-				for (int col = 0; col < img8U.cols; ++col) {
+			for (int row = 0; row < img64.rows; ++row) {
+				for (int col = 0; col < img64.cols; ++col) {
 					imgGamma.ptr<double>(row)[col] = 
-						255.0 * std::pow(img8U.ptr<double>(row)[col]/255.0, gamma);
+						255.0 * std::pow(img64.ptr<double>(row)[col]/255.0, gamma);
 				}
 			}
 		}

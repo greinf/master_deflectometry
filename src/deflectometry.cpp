@@ -999,7 +999,7 @@ std::vector<cv::Mat> Deflectometry::createSyntheticalImages(
 
 	else pattern_gamma = pattern;
 
-	//show_norm(pattern_gamma, "gamma_pattern");
+	// show_norm(pattern_gamma, "gamma_pattern");
 
 	// Apply Passive or Lut Calibration !!! 
 
@@ -1223,7 +1223,6 @@ cv::Mat Deflectometry::calcDisplayPointsinCameraCoordiantes(
 			0.0,
 			0.0
 		);
-
 
 	cv::Mat rot_display_coordinates =
 		m_img_processing->rotateCoordinatedGrid(
