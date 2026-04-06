@@ -190,8 +190,6 @@ public:
 		 const std::string path = {"C:/Users/grein/Desktop/Master/Project/deflectometrie/test/GrayCalibrationClass"}
 	 );
 
-
-
 	 // Function to create GrayValue calibration. 
 	 // n_pics_per_value: the ammount of pictures taken per gray value
 	 // save_path: The path where the LUT is stored as a .csv file
@@ -316,13 +314,7 @@ public:
 		 const std::string& path,
 		 double n_periods_in_y = 10);
 
-	 /*std::optional<SpotFit> fitSpotDiffCentroid(
-		 const cv::Mat& laserOn, const cv::Mat& laserOff,
-		 int half = 15,
-		 double minSumW = 1e3
-	 );*/
-
-
+	 
 	 std::vector<cv::Mat> generateCartesian(
 		 bool save,
 		 const std::string& path,
@@ -355,7 +347,8 @@ public:
 		 const cv::Mat& imgOn, const cv::Mat& imgOff,
 		 double threshFrac = 0.4,   // threshold relativ zum Max in diff
 		 int morphIters = 1         // cleanup
-	 ) {
+	 ) 
+	 {
 		 CV_Assert(!imgOn.empty() && !imgOff.empty());
 		 CV_Assert(imgOn.size() == imgOff.size());
 
@@ -531,58 +524,7 @@ public:
 		 return *m_pattern;
 	 }
 
-	 // Creates syntehical images of the scene by doing a homography and smoothing acoording to the
-	 // circle of confusion. 
-	 // If no smoothing set smooth to false
-	 // If no homogrpahy should be done. set warp to false!
-	 // If Gamma is set to smooth to false
-	 // The overall order in which computation is done differs for homorgraphy and Raycasting.
-	 // ------------------------------Homogrpahy path ------------------------------------------------
-	 // If Homography is used -> Create Pattern -> Gamma -> (if smoothing = true) Smoothing (with a fixed Kernel with respect
-	 // to the distance to the object and Focuslength) -> if (luminance = true) calculate luminance (lambda emitter assumed) for different angles of dispaly and positions ->
-	 // Warp the image with fixed RoiBorders (calculate Homography Matrix and warp into the Camera image (Camera pixel_width and pixel_height needed)
-	 // Be carefull the homography, luminance and smoothing are not connected -> Therefore the kernel (smoothing) stays fixed and homography and luminance are 
-	 // totally unrealated in this case 
-	 // 
-	 // ------------------------------Raycasting path ------------------------------------------------
-	 // If Raycasting is used -> create Pattern -> Gamma 
-	 // 
-	 //
-	 std::vector<cv::Mat> createSyntheticalImages(
-		 const Warping ,
-		 std::optional< std::vector<cv::Mat>> camera_matrix,
-		 const double gamma = 2.2,
-		 const bool display_qunatize = true,
-		 const bool camera_quantization = true,
-		 const bool luminance = true,
-		 const bool smoothing = true,
-		 const bool warp = true,
-		 const double image_height = 400,  // Mirror circumference  
-		 const int dest_width = 2464,      // Mako G-507-B width
-		 const int dest_height = 2056,     // Mako G-507-B height
-		 const double display_pixel_pitch = 0.2745,                //PixelPitch  FH 0.277    BMZ: 
-		 const double display_shift_x = 0.0,
-		 const double display_shift_y = 0.0,
-		 const double display_tilt_x = 0.0,
-		 const double display_tilt_y = 0.0,
-		 const Shift_mode mode = Shift_mode::four_phase_shift,
-		 const _defl_::GrayCal::Method method = _defl_::GrayCal::Method::None,
-		 const int pattern_width = 1920,
-		 const int pattern_height = 1080,
-		 const int n_periods_in_y = 10,
-		 const double aperture_number = 2.4,
-		 const double distance = 3200,     // f = 1600 distance 2*f
-		 const double object_height = 6.6, // 2/3" Sensor 8,8 * 6,6 
-		 const RoiBorders<double> destination = {
-		 {200, 200},   // left up corner
-		 {1800, 180},  // left down corner,
-		 {210, 2200},  // right up corner,
-		 {1900, 1900}, // right down corner
-		 },
-		 const std::string& calibPath = ""
-		 );
 	 
-
 	 std::unique_ptr<ImageStore> m_img_store{ nullptr }; // Must be shared_ptr
 	 std::unique_ptr<Pattern> m_pattern{ nullptr }; // could be Unique
 	 std::unique_ptr<AcquisitionWorker> m_acquisition_worker{ nullptr };  // Must be shared
@@ -617,26 +559,6 @@ private:
 		const std::string& path);
 
 
-	// Calculates the Word koordiantes in the camera coordiante System of every display pixel
-	cv::Mat calcDisplayPointsinCameraCoordiantes(
-		const cv::Size& pattern_size,
-		const double distance,
-		const double shift_x,
-		const double shift_y,
-		const double tilt_x,
-		const double tilt_y,
-		const double pixel_pitch
-	);
-
-	// Input 
-	// 1 rays cv::Mat_<cv::Vec3d> is a matrix that represent all the rays coming from the camera
-	// 2 DisplayCoordiantes are all the DispalyPixels (rotated and shifted) in Camea Coordinates
-	std::vector<cv::Mat> createImageFromRays(
-		const cv::Mat_<cv::Vec3d>& rays,
-		const cv::Mat_<cv::Vec3d>& DisplayCoordiantes,
-		const std::vector<cv::Mat>& pattern
-	);
-
 	// If Curly brackets for default initialization are used forward decleration breaks
 	std::vector<std::unique_ptr<defl::PhaseShiftConfig>> m_pattern_config;
 	std::vector<std::unique_ptr<defl::CameraConfig>> m_camera_config;
@@ -646,33 +568,6 @@ private:
 	// Methods to connect and Setup Hardware -> Camera and Acquisitionworker class get Setup
 	// Set camera_n to 1 if only one camera is used. 2 For Two cameras at a time. 
 	bool init(std::size_t camera_n);
-
-
-	// Function applays smoothing on a picture with respect to the distance, focus length and entrance pupil
-	// Input
-	// 1 Image to smooth. 2 Aperture number of the camera. 3 distance camera to the object, 
-	// 4 pixelpitch of the dispaly, 5 Height of the object (Here diameter mirror) 6 Image height (Sensor Height, since height is limiting)
-	cv::Mat apply_ApertureSmoorting(
-		const cv::Mat& pattern,
-		const double aperture_number,
-		const double distance,
-		const double dispaly_pixel_pitch,
-		const double object_height,
-		const double image_height
-		);
-
-	
-	cv::Mat warpImage(
-		const cv::Mat& pattern,
-		const int dest_width = 2464,      // Mako G-507-B width
-		const int dest_height = 2056,     // Mako G-507-B height
-		const RoiBorders<double> destination = {
-			{200, 200},   // left up corner
-			{1800, 180},  // left down corner,
-			{210, 2200},  // right up corner,
-			{1900, 1900}, // right down corner
-		}
-		);
 
 	// Class to disconnect from Hardware -> Camera and Acquisitionworker get set to nullptr
 	bool disconnect();
@@ -686,9 +581,6 @@ private:
 		const std::pair<double, double>& unwrapFit,// regressions a,b unwrap
 		const std::vector<double>& repro,
 		const std::pair<double, double>& reproFit);
-
-
-
 
 };
 

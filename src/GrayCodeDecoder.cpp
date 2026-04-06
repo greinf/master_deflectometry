@@ -13,6 +13,8 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 {
 	auto eval_params = config.getEvalParameter();
 
+	CV_Assert(eval_params.start != eval_params.end);
+
 	// Extract for x and y
 	std::vector<cv::Mat> grayConfig(eval_params.start, eval_params.end);
 

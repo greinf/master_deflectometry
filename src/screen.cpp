@@ -67,6 +67,10 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 	eval.startbit = config.creation.starBit;
 	
 	//// ----- Debugging --------
+	/*
+	* auto iters = m_img_store.getIter(FrameRole::GrayCode);
+	eval.start = iters.first;
+	eval.end = iters.second; 
 	cv::Size goal(800, 800);
 	std::vector<cv::Mat> grayCodeImagesDebug(grayCodeImages.size());
 	cv::Rect roi(100, 100, grayCodeImages[0].cols, grayCodeImages[1].rows);
@@ -74,22 +78,14 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 		grayCodeImagesDebug[i] = cv::Mat::ones(goal, CV_8U);
 		grayCodeImages[i].copyTo(grayCodeImagesDebug[i](roi));
 	}
-	grayCodeImages = grayCodeImagesDebug;
+	grayCodeImages = grayCodeImagesDebug;*/
 
 	// Save To FrameStore
 	for (const auto& img : grayCodeImages) {
 		m_img_store.add(FrameRole::GrayCode, img);
 	}
 
-	auto iters = m_img_store.getIter(FrameRole::GrayCode);
-
-	// Abort if container ist emtpy
-	CV_Assert(iters.first != iters.second);
-
-	eval.start = iters.first;
-	eval.end = iters.second;
-
-	m_img_store.show(FrameRole::GrayCode);
+	//m_img_store.show(FrameRole::GrayCode);
 
 	return grayCodeImages;
 }

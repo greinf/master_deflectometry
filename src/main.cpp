@@ -13,136 +13,6 @@
 #include "imgProcessing.hpp"
 #include "CameraSimulation.hpp"
 
-
-struct GrayCodeSet {
-    // index 0 corresponds to 1 (Scr01) if your files start at 01
-    std::vector<cv::Mat> x;
-    std::vector<cv::Mat> y;
-
-    // Keep original names so we can save with identical filenames
-    std::vector<std::string> xNames;
-    std::vector<std::string> yNames;
-};
-
-static bool ensureDirExists(const std::filesystem::path& p) {
-    std::error_code ec;
-    if (std::filesystem::exists(p, ec)) return std::filesystem::is_directory(p, ec);
-    return std::filesystem::create_directories(p, ec);
-}
-
-GrayCodeSet loadGrayCodeFromFolder(const std::filesystem::path& folder, bool asGray = true) {
-    if (!std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
-        throw std::runtime_error("Folder does not exist or is not a directory: " + folder.string());
-
-    // Matches:
-    // GrayCodeXScr01.bmp
-    // GrayCodeYScr11.bmp
-    // also allows .png/.jpg if you want to extend (currently bmp only, change if needed)
-    const std::regex re(R"(GrayCode([XY])Scr(\d+)\.bmp$)", std::regex::icase);
-
-    struct Entry { char axis; int idx; std::filesystem::path path; std::string name; };
-    std::vector<Entry> entries;
-
-    for (const auto& de : std::filesystem::directory_iterator(folder)) {
-        if (!de.is_regular_file()) continue;
-
-        const std::string fname = de.path().filename().string();
-        std::smatch m;
-        if (std::regex_match(fname, m, re)) {
-            char axis = static_cast<char>(std::toupper(m[1].str()[0])); // 'X' or 'Y'
-            int idx = std::stoi(m[2].str());                           // e.g. 1..11
-            entries.push_back({ axis, idx, de.path(), fname });
-        }
-    }
-
-    if (entries.empty())
-        throw std::runtime_error("No GrayCode[X|Y]ScrXX.bmp files found in: " + folder.string());
-
-    // Sort by axis, then idx
-    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
-        if (a.axis != b.axis) return a.axis < b.axis;
-        return a.idx < b.idx;
-        });
-
-    // Determine max index for X and Y (so we can size vectors)
-    int maxX = 0, maxY = 0;
-    for (const auto& e : entries) {
-        if (e.axis == 'X') maxX = std::max(maxX, e.idx);
-        else               maxY = std::max(maxY, e.idx);
-    }
-
-    GrayCodeSet set;
-    set.x.resize(maxX);
-    set.y.resize(maxY);
-    set.xNames.resize(maxX);
-    set.yNames.resize(maxY);
-
-    const int imreadFlag = asGray ? cv::IMREAD_GRAYSCALE : cv::IMREAD_UNCHANGED;
-
-    for (const auto& e : entries) {
-        cv::Mat img = cv::imread(e.path.string(), imreadFlag);
-        if (img.empty())
-            throw std::runtime_error("Failed to read image: " + e.path.string());
-
-        // idx is 1-based in filename -> store at idx-1
-        const int pos = e.idx - 1;
-        if (pos < 0) throw std::runtime_error("Invalid index in filename: " + e.name);
-
-        if (e.axis == 'X') {
-            if (pos >= static_cast<int>(set.x.size()))
-                throw std::runtime_error("Index out of range for X: " + e.name);
-            set.x[pos] = img;
-            set.xNames[pos] = e.name;
-        }
-        else {
-            if (pos >= static_cast<int>(set.y.size()))
-                throw std::runtime_error("Index out of range for Y: " + e.name);
-            set.y[pos] = img;
-            set.yNames[pos] = e.name;
-        }
-    }
-
-    
-    return set;
-}
-
-static std::string makeName(char axis, size_t i) {
-    std::ostringstream oss;
-    oss << "GrayCode" << axis << "Scr"
-        << std::setw(2) << std::setfill('0') << (i + 1)
-        << ".bmp";
-    return oss.str();
-}
-
-void saveGrayCodeToFolder(const GrayCodeSet& set, const std::filesystem::path& outFolder) {
-    if (!ensureDirExists(outFolder))
-        throw std::runtime_error("Could not create output directory: " + outFolder.string());
-
-    // Save X
-    for (size_t i = 0; i < set.x.size(); ++i) {
-        if (set.x[i].empty()) continue;
-
-        const std::filesystem::path outPath = outFolder /
-            (set.xNames[i].empty() ? makeName('X', i) : set.xNames[i]);
-
-        if (!cv::imwrite(outPath.string(), set.x[i]))
-            throw std::runtime_error("Failed to write: " + outPath.string());
-    }
-
-    // Save Y
-    for (size_t i = 0; i < set.y.size(); ++i) {
-        if (set.y[i].empty()) continue;
-
-        const std::filesystem::path outPath = outFolder /
-            (set.yNames[i].empty() ? makeName('Y', i) : set.yNames[i]);
-
-        if (!cv::imwrite(outPath.string(), set.y[i]))
-            throw std::runtime_error("Failed to write: " + outPath.string());
-    }
-}
-
-
-
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
     {
         CV_Assert(img.type() == CV_64FC2);
@@ -170,7 +40,6 @@ auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName 
 
 int main()
 {
-
     std::filesystem::path inFolder = R"(C:\Users\grein\Desktop\Data)";
     std::filesystem::path outFolder = R"(C:\Users\grein\Desktop\Data_outBigDistance)";
     //Supress open CV Information -only warnings are logged. 
@@ -198,27 +67,18 @@ int main()
     std::vector<cv::Mat> camMatrix_test_simulation = meassure.get(FrameRole::CalibrationMatrix);
     std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
 
-    /*
     GrayCodeConfig config{};
     config.creation.inverse = false;
-    config.creation.pixel_x = 500;
-    config.creation.pixel_y = 500;
-    config.creation.resolution_x = 500;
-    config.creation.resolution_y = 500;
+    config.creation.pixel_x = 1920;
+    config.creation.pixel_y = 1080;
+    config.creation.resolution_x = 1920;
+    config.creation.resolution_y = 1080;
     config.creation.starBit = config.msb;
     
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
-    */
+    
+    CameraSimulation simulation(processing);
 
-    CameraSimulation simulate(processing);
-
-    std::vector<cv::Mat> something = pat.generate_phaseShift();
-
-    /*std::vector<cv::Mat> someImage{ cv::Mat(1920,1080, CV_64F) };
-    cv::RNG rand = cv::RNG::RNG();
-    rand.fill(someImage[0], cv::RNG::UNIFORM, 0, 256);*/
-
-    // Most Values are defaulted to the right value
     CameraSimulationConfig Sim_config;
     Sim_config.camera.camera_mat = camMatrix_test_simulation[0];
     Sim_config.camera.dist_coeffs = distCoeffs[0];
@@ -226,28 +86,32 @@ int main()
     Sim_config.scene.disp_shift_x = -1920 /2.0 * 0.2745;
     Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745;
         
-    Sim_config.scene.disp_tilt_x = CV_PI / 6.0;
-    Sim_config.scene.disp_tilt_y = CV_PI/6.0;
-    Sim_config.disp.gamma = 1.1;
-    Sim_config.data.begin = something.begin()._Ptr;
-    Sim_config.data.end = something.end()._Ptr;
-    
-    std::vector<cv::Mat> simulate1 = 
-        simulate.simulate(Sim_config);
+    //Sim_config.scene.disp_tilt_x = CV_PI / 10.0;
+    Sim_config.scene.disp_tilt_y = CV_PI / 10.0;
+    Sim_config.disp.gamma = 2.2;
+    Sim_config.data.begin = grayCode1.begin()._Ptr;
+    Sim_config.data.end = grayCode1.end()._Ptr;
+   
+    std::vector<cv::Mat> simulate = 
+        simulation.simulate(Sim_config);
+
+    auto& eval = config.getEvalParameter();
+    eval.start = simulate.begin();
+    eval.end = simulate.end();
 
     GrayCodeDecoder dec(processing);
 
-    /*std::vector<cv::Mat> decoding = dec.decoding(config);
+    dec.decoding(config);
+
+    std::vector<cv::Mat> result{ config };
     
     cv::Mat homography = 
         processing.createHomographyFromGrayCode(config, cv::Size(1920, 1080));
 
-    std::vector<cv::Mat> maps = processing.createMappingfromHomography(homography, { 500, 500 });
+    std::vector<cv::Mat> maps = processing.createMappingfromHomography(homography, cv::Size(1920, 1080));
 
-    std::vector<cv::Mat> grayCodemapped = processing.remapCameraToScreen(grayCode1, maps);*/
+    std::vector<cv::Mat> grayCodemapped = processing.remapCameraToScreen(simulate, maps);
 
-
-    
     meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveLut);
 
     // AbstandsMessung 
@@ -261,67 +125,6 @@ int main()
 
     std::optional<std::vector<cv::Mat>> cameramatrix_distCoeff;
     cameramatrix_distCoeff.emplace({ camMatrix[0], dist_Coeffs[0] });
-
-    std::vector<cv::Mat> real_pattern =
-        meassure.createSyntheticalImages(
-            Warping::raycasting,                 // Warping: homography-based warping
-
-            cameramatrix_distCoeff,              // camera_matrix (std::optional<std::vector<cv::Mat>>)
-
-            2.2,                                 // gamma: display / camera gamma
-
-            true,                                // display_quantize: quantize display output
-
-            true,                                // camera_quantization: simulate camera ADC quantization
-
-            true,                                // luminance: apply luminance weighting
-
-            true,                                // smoothing: enable optical smoothing
-
-            true,                                // warp: apply geometric warping
-
-            200.0,                               // image_height: mirror circumference [mm]
-
-            2464,                                // dest_width: Mako G-507-B sensor width (px)
-
-            2056,                                // dest_height: Mako G-507-B sensor height (px)
-
-            0.2745,                              // display_pixel_pitch: display pixel pitch [mm]
-
-            0.0,                                 // display_shift_x: lateral display shift x [mm]
-
-            0.0,                                 // display_shift_y: lateral display shift y [mm]
-
-            0.0,                                 // display_tilt_x: display tilt around x-axis [rad]
-
-            0.0,                                 // display_tilt_y: display tilt around y-axis [rad]
-
-            Shift_mode::four_phase_shift,        // mode: phase-shift pattern mode
-
-            _defl_::GrayCal::Method::None,       // method: no gray-value calibration
-
-            1920,                                // pattern_width: display width (px)
-
-            1080,                                // pattern_height: display height (px)
-
-            10,                                  // n_periods_in_y: number of sinusoidal periods in y
-
-            2.4,                                 // aperture_number: f-number (N)
-
-            2000,                                // distance: camera–mirror distance [mm] (2*f, f=1600)
-
-            6.6,                                 // object_height: sensor height [mm] (2/3" → 6.6 mm)
-            
-            RoiBorders<double>{                  // destination ROI in destination image
-                {200.0, 200.0},                  // left-up corner 
-                { 1800.0, 180.0 },                 // left-down corner
-                { 210.0, 2200.0 },                 // right-up corner
-                { 1900.0, 1900.0 }                 // right-down corner
-            },
-            
-            calibPath                            // path to the stored GrayCalibration values
-            
-        );
 
     meassure.testReprojection(
         camMatrix_path,
@@ -346,24 +149,6 @@ int main()
     //std::cout << "p2 (px): " << result.p2_px << "\n";
     //std::cout << "3D (cam1): [" << result.X_cam1.x << ", " << result.X_cam1.y << ", " << result.X_cam1.z << "]\n";
     //std::cout << "distance to cam1: " << result.distance_cam1 << " (same units as T)\n";
-
-    GrayCodeSet gc = loadGrayCodeFromFolder(inFolder, true);
-
-    std::vector<cv::Mat> grayCodeXY;
-
-    for (const auto& img : gc.x) {
-        grayCodeXY.push_back(img);
-    }
-
-    for (const auto& img : gc.y) {
-        grayCodeXY.push_back(img);
-    }
-
-    std::vector<cv::Mat> grayCode = meassure.acquire_img(grayCodeXY, FrameRole::Debug, 1);
-    
-    gc.x = std::vector<cv::Mat>(grayCode.begin(), std::next(grayCode.begin(), 11));
-    gc.y = std::vector<cv::Mat>(std::next(grayCode.begin(),11), grayCode.end());
-
 
 
     double pixelpitch = 0.2745;

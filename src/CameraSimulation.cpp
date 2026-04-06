@@ -288,16 +288,21 @@ std::vector<cv::Mat>& CameraSimulation::applyApertureSmoothing(
 	CV_Assert(config.camera.sensor_size > 0.0);
 	CV_Assert(config.scene.object_size > 0.0);
 
-	// Used to calculate the size of the confusion circle
-	const double scale = config.camera.sensor_size / config.scene.object_size;
-	const double distance = cv::norm(
-		cv::Vec3d(config.scene.disp_shift_z, config.scene.disp_shift_y / 2, config.scene.disp_shift_x / 2));
-	const double focal_length = distance * scale / (scale + 1); // g = (m+1)/m * f
-	const double circ_entrance_pupil =   // = double confusion_circle_diamter
-		focal_length / config.camera.f_number; // f# = f/D -> D = entrance pupil 
+	int confusion_circle_in_disp_pix{};
 
-	int confusion_circle_in_disp_pix = 
-		static_cast<int>(std::ceil(circ_entrance_pupil / config.disp.pixelPitch));
+	if (config.camera.circle_of_confusion_n_disp == 0) {
+		// Used to calculate the size of the confusion circle
+		const double scale = config.camera.sensor_size / config.scene.object_size;
+		const double distance = cv::norm(
+			cv::Vec3d(config.scene.disp_shift_z, config.scene.disp_shift_y / 2, config.scene.disp_shift_x / 2));
+		const double focal_length = distance * scale / (scale + 1); // g = (m+1)/m * f
+		const double circ_entrance_pupil =   // = double confusion_circle_diamter
+			focal_length / config.camera.f_number; // f# = f/D -> D = entrance pupil 
+		confusion_circle_in_disp_pix =
+			static_cast<int>(std::ceil(circ_entrance_pupil / config.disp.pixelPitch));
+	}
+	else
+		confusion_circle_in_disp_pix = config.camera.circle_of_confusion_n_disp;
 
 	if (!(confusion_circle_in_disp_pix % 2)) ++confusion_circle_in_disp_pix;
 

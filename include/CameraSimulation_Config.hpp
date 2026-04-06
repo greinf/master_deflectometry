@@ -17,6 +17,9 @@ namespace cv {
 // |	|-> bool quantization: If True applies Qunatization for the CameraIntensities
 // |	|-> bool apertureSmoothing: If True a circular Kernel is used of the size of the circle of confusion.
 // |	|		-> It is assumed that the Camera is focused on a point that is double the distance as the display 
+// |	|-> int circle_of_confusion_n_disp: Specifies the circle of confusion in display pixels for the diameter of the used kernel.
+// |	|		->if(circle_of_confusion_n_disp != 0 ) -> The kernel has diameter equal circle_of_confusion_n_disp
+// |	|		->else -> The kernel size is calculated via distance, object size and sensor size parameters.
 // |	|-> double f_number: The F-Number of the used objectiv of the camera. This is needed for the aperture smoothing
 // |	|-> double sensor_size: The smaller sensor dimension is used. Example: 3,3" 8.8mm x 6.6mm -> use the smaller one
 // |	|-> cv::Mat camera_mat: Camera Matrix from the camera calibration camera_mat.size() == cv::Size(3,3). camera_mat.type() == CV_64F
@@ -44,6 +47,7 @@ private:
 	struct CameraConfig {
 		bool quantization{ true };
 		bool apertureSmoothing{ false };
+		int circle_of_confusion_n_disp{ 0 };
 		double f_number{ 2.4 };
 		double sensor_size{ 6.6 }; 
 		cv::Mat camera_mat;
@@ -60,9 +64,9 @@ private:
 
 	// All translations and Rotations are in the camera coordiante System
 	struct SceneConfig {
-		double disp_shift_z{ };  // As the distance is calcualted in camera Coords -> Z is the distance in the direction of the "Rays"
-		double disp_shift_x{ };
-		double disp_shift_y{ };
+		double disp_shift_z{ 3000.0 };  // As the distance is calcualted in camera Coords -> Z is the distance in the direction of the "Rays"
+		double disp_shift_x{ 0.2745 * 1920/2 };
+		double disp_shift_y{ 0.2745 * 1080/2 };
 		double disp_tilt_x{ };
 		double disp_tilt_y{ };
 		double object_size{400.0};

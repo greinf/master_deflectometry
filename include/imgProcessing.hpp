@@ -139,31 +139,6 @@ public:
 		const std::vector<cv::Mat>& mapping_img
 	);
 	
-	// A functon to simulate luminance over the dispaly (more or less)
-	// If no function is given, a lambda emitter is assumed. 
-	// Input: 
-	// 1 Input image, channels() ==1, type() CV_8U || CV_64F
-	// 2 Distance between camera and Dispaly
-	// 3 Pixelpitch dispaly
-	// 4 n_dispaly_pixel_x
-	// 5 n_display_pixel_y
-	// 6 shift_x if 0 Camera is assumed to be in the center of the dispaly
-	// (pixel_x/2,pixel_y/2,distance) in Display coordinates
-	// A value > 0 shifts the camera to the right and vice versa
-	// 7 like above. a value > 0 shift the camera down and vice versa
-	// 6 Angle of the Dispaly in Dispaly Coordiantes System X-Direction [rad]
-	// 7 Angle of the Dispaly in display coordiante System Y-Direction [rad]
-	// Alterantive function to calculate Luminance
-	cv::Mat simulate_luminance(
-		const cv::Mat& img,
-		const double distance = 3200,
-		const double pixel_pitch = 0.2745,                //PixelPitch  FH 0.277    BMZ: ,
-		const double shift_x = 0,
-		const double shift_y = 0,
-		const double angle_x = 0,
-		const double angle_y = 0,
-		const double(*funct_ptr)(double) = nullptr
-		);
 
 	// Input
 	// 1. image of type == CV_64F, 2. double max allowed value in image 3. min allwed value in image
@@ -642,11 +617,6 @@ public:
 	cv::Mat mapHitPointsToDisplayCoords(
 		const cv::Mat& hitpoints,        // CV_64FC3, size = rays.size()
 		const cv::Mat& display_points    // CV_64FC3, size = (H,W) of display raster
-	);
-
-	cv::Mat createImageFromHitpointCoordinates(
-		const cv::Mat& hitPoints_dispaly_coord,
-		const cv::Mat& pattern
 	);
 
 	cv::Mat mean(const std::vector<cv::Mat>&);
