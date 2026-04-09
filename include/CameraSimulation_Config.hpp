@@ -32,8 +32,8 @@ namespace cv {
 // |	|-> int disp_shift_z: The Distance in z_dir between disp and Camera coordinate System -> in the Camera System
 // |	|-> int disp_shift_x: The Distance in x_dir between disp and Camera coordinate System -> in the Camera System
 // |	|-> int disp_shift_y: The Distance in y_dir between disp and Camera coordinate System -> in the Camera System
-// |	|-> int disp_tilt_x: The Angle around x-Axis between disp and Camera coordiante System -> from the view of the Camera System
-// |	|-> int disp_tilt_y: The Angle around y-Axis between disp and Camera coordiante System -> from the view of the Camera System
+// |	|-> int disp_tilt_x: The Angle around x-Axis between disp and Camera coordiante System -> from the view of the Camera System [rad]
+// |	|-> int disp_tilt_y: The Angle around y-Axis between disp and Camera coordiante System -> from the view of the Camera System [rad]
 // |	|-> double object_size: Dimension of the Object. If for x and y different -> take the bigger one. 
 // |	|		-> Here a cicualr mirror is used with 400mm diameter. 
 // |-> Data:
@@ -64,10 +64,10 @@ private:
 
 	// All translations and Rotations are in the camera coordiante System
 	struct SceneConfig {
-		double disp_shift_z{ 3000.0 };  // As the distance is calcualted in camera Coords -> Z is the distance in the direction of the "Rays"
-		double disp_shift_x{ 0.2745 * 1920/2 };
-		double disp_shift_y{ 0.2745 * 1080/2 };
-		double disp_tilt_x{ };
+		double disp_shift_z{ 3000.0 };  // z-Dist from Cam coord to Disp coord. Defaulted to 3000 [mm]
+		double disp_shift_x{ 0.2745 * 1920/2 }; // x-Dist from Cam coord. to Disp coord. Defaulted to 0.2745*1920/2 -> Display coord in left upper corner. [mm]
+		double disp_shift_y{ 0.2745 * 1080/2 }; // y-Dist from Cam coord. to Disp coord. Defaulted to 0.2745*1080/2 -> Display coord in left upper corner. [mm]
+		double disp_tilt_x{ }; 
 		double disp_tilt_y{ };
 		double object_size{400.0};
 		bool luminance{false};

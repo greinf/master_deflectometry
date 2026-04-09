@@ -1195,12 +1195,12 @@ std::vector<cv::Mat> ImageProcessing::remapCameraToScreen(
             mapping_img);
     }
 
-    for (const auto& image : remapped) {
+    /*for (const auto& image : remapped) {
         cv::Mat img8U;
         cv::normalize(image, img8U, 0, 255, cv::NORM_MINMAX, CV_8U);
         cv::imshow("Remaped", img8U);
         cv::waitKey(0);
-    }
+    }*/
     
     return remapped;
 }
@@ -1291,21 +1291,25 @@ std::vector<cv::Mat> ImageProcessing::createMappingfromHomography(
 
     mappingX.create(sz, CV_32F), mappingY.create(sz, CV_32F);
 
-    for (int row = 0; row < sz.height; ++row) {
-        float* x_ptr = mappingX.ptr<float>(row);
-        float* y_ptr = mappingY.ptr<float>(row);
+    cv::parallel_for_(cv::Range(0, sz.height),
+        [&](const cv::Range& range) {
+            for (int row = range.start; row < range.end; ++row) {
+                float* x_ptr = mappingX.ptr<float>(row);
+                float* y_ptr = mappingY.ptr<float>(row);
 
-        for (int col = 0; col < sz.width; ++col) {
-            std::vector<cv::Point2f> dst{ cv::Point2f(static_cast<float>(col),
-                                                      static_cast<float>(row)) };
-            std::vector<cv::Point2f> src;
+                for (int col = 0; col < sz.width; ++col) {
+                    std::vector<cv::Point2f> dst{ cv::Point2f(static_cast<float>(col),
+                                                              static_cast<float>(row)) };
+                    std::vector<cv::Point2f> src;
 
-            cv::perspectiveTransform(dst, src, homography);
+                    cv::perspectiveTransform(dst, src, homography);
 
-            x_ptr[col] = src[0].x;
-            y_ptr[col] = src[0].y;
-        }
-    }
+                    x_ptr[col] = src[0].x;
+                    y_ptr[col] = src[0].y;
+                }
+            }
+        });
+    
     return mapping;
 }
 
@@ -2003,16 +2007,19 @@ cv::Mat ImageProcessing::quantizeImage(
     CV_Assert(img_data.maxval <= max && "Values Must be within the given Range");
     CV_Assert(img_data.minval >= min && "Values must be within the given Range");
 
-    // Quantize: round to integer levels, keep CV_64F as you wanted
+    // Quantize: round to integer levels, keep CV_64F
     cv::Mat output(img.size(), CV_64F);
-    for (int row = 0; row < img.rows; ++row) {
-        const double* in = img.ptr<double>(row);
-        double* out = output.ptr<double>(row);
-        for (int col = 0; col < img.cols; ++col) {
-            out[col] = std::round(in[col]);
-        }
-    }
-
+    cv::parallel_for_(cv::Range(0, img.rows),
+        [&](const cv::Range& range)
+        {
+            for (int row = range.start; row < range.end; ++row) {
+                const double* in = img.ptr<double>(row);
+                double* out = output.ptr<double>(row);
+                for (int col = 0; col < img.cols; ++col) {
+                    out[col] = std::round(in[col]);
+                }
+            }
+        });
     return output;
 }
 
@@ -2857,14 +2864,9 @@ void ImageProcessing::unwrap_row(
 
     double n_periods = static_cast<double>(pixel_x) / wavelength;
 
-    /*wrappedref64 *= n_periods;*/
-
     const uchar* mask_ptr = mask.ptr<uchar>(row);
-    
     const double* wrapped_ptr = wrapped64.ptr<double>(row);
-
     const double* wrapped_ref_ptr = wrappedref64.ptr<double>(row);
-
     double* unwrap_ptr = unwrapped.ptr<double>(row);
 
     for (int col = 0; col < wrapped.cols; ++col)
@@ -2876,6 +2878,10 @@ void ImageProcessing::unwrap_row(
         double real = wrapped_ptr[col];
 
         k = static_cast<int>(std::round((ref - real) / CV_2PI));
+
+        if (k < 0) {
+            std::cout << "dd";
+        }
         
         unwrap_ptr[col] = wrapped_ptr[col] + k * CV_2PI;
     }
@@ -2989,9 +2995,7 @@ void ImageProcessing::unwrap_column(
     else wrappedref64 = wrapped_reference;
 
     int k = 0;
-
     int pixel_y = wrappedref64.rows;
-
     double n_periods = static_cast<double>(pixel_y) / wavelength;
 
     //wrapped64 *= n_periods;
@@ -3001,7 +3005,6 @@ void ImageProcessing::unwrap_column(
         if (mask.ptr<uchar>(row)[col] == 0) continue;
 
         const double wrapped = wrapped64.ptr<double>(row)[col];
-
         const double wrapped_ref = wrappedref64.ptr<double>(row)[col];
 
         k = static_cast<int>(std::round((wrapped_ref - wrapped) / CV_2PI));
@@ -3010,45 +3013,104 @@ void ImageProcessing::unwrap_column(
     }
 }
 
-auto wrapTo0_2pirow = [](cv::Mat& phi)
-    {
-        CV_Assert(phi.type() == CV_64F);
 
-        for (int y = 0; y < phi.rows; ++y)
+
+std::vector<cv::Mat> ImageProcessing::prepareGrayCode_forUnwrap(
+    const std::vector<cv::Mat>& ref,
+    const cv::Size& sz,
+    const double wavelength)
+{
+    CV_Assert(ref.size() == 2);
+    CV_Assert(ref[0].size() == ref[1].size());
+    CV_Assert(ref[0].type() == CV_64FC1 || ref[0].type() == CV_32FC1);
+    CV_Assert(sz.area() > 0);
+    CV_Assert(wavelength > 0);
+
+    std::vector<cv::Mat> reference(2);
+    cv::Mat& horizontal = reference[0];
+    ref[0].convertTo(horizontal, CV_64F);
+    const double scale_x = CV_2PI / wavelength;
+    horizontal *= scale_x;
+
+    cv::Mat& vertical = reference[1];
+    ref[1].convertTo(vertical, CV_64F);
+    const double scale_y = CV_2PI / wavelength;
+    vertical *= scale_y;
+    
+    return reference;
+}
+
+std::vector<cv::Mat> ImageProcessing::prepareReferencePhase_forUnwrap(
+    const std::vector<cv::Mat>& ref,
+    const cv::Size& sz,
+    const double wavelength)
+{
+    CV_Assert(ref.size() == 2);
+    CV_Assert(ref[0].size() == ref[1].size());
+    CV_Assert(ref[0].type() == CV_64FC1 || ref[0].type() == CV_32FC1);
+    CV_Assert(sz.area() > 0);
+    CV_Assert(wavelength > 0);
+
+
+    auto wrapTo0_2pirow = [](cv::Mat& phi)
         {
-            double* ptr = phi.ptr<double>(y);
-            for (int x = 0; x < phi.cols; ++x)
-            {
+            CV_Assert(phi.type() == CV_64F);
 
-                if (ptr[x] < 0.0) {
-                    if (x < phi.cols / 2) {
-                        ptr[x] = 0;
-                        continue;
+            for (int y = 0; y < phi.rows; ++y)
+            {
+                double* ptr = phi.ptr<double>(y);
+                for (int x = 0; x < phi.cols; ++x)
+                {
+
+                    if (ptr[x] < 0.0) {
+                        if (x < phi.cols / 2) {
+                            ptr[x] = 0;
+                            continue;
+                        }
+                        ptr[x] += 2.0 * CV_PI;
                     }
-                    ptr[x] += 2.0 * CV_PI;
                 }
             }
-        }
-    };
+        };
 
-auto wrapTo0_2picol = [](cv::Mat& phi)
-    {
-        CV_Assert(phi.type() == CV_64F);
-
-        for (int y = 0; y < phi.rows; ++y)
+    auto wrapTo0_2picol = [](cv::Mat& phi)
         {
-            if (y < phi.rows / 2) { continue; }
-            double* ptr = phi.ptr<double>(y);
-            for (int x = 0; x < phi.cols; ++x)
-            {
+            CV_Assert(phi.type() == CV_64F);
 
-                if (ptr[x] < 0.0) {
-                    
-                    ptr[x] += 2.0 * CV_PI;
+            for (int y = 0; y < phi.rows; ++y)
+            {
+                if (y < phi.rows / 2) { continue; }
+                double* ptr = phi.ptr<double>(y);
+                for (int x = 0; x < phi.cols; ++x)
+                {
+
+                    if (ptr[x] < 0.0) {
+
+                        ptr[x] += 2.0 * CV_PI;
+                    }
                 }
             }
-        }
-    };
+        };
+
+
+    std::vector<cv::Mat> reference(2);
+    const double scale_x = sz.width / wavelength;
+    const double scale_y = sz.height / wavelength;
+
+    cv::Mat& horizontal = reference[0];
+    ref[0].convertTo(horizontal, CV_64F);
+    minmaxloc data = get_minmaxloc(horizontal);
+    if (data.minval < 0) wrapTo0_2pirow(horizontal);
+    horizontal *= scale_x;
+
+    cv::Mat& vertical = reference[1];
+    ref[1].convertTo(vertical, CV_64F);
+    data = get_minmaxloc(vertical);
+    if (data.minval < 0) wrapTo0_2picol(vertical);
+    vertical *= scale_y;
+    
+    return reference;
+}
 
 
 
@@ -3059,9 +3121,13 @@ std::vector<cv::Mat>ImageProcessing::manual_phaseUnwrapRef(
 {
     CV_Assert(mask.type() == CV_8U);
     CV_Assert(wrapped.size() == 4);
+    CV_Assert(std::all_of(wrapped.begin(), wrapped.end(),
+        [&](const cv::Mat& img) -> bool {
+            return (img.size() == mask.size()) && 
+                img.type() == CV_64F;
+        }));
     CV_Assert(wrapped[0].size() == mask.size());
     CV_Assert(wrapped[2].size() == mask.size());
-    CV_Assert(mask.type() == CV_8U);
     CV_Assert(wrapped[0].type() == CV_64F);
     CV_Assert(wrapped[2].type() == CV_64F);
 
@@ -3069,9 +3135,6 @@ std::vector<cv::Mat>ImageProcessing::manual_phaseUnwrapRef(
     for (auto& img : unwrapped_phase) {
         img.create(mask.size(), CV_64F);
     }
-
-   /* normalizeAndDisplay(wrapped[0]);
-    normalizeAndDisplay(wrapped[1]);*/
 
     // [0] real phase shift horizontal
     // [1] reference phase shift horizontal
@@ -3083,17 +3146,7 @@ std::vector<cv::Mat>ImageProcessing::manual_phaseUnwrapRef(
     for (std::size_t i = 0; i < unwrapped_phase.size(); ++i) {
         if (i == 0) {
             cv::Mat ref_wrapped = wrapped[1];
-            minmaxloc data = get_minmaxloc(ref_wrapped);
-            if (data.minval < 0) wrapTo0_2pirow(ref_wrapped);
-
-            double n_periods = 1920.0 / wavelength;
-
-            minmaxloc ref_wrappeddatadd{ get_minmaxloc(ref_wrapped) };
-
-            ref_wrapped *= n_periods;
-
-            minmaxloc ref_wrappeddata{ get_minmaxloc(ref_wrapped) };
-
+           
             cv::parallel_for_(cv::Range(0, ref_wrapped.rows),
                 [&](const cv::Range& range) {
                     for (int row = range.start; row < range.end; ++row) {
@@ -3101,23 +3154,10 @@ std::vector<cv::Mat>ImageProcessing::manual_phaseUnwrapRef(
                     }
                 }
             );
-
-            /*minmaxloc data22{ get_minmaxloc(unwrapped_phase[0]) };
-            normalizeAndDisplay(unwrapped_phase[0]);*/
-
-            //return unwrapped_phase;
         }
         if (i == 1) {
             cv::Mat ref_wrapped = wrapped[3];
-            minmaxloc data = get_minmaxloc(ref_wrapped);
-            if (data.minval < 0)  wrapTo0_2picol(ref_wrapped);
-            double n_periods = 1080.0 / wavelength;
-
-            ref_wrapped *= n_periods;
-
-            data = get_minmaxloc(ref_wrapped);
-
-
+           
             cv::parallel_for_(cv::Range(0, ref_wrapped.cols),
                 [&](const cv::Range& range) {
                     for (int col = range.start; col < range.end; ++col) {
@@ -3125,12 +3165,52 @@ std::vector<cv::Mat>ImageProcessing::manual_phaseUnwrapRef(
                     }
                 }
             );
-            //normalizeAndDisplay(unwrapped_phase[1]);
-            
         }
     }
-    return unwrapped_phase;
+
+    return refineUnwrap(unwrapped_phase);
+    
+    //return unwrapped_phase;
 }
+
+std::vector<cv::Mat> ImageProcessing::refineUnwrap(
+    const std::vector<cv::Mat>& unwrap,
+    const int k_size_median)
+{
+    CV_Assert(unwrap.size() == 2);
+    CV_Assert(unwrap[0].size() == unwrap[1].size());
+    CV_Assert(unwrap[0].type() == CV_64F && unwrap[1].type() == CV_64F);
+
+    std::vector<cv::Mat> output{ unwrap[0].clone(), unwrap[1].clone() };
+    for (std::size_t i = 0; i < unwrap.size(); ++i) {
+        cv::Mat unwrap32, median;
+        unwrap[i].convertTo(unwrap32, CV_32F);
+        cv::medianBlur(unwrap32, median, k_size_median);
+        cv::Mat diff(unwrap32.size(), CV_64F);
+        cv::subtract(unwrap32, median, diff);
+
+        cv::parallel_for_(cv::Range(0, unwrap[i].rows),
+            [&](const cv::Range& range) {
+                for (int row = range.start; row < range.end; ++row) {
+                    double* row_ptr = diff.ptr<double>(row);
+                    for (int col = 0; col < unwrap[i].cols; ++col) {
+                        int error = std::round(diff.ptr<float>(row)[col] / CV_2PI);
+                        if (std::abs(error) > 2) {
+                            std::cout << "Unrealistic Value. Be carefull \n";
+                            continue;
+                        }
+                        double& ref = output[i].ptr<double>(row)[col];
+                        const double val = ref;
+                        ref = val + error * CV_2PI;
+                    }
+                }
+            }
+        );
+    }
+    return output;
+}
+
+
 
 
 std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
@@ -3213,14 +3293,18 @@ cv::Mat ImageProcessing::createMask(
 
 // Function that takes two images. If Mask image is != 0 the original value is saved. Else it is 0.
 // When the double value is != 0 all values that not masked are shifted about this value. 
-cv::Mat ImageProcessing::applyMask(const cv::Mat& mask, const cv::Mat& img, float shift) {
+cv::Mat ImageProcessing::applyMask(
+    const cv::Mat& mask, 
+    const cv::Mat& img, 
+    float shift)
+{
     assert(mask.size() == img.size() && "Mask and image must be of the same size \n");
     assert((img.type() == CV_32FC1 || img.type() == CV_64F) && "Expected float image");
 
     cv::Mat result;
 
-    switch (static_cast<int>(current_type)) {
-    case 1: { // float_t
+    switch (img.type()) {
+    case(CV_64F): { // float_t
         result = cv::Mat::zeros(img.size(), CV_32FC1);
         for (int row = 0; row < img.rows; ++row) {
             const float* pImg = img.ptr<float>(row);
@@ -3237,7 +3321,7 @@ cv::Mat ImageProcessing::applyMask(const cv::Mat& mask, const cv::Mat& img, floa
         }
         break;
     }
-    case 2: { // double_t
+    case (CV_32F): { // double_t
         result = cv::Mat::zeros(img.size(), CV_64FC1);
         for (int row = 0; row < img.rows; ++row) {
             const double* pImg = img.ptr<double>(row);

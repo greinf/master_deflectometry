@@ -40,26 +40,26 @@ auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName 
 
 int main()
 {
-    std::filesystem::path inFolder = R"(C:\Users\grein\Desktop\Data)";
-    std::filesystem::path outFolder = R"(C:\Users\grein\Desktop\Data_outBigDistance)";
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
     std::string path{ "C:/Users/grein/Desktop/1Wave" };
 
     std::string path_gray_sections{ "C:/Users/grein/Desktop/2026-02-15_GrayCalibSections2.csv" };
 
-    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-15_GrayCalibSections" };
+    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-07_TestCalibSimulated" };
     //Path to IDS calibration: Blende geschlossen. 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO.xml" };
 
     std::string camMatrix_path1{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO" };
-
 
     std::string calibPath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-02-09StereoCalibration" };
 
     std::string calibrationDisplayCampath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-17_Display_Cam" };
 
     Deflectometry meassure{};
+
+    //meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveModel_Bias, path_gray_calibration);
+
     Pattern& pat = meassure.img_generation();
     ImageProcessing& processing = meassure.processing();
 
@@ -71,12 +71,48 @@ int main()
     config.creation.inverse = false;
     config.creation.pixel_x = 1920;
     config.creation.pixel_y = 1080;
-    config.creation.resolution_x = 1920;
-    config.creation.resolution_y = 1080;
+    config.creation.resolution_x = 30;
+    config.creation.resolution_y = 30;
     config.creation.starBit = config.msb;
     
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
+
+    auto& eval = config.getEvalParameter();
+    eval.start = grayCode1.begin();
+    eval.end = grayCode1.end();
+
+    GrayCodeDecoder dec(processing);
+    dec.decoding(config);
+
+    std::vector<cv::Mat> pattern = pat.generate_phaseShift();
+    //std::vector<cv::Mat> pattern_ref = pat.generate_phaseShift<UniformRowsCols>(Shift_mode::four_phase_shift, 1);
     
+    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(pattern, 1, 4, false, "");
+    //std::vector<cv::Mat> wrapped_ref = meassure.do_wrapped_phase(pattern_ref, 1, 4, false, "");
+
+    std::vector<cv::Mat> wrapped_ref{ config };
+
+
+    std::vector<cv::Mat> unwrapVector;
+    unwrapVector.push_back(wrapped[0]);
+    unwrapVector.push_back(wrapped_ref[0]);
+    unwrapVector.push_back(wrapped[1]);
+    unwrapVector.push_back(wrapped_ref[1]);
+
+    cv::Mat mask1 = cv::Mat::ones(wrapped[0].size(), CV_8U);
+
+
+
+    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask1, UnwrapMode::reference_Graycode, false, "", 108.0);
+
+
+
+
+
+
+
+
+
     CameraSimulation simulation(processing);
 
     CameraSimulationConfig Sim_config;
@@ -88,31 +124,52 @@ int main()
         
     //Sim_config.scene.disp_tilt_x = CV_PI / 10.0;
     Sim_config.scene.disp_tilt_y = CV_PI / 10.0;
+    Sim_config.scene.luminance = true;
     Sim_config.disp.gamma = 2.2;
-    Sim_config.data.begin = grayCode1.begin()._Ptr;
-    Sim_config.data.end = grayCode1.end()._Ptr;
+    Sim_config.data.begin = pattern.begin()._Ptr;
+    Sim_config.data.end = pattern.end()._Ptr;
    
     std::vector<cv::Mat> simulate = 
         simulation.simulate(Sim_config);
 
-    auto& eval = config.getEvalParameter();
+    
+
+
+    /*auto& eval = config.getEvalParameter();
     eval.start = simulate.begin();
     eval.end = simulate.end();
 
     GrayCodeDecoder dec(processing);
 
     dec.decoding(config);
-
-    std::vector<cv::Mat> result{ config };
     
     cv::Mat homography = 
         processing.createHomographyFromGrayCode(config, cv::Size(1920, 1080));
 
     std::vector<cv::Mat> maps = processing.createMappingfromHomography(homography, cv::Size(1920, 1080));
 
-    std::vector<cv::Mat> grayCodemapped = processing.remapCameraToScreen(simulate, maps);
+    std::vector<cv::Mat> graySequence = pat.generateGrayCalibrationSequence(1);
+    Sim_config.data.begin = graySequence.begin()._Ptr;
+    Sim_config.data.end = graySequence.end()._Ptr;
 
-    meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveLut);
+    std::vector<cv::Mat> grayValues_simulated = simulation.simulate(Sim_config);
+
+    std::vector<cv::Mat> grayValues_mapped = processing.remapCameraToScreen(grayValues_simulated, maps);
+
+    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel);
+
+    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveLut);
+
+    meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel);
+
+    meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveLut);
+
+    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel_Bias);
+
+    meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel_Bias);
+
+
+    meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveLut);*/
 
     // AbstandsMessung 
     meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
@@ -138,29 +195,12 @@ int main()
         true);
 
     
-    //// ************ Triangulation *******************
-
-    //auto result = meassure.computeLaserDistanceFrom4Images(
-    //    LaserFr[0], LaserFr[1], LaserFr[2], LaserFr[3],
-    //    camMatrix[0], dist_Coeffs[0], camMatrix[1], dist_Coeffs[1], camToCam[0], camToCam[1]
-    //);
-
-    //std::cout << "p1 (px): " << result.p1_px << "\n";
-    //std::cout << "p2 (px): " << result.p2_px << "\n";
-    //std::cout << "3D (cam1): [" << result.X_cam1.x << ", " << result.X_cam1.y << ", " << result.X_cam1.z << "]\n";
-    //std::cout << "distance to cam1: " << result.distance_cam1 << " (same units as T)\n";
-
-
-    double pixelpitch = 0.2745;
-
     std::vector<cv::Mat> pattern10 =
         meassure.generatePattern(Shift_mode::four_phase_shift, _defl_::GrayCal::Method::None, path_gray_calibration, FrameRole::Debug, false, " ", 10);
 
-    
     std::vector<cv::Mat> wrappedPhase =
         meassure.do_wrapped_phase(pattern10, 1, 4, true, path);
 
-    //meassure.load(FrameRole::Contrast, path);
     std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
 
     cv::Mat mask = meassure.getMask(contrastPhase, 0.0, false);
@@ -237,3 +277,16 @@ int main()
     //meassure.loadPhaseConfig("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23/0.xml");
 
 }
+
+
+//// ************ Triangulation *******************
+
+    //auto result = meassure.computeLaserDistanceFrom4Images(
+    //    LaserFr[0], LaserFr[1], LaserFr[2], LaserFr[3],
+    //    camMatrix[0], dist_Coeffs[0], camMatrix[1], dist_Coeffs[1], camToCam[0], camToCam[1]
+    //);
+
+    //std::cout << "p1 (px): " << result.p1_px << "\n";
+    //std::cout << "p2 (px): " << result.p2_px << "\n";
+    //std::cout << "3D (cam1): [" << result.X_cam1.x << ", " << result.X_cam1.y << ", " << result.X_cam1.z << "]\n";
+    //std::cout << "distance to cam1: " << result.distance_cam1 << " (same units as T)\n";

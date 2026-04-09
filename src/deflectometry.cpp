@@ -676,7 +676,6 @@ cv::Mat Deflectometry::getMask(
 	CV_Assert(thresh >= 0);
 	
 	return m_img_processing->createMask(contrast, thresh, dilate);
-
 }
 
 bool Deflectometry::disconnect() {
@@ -693,14 +692,14 @@ bool Deflectometry::disconnect() {
 }
 
 
-
 std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 	const std::vector<cv::Mat>& wrapped_Phase,
 	const cv::Mat& mask,
 	UnwrapMode mode,
 	bool save,
 	const std::string& save_path,
-	const double wavelength)
+	const double wavelength,
+	const cv::Size& sz)
 {
 	CV_Assert(wrapped_Phase[0].size() == mask.size());
 	//CV_Assert(wrapped_Phase[0].type() == mask.type());
@@ -712,12 +711,44 @@ std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 			m_img_processing -> manual_phaseUnwrap(wrapped_Phase, mask);
 	}
 
-	else if (mode == UnwrapMode::manually_reference) {
-		CV_Assert(wrapped_Phase.size() == 4);
+	else if (mode == UnwrapMode::reference_Phase)
+	{
+		std::vector<cv::Mat> reference = m_img_processing->prepareReferencePhase_forUnwrap(
+			std::vector<cv::Mat>{wrapped_Phase[1], wrapped_Phase[3]},
+			sz,
+			wavelength
+		);
+
+		std::vector<cv::Mat> unwrapVector;
+		unwrapVector.push_back(wrapped_Phase[0]);
+		unwrapVector.push_back(reference[0]);
+		unwrapVector.push_back(wrapped_Phase[2]);
+		unwrapVector.push_back(reference[1]);
+
 
 		unwrappedPhase =
-			m_img_processing->manual_phaseUnwrapRef(wrapped_Phase, mask, wavelength);
+			m_img_processing->manual_phaseUnwrapRef(unwrapVector, mask, wavelength);
 	}
+
+	else if (mode == UnwrapMode::reference_Graycode)
+	{
+		std::vector<cv::Mat> reference = m_img_processing->prepareGrayCode_forUnwrap(
+			std::vector<cv::Mat>{wrapped_Phase[1], wrapped_Phase[3] },
+			sz,
+			wavelength
+		);
+
+		std::vector<cv::Mat> unwrapVector;
+
+		unwrapVector.push_back(wrapped_Phase[0]);
+		unwrapVector.push_back(reference[0]);
+		unwrapVector.push_back(wrapped_Phase[2]);
+		unwrapVector.push_back(reference[1]);
+
+		unwrappedPhase =
+			m_img_processing->manual_phaseUnwrapRef(unwrapVector, mask, wavelength);
+	}
+
 	else if (mode == UnwrapMode::opencv) {
 		CV_Assert(wrapped_Phase.size() == 2);
 		unwrappedPhase =
@@ -730,7 +761,7 @@ std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 		m_img_store->saveRole(FrameRole::UnwrappedPhase, save_path);
 		m_img_store->saveRoleXML(FrameRole::UnwrappedPhase, save_path);
 	}
-	m_img_store->show(FrameRole::UnwrappedPhase);
+	//m_img_store->show(FrameRole::UnwrappedPhase);
 
 	return unwrappedPhase;
 }
@@ -984,8 +1015,6 @@ std::vector<cv::Mat> Deflectometry::testReprojection(
 	std::vector<cv::Mat> pattern10 =
 		generatePattern(shiftmode, calmethod, calibPath, FrameRole::Debug, false, savePath, 1);
 
-	
-
 		
 	std::vector<cv::Mat> patterncam;
 	if (synthetic_images == false)
@@ -1029,7 +1058,7 @@ std::vector<cv::Mat> Deflectometry::testReprojection(
 			do_unwrapped_phase(wrappedPhase, mask, unwrap, true, savePath, 27);
 	}
 
-	if (unwrap == UnwrapMode::manually_reference) {
+	if (unwrap == UnwrapMode::reference_Phase) {
 
 		std::vector<cv::Mat> refPattern = 
 			generatePattern(shiftmode, calmethod, calibPath, FrameRole::Debug, false, savePath, 1);
@@ -1055,7 +1084,7 @@ std::vector<cv::Mat> Deflectometry::testReprojection(
 		wrapped.push_back(wrappedPhaseref[1]);
 
 		unwrappedPhase = 
-			do_unwrapped_phase(wrapped, mask, UnwrapMode::manually_reference, true, savePath, 27);
+			do_unwrapped_phase(wrapped, mask, UnwrapMode::reference_Phase, true, savePath, 27);
 	}
 	
 	if (unwrap == UnwrapMode::opencv) {
@@ -1287,13 +1316,11 @@ std::vector<cv::Mat> Deflectometry::do_wrapped_phase(
 		cv::minMaxLoc(img, &min, &max);
 	}*/
 
-
-	std::cout << "Show Raw Phase \n";
-	m_img_store->show(FrameRole::RawPhase);
-	std::cout << "Show wrapped PHase \n";
-	m_img_store->show(FrameRole::WrappedPhase);
-	m_img_store->show(FrameRole::Contrast);
-	m_img_store->show(FrameRole::BaseIntensity);
+	//m_img_store->show(FrameRole::RawPhase);
+	
+	//m_img_store->show(FrameRole::WrappedPhase);
+	//m_img_store->show(FrameRole::Contrast);
+	//m_img_store->show(FrameRole::BaseIntensity);
 	return std::vector<cv::Mat>(wrapped_phase_out.begin(), std::next(wrapped_phase_out.begin(), 2));
 }
 
@@ -1392,16 +1419,23 @@ void Deflectometry::GrayCalibrationClassTest(
 {
 	setupCalibration(method, path);
 
-	std::vector<cv::Mat> grayPattern = m_pattern->generateGrayCalibrationSequence(1, 150, 100);
+	std::vector<cv::Mat> grayPattern = m_pattern->generate_phaseShift();
 
-	std::vector<cv::Mat> grayPattern_dist = m_img_processing->do_gamma_distortion(2.0, grayPattern, UniformRowsCols{});
+	std::vector<cv::Mat> grayPattern_dist = m_img_processing->do_gamma_distortion(2.2, grayPattern, PerElement{});
 
 	// Generate Calibration
 	
-	//do_grayvalue_calibration(grayPattern_dist, 1, 1, true, path, method);
+	// do_grayvalue_calibration(grayPattern_dist, 1, 1, true, path, method);
 
 	// Apply The calibration
-	cv::Mat undistorted = applyCalibration(grayPattern_dist[11], cv::Mat{}, method);
+
+	cv::Mat grayPattern_scaled = grayPattern_dist[2] * 0.9 + (255 * 0.005);
+
+	cv::Mat img64 = applyCalibration(grayPattern_scaled, cv::Mat{}, method);
+
+	cv::Mat img8U, pattern_8U; 
+	img64.convertTo(img8U, CV_8U);
+	grayPattern_scaled.convertTo(pattern_8U, CV_8U);
 
 	std::cout << "Sucess? \n";
 }

@@ -31,21 +31,11 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 	auto& eval = config.getEvalParameter();
 
 	// Necessary to generate the GrayCode
-	const int max_bitdepth_x = static_cast<int>(std::ceil(std::log2(config.creation.pixel_x)));
-	const int max_bitdpeth_y = static_cast<int>(std::ceil(std::log2(config.creation.pixel_y)));
+	const int max_bitdepth_x = config.getBitdepth(config.creation.pixel_x); 
+	const int max_bitdpeth_y = config.getBitdepth(config.creation.pixel_y);
 	const int grayCodeBitdepth = (max_bitdepth_x > max_bitdpeth_y) ? max_bitdepth_x : max_bitdpeth_y;
 
-	// Used for the decoding. Also saved in eval struct
-	const int bit_depth_x = eval.bitdepth_x = 
-		static_cast<int>(std::ceil(std::log2(config.creation.resolution_x)));
-	const int bit_depth_y = eval.bitdepth_y =
-		static_cast<int>(std::ceil(std::log2(config.creation.resolution_y)));
-
-	CV_Assert(bit_depth_x < 27 && bit_depth_y < 27);
-
-	// Create all Graycode according to the biggest needed Value
-	const int dominant_bit_depth = (bit_depth_x > bit_depth_y) ?
-		bit_depth_x : bit_depth_y;
+	CV_Assert(max_bitdepth_x < 27 && max_bitdpeth_y < 27);
 
 	const int dominant_pixel_n = (config.creation.pixel_x > config.creation.pixel_y) ?
 		config.creation.pixel_x : config.creation.pixel_y;
@@ -62,9 +52,6 @@ std::vector<cv::Mat> Pattern::generateGrayCodeImg(GrayCodeConfig& config)
 		generateMaskingImg(sz);
 	grayCodeImages.push_back(masking_img[0]); // White 
 	grayCodeImages.push_back(masking_img[1]); // Black
-	
-	eval.inverse = config.creation.inverse;
-	eval.startbit = config.creation.starBit;
 	
 	//// ----- Debugging --------
 	/*
@@ -152,9 +139,8 @@ std::vector<cv::Mat> Pattern::generateXGray(
 	CV_Assert(config.creation.pixel_x % 2 != 1);
 	//CV_Assert(grayCode.size() >= config.creation.pixel_x);
 
-	const auto& eval = config.getEvalParameter();
-
-	const std::size_t n_pics = static_cast<std::size_t>(eval.bitdepth_x);
+	const std::size_t n_pics = static_cast<std::size_t>(
+		config.getBitdepth(config.creation.resolution_x));
 
 	std::vector<cv::Mat> grayCodeimgX(n_pics);
 	std::size_t n_bit = grayCode[0].size();
@@ -193,9 +179,8 @@ std::vector<cv::Mat> Pattern::generateYGray(
 	CV_Assert(config.creation.pixel_y % 2 != 1);
 	//CV_Assert(grayCode.size() >= config.creation.pixel_y);
 
-	const auto& eval = config.getEvalParameter();
-
-	const std::size_t n_pics = static_cast<std::size_t>(eval.bitdepth_y);
+	const std::size_t n_pics = static_cast<std::size_t>(
+		config.getBitdepth(config.creation.resolution_y));
 
 	std::vector<cv::Mat> grayCodeimgY(n_pics);
 	std::size_t n_bit = grayCode[0].size();

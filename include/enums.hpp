@@ -15,7 +15,8 @@ enum class DisplayMode {
 
 enum class UnwrapMode {
 	manually,
-	manually_reference,
+	reference_Phase,
+	reference_Graycode,
 	opencv,
 	max_value
 };

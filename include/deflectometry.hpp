@@ -152,13 +152,32 @@ public:
 		 bool save,
 		 const std::string& path_save);
 
+
+	 // Input[0]: const std::vector<cv::Mat> img: contains the wrapped phase. Order depends on used method
+	 //	|-> UnwrapMode::manually: Algorithm expects img.size() == 2 and img.type() == CV_64F for all images
+	 //	|		Most basic method that only iterates over the wrapped phase and looks for jumps > pi
+	 // |-> UnwrapMode::reference_Phase: Algorithm expects img.size() == 4 and img.type() == CV_64F for all images
+	 // |		The Algorithm uses a reference phase ( A sin Wave with one Period is wrapped and used as reference for both directions)
+	 // |		[0]: Horizontal Wrapped Phase, [1]: Horizontal ReferencePhase, [1]: Vertical Wrapped Phase, [2]: Vertical ReferencePhase
+	 // |-> UnwrapMode::reference_GrayCode: Algorithm expects img.size() == 4 and img.type() == CV_64F for wrapped phase, img.type() == CV_32F || CV_64F for GrayCode
+	 // |		The Algotihm uses a reference generated throgh the GrayCode decoding -> this images are normally in CV_32F
+	 // |-> UnwrapMode::opencv Algotihm expect img.size() ==2 and img.type() == CV_64F || CV_32F for all images
+	 // Input[1]: const cv::Mat& mask: mask.size() == img.size(), mask.type() == CV_8U
+	 // Input[2]: See Input[0]
+	 // Input[3]: bool if the value should be save to .xml file 
+	 // Input[4]: const std::string& path, path for the output images
+	 // Input[5]: const double wavelength: Parameter used for the Methods that use the referene Images
+	 //			The wavelength must be given in pixels/2pi in Dispaly Pixels
+	 // Input[6]: const cv::Size& sz: the size in pixelx, pixel_y of the original used Sinus pattern. 
+	 // Ouput: std::vector<cv::Mat> img; where img.type() == CV_64FC1 and img.size() == input_img.size() for all images 
 	 std::vector<cv::Mat> do_unwrapped_phase(
 		 const std::vector<cv::Mat>& wrapped,
 		 const cv::Mat& mask,
 		 UnwrapMode mode,
 		 bool save,
 		 const std::string& save_path,
-		 const double wavelength
+		 const double wavelength,
+		 const cv::Size& disp_size = {1920,1080}
 	 );
 
 	 std::vector<cv::Mat> do_reprojection(
@@ -187,7 +206,7 @@ public:
 	 // Method for testing implementation of GrayCalibration Class
 	 void GrayCalibrationClassTest(
 		 const _defl_::GrayCal::Method method,
-		 const std::string path = {"C:/Users/grein/Desktop/Master/Project/deflectometrie/test/GrayCalibrationClass"}
+		 const std::string path
 	 );
 
 	 // Function to create GrayValue calibration. 

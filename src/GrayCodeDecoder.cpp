@@ -12,8 +12,10 @@
 std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 {
 	auto eval_params = config.getEvalParameter();
-
 	CV_Assert(eval_params.start != eval_params.end);
+
+	const int n_pics_x = config.getBitdepth(config.creation.resolution_x);
+	const int n_pics_y = config.getBitdepth(config.creation.resolution_y);
 
 	// Extract for x and y
 	std::vector<cv::Mat> grayConfig(eval_params.start, eval_params.end);
@@ -23,16 +25,16 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 
 	// X-Bilder extrahieren
 	auto it_start_x = grayBinaries.begin();
-	auto it_end_x = it_start_x + eval_params.bitdepth_x;
+	auto it_end_x = it_start_x + n_pics_x;
 	std::vector<cv::Mat> grayBinaries_X(it_start_x, it_end_x);
 
 	// Y-Bilder extrahieren 
 	auto it_start_y = it_end_x;
-	auto it_end_y = it_start_y + eval_params.bitdepth_y;
+	auto it_end_y = it_start_y + n_pics_y;
 	std::vector<cv::Mat> grayBinaries_Y(it_start_y, it_end_y);
 
 	// Sicherstellen, dass die Maske danach noch kommt
-	CV_Assert(grayBinaries.size() >= (eval_params.bitdepth_x + eval_params.bitdepth_y + 1));
+	CV_Assert(grayBinaries.size() >= (n_pics_x + n_pics_y + 1));
 
 	// Create the output images
 	for (auto& img : config.results.result_img) {
@@ -81,6 +83,7 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 		cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
 		cv::imshow("img", norm);
 		cv::waitKey(0);
+		cv::destroyWindow("img");
 	}
 
 	// Overloaded typecast std::vector<cv::Mat> only return the result images.
@@ -93,10 +96,9 @@ void GrayCodeDecoder::gray2dec(
 {
 	CV_Assert(sam.pixel_x != -1 && sam.pixel_y != -1);
 
-	const auto& eval = config.getEvalParameter();
-
 	const std::size_t bit_depth = (sam.orientation == Samples::x_dir) ?
-		(eval.bitdepth_x) : (eval.bitdepth_y);
+		(config.getBitdepth(config.creation.pixel_x)) : 
+		(config.getBitdepth(config.creation.pixel_y));
 
 	boost::dynamic_bitset<> output(bit_depth, 0);
 	bool last_bit = false;
@@ -109,9 +111,7 @@ void GrayCodeDecoder::gray2dec(
 		bool binary_bit = current_gray_bit ^ last_bit;
 
 		if (binary_bit) {
-
 			output.set(i);
-
 		}
 		last_bit = binary_bit;
 	}
@@ -135,20 +135,24 @@ void GrayCodeDecoder::extractSample(
 		}));
 
 	const std::size_t bin_size{ img.size() };
-	const auto& eval = config.getEvalParameter();
 
-	const int bitdepth = (sam.orientation == Samples::orientation::x_dir) ?
-		(eval.bitdepth_x) : (eval.bitdepth_y);
+	const int bitdepth_res = (sam.orientation == Samples::orientation::x_dir) ?
+		(config.getBitdepth(config.creation.resolution_x)) : 
+		(config.getBitdepth(config.creation.resolution_y));
 
-	CV_Assert(static_cast<std::size_t>(bitdepth) == bin_size);
+	CV_Assert(static_cast<std::size_t>(bitdepth_res) == bin_size);
 
-	sam.m_data = boost::dynamic_bitset(static_cast<std::size_t>(bitdepth), 0);
+	const int bitdepth_real = (sam.orientation == Samples::orientation::x_dir) ?
+		(config.getBitdepth(config.creation.pixel_x)) :
+		(config.getBitdepth(config.creation.pixel_y));
+
+	sam.m_data = boost::dynamic_bitset(static_cast<std::size_t>(bitdepth_real), 0);
 	
 	for (std::size_t i = 0; i < bin_size; ++i)
 	{
 		std::size_t counter;
-		if (eval.startbit == GrayCodeConfig::msb) {
-			counter = static_cast<std::size_t>(bitdepth) - 1 - i;
+		if (config.creation.starBit == GrayCodeConfig::msb) {
+			counter = static_cast<std::size_t>(bitdepth_real) - 1 - i;
 		}
 		else counter = i;
 
@@ -181,18 +185,24 @@ std::vector<cv::Mat> GrayCodeDecoder::binaries(
 	const cv::Mat mask = config.results.mask = m_img_processing.grayCalibMask(
 		std::vector<cv::Mat>{*std::prev(img.end()), *std::prev(img.end(), 2)});
 
+	const int bitdepth_x = config.getBitdepth(config.creation.resolution_x);
+	const int bitdepth_y = config.getBitdepth(config.creation.resolution_y);
+
 	if (config.creation.inverse)
 	{
 		// double for each bitdepth and two images for masking
-		const int expected{ eval_param.bitdepth_x * 2 + eval_param.bitdepth_y * 2 + 2};
+		const int expected{ bitdepth_x * 2 + bitdepth_y * 2 + 2};
+
 		CV_Assert(expected == static_cast<int>(sz));
 		CV_Assert(sz % 2 != 1);
 
 		for (std::size_t i = 0; i < ((sz-2)/2); ++i) {
 			// Change type to double
+			int bitdepth = bitdepth_x;
+			if (i >= bitdepth_x) bitdepth = bitdepth_y;
 			cv::Mat gray64, gray_inv64, gray64mask, gray_inv64mask;
 			img[i].convertTo(gray64, CV_64F);
-			img[i + eval_param.bitdepth_x].convertTo(gray_inv64, CV_64F);
+			img[i + bitdepth].convertTo(gray_inv64, CV_64F);
 
 			// Mask the images
 			gray64mask = gray64.setTo(0, ~mask);
@@ -207,7 +217,7 @@ std::vector<cv::Mat> GrayCodeDecoder::binaries(
 	}
 
 	else {
-		const int expected{ eval_param.bitdepth_x + eval_param.bitdepth_y + 2 };
+		const int expected{ bitdepth_x + bitdepth_y + 2 };
 		CV_Assert(expected == static_cast<int>(sz));
 		
 		for (std::size_t i = 0; i < (sz - 2); ++i) {

@@ -81,8 +81,8 @@ namespace detail {
     }
 
     struct Sample {
-        double u; // g/255
-        double I; // measured intensity
+        double u{}; // g/255
+        double I{}; // measured intensity
     };
 
 
@@ -93,7 +93,8 @@ namespace detail {
     {
         // If the biggest Element is smaller than epsion than Abort directly
         double Imax_obs = *std::max_element(measured.begin(), measured.end());
-        if (Imax_obs < eps) throw std::runtime_error("No valid signal (Imax_obs ~ 0).");
+        if (Imax_obs < eps) return{};
+            //throw std::runtime_error("No valid signal (Imax_obs ~ 0).");
 
         std::vector<Sample> samples;
         samples.reserve(256);
@@ -105,7 +106,7 @@ namespace detail {
 
              
             if ((I / Imax_obs) > sat_cut_rel) {
-                //std::cout << "WARNING: Saturated Values were cut in Calibration \n";
+                std::cout << "WARNING: Saturated Values were cut in Calibration \n";
                 continue;
             }
 
@@ -116,7 +117,7 @@ namespace detail {
             // Save the intensity Val 0 ... 255 I and normalized to 0 ... 1
             samples.push_back({ u, I });
         }
-        if (samples.size() < 10) throw std::runtime_error("Not enough samples for LM fit.");
+        if (samples.size() < 80) return {}; //  throw std::runtime_error("Not enough samples for LM fit.");
         return samples;
     }
 
@@ -211,7 +212,6 @@ cv::Mat GrayCalibration::applyCalibration(
 {
     return applyCalibration(GrayCalibration_specifier::Active::LUT{}, image, mask);
 }
-
 
 cv::Mat GrayCalibration::applyCalibration(
     const GrayCalibration_specifier::Active::Model spec,
@@ -348,7 +348,8 @@ cv::Mat GrayCalibration::applyModelFit(
                         std::isnan(gamma) ||
                         std::isnan(i_max) ||
                         gamma <= 0.0 ||
-                        i_max <= 0.0) {
+                        i_max <= 0.0)
+                    {
                         cal_ptr[col] = 0.0;
                         continue;
                     }
@@ -392,11 +393,12 @@ cv::Mat GrayCalibration::applyLut(
                 double* cal_ptr = calibrated.ptr<double>(row);
                 const uchar* mask_ptr = mask.ptr<uchar>(row);
                 for (int col = 0; col < image.cols; ++col) {
-                    if (mask_ptr == 0) continue;
+                    if (mask_ptr[col] == 0 || std::isnan(img_ptr[col])) continue;
                     cal_ptr[col] = getLutVal(img_ptr[col]);
                 }
             }
         });
+
     return calibrated;
 }
 
@@ -489,8 +491,23 @@ Gray_Calib_Result GrayCalibration::fitGammaBias_LM(
 
     double i_min{ 0 }, gamma{ 1.0 }, i_max{ 150.0 };
 
+    Gray_Calib_Result result;
+
     std::vector<detail::Sample> values =
         detail::buildSamples(meassured, sat_cut, eps);
+
+    if (values.empty()) {
+        result.stats.gamma = result.stats.Imax = result.stats.I_0 =
+            result.stats.r2 = result.stats.rmse = std::numeric_limits<double>::quiet_NaN();
+
+        result.stats.iters = result.stats.n = 0;
+
+        result.stats.converged = false;
+
+        Gray_Calib_Result result;
+
+        return result;
+    }
 
     ceres::Problem problem;
 
@@ -512,7 +529,7 @@ Gray_Calib_Result GrayCalibration::fitGammaBias_LM(
 
     //std::cout << summary.BriefReport() << "\n";
 
-    Gray_Calib_Result result;
+    
     result.stats.gamma = gamma;
     result.stats.Imax = i_max;
     result.stats.I_0 = i_min;
@@ -530,6 +547,23 @@ Gray_Calib_Result GrayCalibration::fitGamma(
     std::vector<detail::Sample> samples =
         detail::buildSamples(meassured, sat_cut, eps);
     
+    Gray_Calib_Stats stats;
+
+    if (samples.empty()) {
+        stats.gamma =  stats.Imax = stats.I_0 = 
+           stats.r2 = stats.rmse = std::numeric_limits<double>::quiet_NaN();
+
+        stats.iters = stats.n = 0;
+
+        stats.converged = false;
+
+        Gray_Calib_Result result;
+
+        result.stats = stats;
+
+        return result;
+    }
+
     double ln_x{}, ln_y{}, ln_x2{}, ln_y2{}, ln_xy{};
 
     for (std::size_t val = 0; val < samples.size(); ++val) {
@@ -545,8 +579,6 @@ Gray_Calib_Result GrayCalibration::fitGamma(
         ln_xy += ln_x_act * ln_y_act;
     }
     
-    Gray_Calib_Stats stats;
-
     double n = static_cast<double>(samples.size());
     
     double gamma_num =

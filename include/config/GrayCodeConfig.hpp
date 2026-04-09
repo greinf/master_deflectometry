@@ -26,12 +26,7 @@ public:
 		lsb
 	};
 private:
-	struct Eval_parameter {
-		bool inverse{};
-		int bitdepth_x{};
-		int bitdepth_y{};
-		StartBit startbit;
-
+	struct Data {
 		// DataPosition, Located in Frame Store but this is nicer
 		std::vector<cv::Mat>::const_iterator start{};
 		std::vector<cv::Mat>::const_iterator end{};
@@ -46,7 +41,7 @@ private:
 		StartBit starBit;
 	};
 
-	Eval_parameter decoding{};
+	Data data{};
 
 	struct Results {
 		std::array<cv::Mat, 2> result_img{};
@@ -58,7 +53,10 @@ public:
 
 	Results results{};
 	
-	Eval_parameter& getEvalParameter() { return decoding; }
+	Data& getEvalParameter() { return data; }
+
+	int getBitdepth(int k) { return static_cast<int>(std::ceil(std::log2(k))); }
+	
 
 	operator std::vector<cv::Mat>() {
 		std::vector<cv::Mat> out(2);

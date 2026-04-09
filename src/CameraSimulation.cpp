@@ -3,7 +3,7 @@
 #include <opencv2/core.hpp>
 #include "imgProcessing.hpp"
 #include <cmath>
-
+#include <cstddef>
 
 struct CameraSimulation::Impl {
 	std::vector<cv::Mat> images{};
@@ -156,16 +156,25 @@ std::vector<cv::Mat> CameraSimulation::remapFromHitpoints(
 
 	cv::Mat_<cv::Vec2f> hitpoints32f(hitpoints);  // Converto to float
 
-	std::vector<cv::Mat> channels(2), out;
+	int n_pics = static_cast<int>(std::distance(start, end));
+
+	std::vector<cv::Mat> channels(2), out(n_pics);
 
 	cv::split(hitpoints32f, channels);
 
-	for (auto it = start; it != end; ++it) {
-		cv::Mat remapped;
-		cv::remap(*it, remapped, channels[0], channels[1], cv::INTER_LINEAR);
-		*it = remapped;
-		out.push_back(remapped);
-	}
+	cv::parallel_for_(cv::Range(0, n_pics),
+		[&](const cv::Range& range)
+		{
+			for (int i = range.start; i < range.end; ++i) {
+				cv::Mat remapped;
+				std::vector<cv::Mat>::iterator it = std::next(start, i);
+				cv::remap(*it, remapped, channels[0], channels[1], cv::INTER_LINEAR);
+				*it = remapped;
+				out[i] = remapped;
+			}
+		}
+		);
+
 	return out;
 }
 
@@ -273,6 +282,7 @@ cv::Mat CameraSimulation::createCircularBinaryMask(
 void CameraSimulation::extractImages(
 	const CameraSimulationConfig& config)
 {
+	m_impl->images.clear();
 	CV_Assert(config.data.begin != config.data.end);
 	
 	for (auto it = config.data.begin; it != config.data.end; ++it) {

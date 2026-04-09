@@ -262,6 +262,7 @@ public:
         cv::Mat iter(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
 
         // Parallel iterating over the rows 
+        //cv::setNumThreads(0);
         cv::parallel_for_(cv::Range(0, mask.rows),
             [&](const cv::Range& range) {
                 for (int r = range.start; r < range.end; ++r) {
@@ -296,7 +297,8 @@ public:
                         }
 
                         else if constexpr (std::is_same<T, GrayCalibration_specifier::Active::Model_Bias>::value ||
-                            std::is_same<T, GrayCalibration_specifier::Passive::Model_Bias>::value) {
+                            std::is_same<T, GrayCalibration_specifier::Passive::Model_Bias>::value)
+                        {
                             auto res = fitGammaBias_LM(y);
                             gammaPtr[c] = res.stats.gamma;
                             ImaxPtr[c] = res.stats.Imax;
