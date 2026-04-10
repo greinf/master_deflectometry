@@ -11,7 +11,7 @@ namespace cv {
 }
 
 // Config file for the Camera Simulation Class
-// All length are given in mm, and Angles in Grad
+// All length are given in mm, and Angles in Rad
 // CameraSimulationConfig:
 // |-> CameraConfig:
 // |	|-> bool quantization: If True applies Qunatization for the CameraIntensities
@@ -40,7 +40,6 @@ namespace cv {
 // |	|-> std::vector<cv::Mat>::const_iterator begin: an Iterator to the start position of the Images to use for simulation
 // |	|-> std::vector<cv::Mat>::const_iterator end: an Iterator to end position of the Images to use for simulatio
 // |	|-> std::vector<cv::Mat>*: an Ptr to a std::vector<cv::Mat> to store the output images to
-
 struct CameraSimulationConfig {
 
 private:

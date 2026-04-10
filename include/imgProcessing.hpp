@@ -508,7 +508,6 @@ public:
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> do_calibration_Points(
 		const std::vector<cv::Mat>& unwrapped,
 		const cv::Mat& mask,
-		const cv::Vec2d& refPoint,
 		const double wavelength,
 		const int gridX,
 		const int gridY,

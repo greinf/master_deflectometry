@@ -183,7 +183,6 @@ public:
 	 std::vector<cv::Mat> do_reprojection(
 		 const std::vector<cv::Mat>& unwrapped,
 		 const cv::Mat& mask, 
-		 const cv::Vec2d refPoint,
 		 const cv::Mat& cam_Matrix,
 		 const cv::Mat& dist_Coeffs,
 		 const double wavelength,

@@ -14,6 +14,14 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 	auto eval_params = config.getEvalParameter();
 	CV_Assert(eval_params.start != eval_params.end);
 
+	// Wrong Picture size !!!
+	std::all_of(eval_params.start, eval_params.end,
+		[&](const cv::Mat& img) -> bool {
+			return eval_params.start->size() == img.size();
+		});
+
+	const cv::Size input_size = eval_params.start->size();
+
 	const int n_pics_x = config.getBitdepth(config.creation.resolution_x);
 	const int n_pics_y = config.getBitdepth(config.creation.resolution_y);
 
@@ -43,11 +51,11 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 			cv::Scalar(std::numeric_limits<float>::quiet_NaN()));
 	}
 
-	cv::parallel_for_(cv::Range(0, config.creation.pixel_y),
+	cv::parallel_for_(cv::Range(0, input_size.height),
 		[&](const cv::Range& range) {
 			for (int row = range.start; row < range.end; ++row) {
 				const uchar* mask_ptr = grayBinaries[contain_size - 1].ptr<uchar>(row);
-				for (int cols = 0; cols < config.creation.pixel_x; ++cols) {
+				for (int cols = 0; cols < input_size.width; ++cols) {
 					if (mask_ptr[cols] == 0) continue;
 					Samples sample_x{}, sample_y{};
 					sample_x.pixel_x = sample_y.pixel_x = cols;
@@ -78,13 +86,13 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 			}
 		});
 
-	for (const auto& img : config.results.result_img) {
+	/*for (const auto& img : config.results.result_img) {
 		cv::Mat norm;
 		cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
 		cv::imshow("img", norm);
 		cv::waitKey(0);
 		cv::destroyWindow("img");
-	}
+	}*/
 
 	// Overloaded typecast std::vector<cv::Mat> only return the result images.
 	return config;

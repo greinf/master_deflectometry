@@ -296,7 +296,6 @@ std::vector<cv::Vec2d> Deflectometry::distortionPipelineTest(
 std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const std::vector<cv::Mat>& unwrapped,
 	const cv::Mat& mask,
-	const cv::Vec2d refPoint,
 	const cv::Mat& cam_Matrix,
 	const cv::Mat& dist_Coeffs,
 	const double wavelength,
@@ -309,26 +308,14 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const double screen_height) 
 {
 
-	// --- Set to 0 for debugging ---
-	//cv::Mat mask = m_img_processing->createMask(unwrapped, 0.0);
-
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
 		m_img_processing->do_calibration_Points(
 			unwrapped,
 			mask,
-			refPoint,
 			wavelength,
 			grid_points_x,
 			grid_points_y,
 			pixel_pitch);
-
-	// Only valid check for pixel_pitch = 1
-	//if (check_synthaticall_points(calibrationPoints)) std::cout << "Happy Calibration Points ";
-	//else std::cout << "Not so happy ";
-	// --- For debugging --
-	/*cv::Mat synthetical_camera_matrix = cv::Mat::eye(3, 3, CV_64F); 
-	cv::Mat synthetical_distortion = cv::Mat::zeros(dist_Coeffs[0].size(), CV_64F);*/
-	// --- end ---
 
 	cv::Mat rvec, tvec;
 	bool ok = cv::solvePnP(calibrationPoints.second, calibrationPoints.first,
@@ -1109,21 +1096,23 @@ std::vector<cv::Mat> Deflectometry::testReprojection(
 	else distorted = unwrappedPhase;*/
 	distorted = unwrappedPhase;
 
-	return do_reprojection(
-		distorted,
-		mask,
-		ref_point[0],
-		camMatrix[0],
-		dist_Coeffs[0],
-		27.0,
-		unwrappedPhase[0].cols,
-		unwrappedPhase[0].rows,
-		0.2745, //PixelPitch  FH 0.277    BMZ: 
-		true,
-		savePath,
-		532, //Dispaly Width  FH    BMZ: 527.04
-		299.2 //Dispaly Height FH:      BMZ: 296.46
-	);
+	return{};
+
+	//return do_reprojection(
+	//	distorted,
+	//	mask,
+	//	ref_point[0],
+	//	camMatrix[0],
+	//	dist_Coeffs[0],
+	//	27.0,
+	//	unwrappedPhase[0].cols,
+	//	unwrappedPhase[0].rows,
+	//	0.2745, //PixelPitch  FH 0.277    BMZ: 
+	//	true,
+	//	savePath,
+	//	532, //Dispaly Width  FH    BMZ: 527.04
+	//	299.2 //Dispaly Height FH:      BMZ: 296.46
+	//);
 }
 
 
@@ -2012,7 +2001,6 @@ std::vector<cv::Mat> Deflectometry::do_camera_display_calibration(
 		m_img_processing->do_calibration_Points(
 			unwrapped,
 			mask,
-			cv::Vec2d(-1,-1),
 			wavelength,
 			unwrapped[0].cols,
 			unwrapped[0].rows,

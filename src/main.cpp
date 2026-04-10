@@ -64,34 +64,72 @@ int main()
     ImageProcessing& processing = meassure.processing();
 
     meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
-    std::vector<cv::Mat> camMatrix_test_simulation = meassure.get(FrameRole::CalibrationMatrix);
+    std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
     std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
 
     GrayCodeConfig config{};
     config.creation.inverse = false;
     config.creation.pixel_x = 1920;
     config.creation.pixel_y = 1080;
-    config.creation.resolution_x = 30;
-    config.creation.resolution_y = 30;
+    config.creation.resolution_x = 500;
+    config.creation.resolution_y = 500;
     config.creation.starBit = config.msb;
     
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
 
+    std::size_t sz_gray = grayCode1.size();
+    
+    std::vector<cv::Mat> pattern = pat.generate_phaseShift();
+
+    std::size_t sz_pattern = pattern.size();
+
+    std::vector<cv::Mat> images{ grayCode1 };
+
+    for (const auto& img : pattern) {
+        images.push_back(img);
+    }
+
+    CameraSimulation simulation(processing);
+
+    CameraSimulationConfig Sim_config;
+    Sim_config.camera.camera_mat = camMatrix[0];
+    Sim_config.camera.dist_coeffs = distCoeffs[0];
+    Sim_config.scene.disp_shift_z = 4000.0;
+    Sim_config.scene.disp_shift_x = -1920 / 2.0 * 0.2745;
+    Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745;
+
+    //Sim_config.scene.disp_tilt_x = CV_PI / 10.0;
+    Sim_config.scene.disp_tilt_y = CV_PI / 10.0;
+    Sim_config.scene.luminance = true;
+    Sim_config.disp.gamma = 2.2;
+    Sim_config.data.begin = images.begin()._Ptr;
+    Sim_config.data.end = images.end()._Ptr;
+
+    std::vector<cv::Mat> simulate =
+        simulation.simulate(Sim_config);
+
+    std::vector<cv::Mat> gray_simulated(simulate.begin(), std::next(simulate.begin(), sz_gray));
+
+    
+    std::vector<cv::Mat> phase_simulated(std::next(simulate.begin(), sz_gray), simulate.end());
+
     auto& eval = config.getEvalParameter();
-    eval.start = grayCode1.begin();
-    eval.end = grayCode1.end();
+    eval.start = gray_simulated.begin();
+    eval.end = gray_simulated.end();
 
     GrayCodeDecoder dec(processing);
     dec.decoding(config);
 
-    std::vector<cv::Mat> pattern = pat.generate_phaseShift();
-    //std::vector<cv::Mat> pattern_ref = pat.generate_phaseShift<UniformRowsCols>(Shift_mode::four_phase_shift, 1);
-    
-    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(pattern, 1, 4, false, "");
-    //std::vector<cv::Mat> wrapped_ref = meassure.do_wrapped_phase(pattern_ref, 1, 4, false, "");
+    cv::Mat mask = config.results.mask;
+    for (auto& img : gray_simulated) {
+        img.setTo(0, ~mask);
+    }
 
     std::vector<cv::Mat> wrapped_ref{ config };
-
+    //std::vector<cv::Mat> pattern_ref = pat.generate_phaseShift<UniformRowsCols>(Shift_mode::four_phase_shift, 1);
+    
+    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(phase_simulated, 1, 4, false, "");
+    //std::vector<cv::Mat> wrapped_ref = meassure.do_wrapped_phase(pattern_ref, 1, 4, false, "");
 
     std::vector<cv::Mat> unwrapVector;
     unwrapVector.push_back(wrapped[0]);
@@ -99,42 +137,27 @@ int main()
     unwrapVector.push_back(wrapped[1]);
     unwrapVector.push_back(wrapped_ref[1]);
 
-    cv::Mat mask1 = cv::Mat::ones(wrapped[0].size(), CV_8U);
+    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, false, "", 108.0);
+
+    std::cout << "Du drecksack " << std::endl;
+
+    std::vector<cv::Mat> reprojection = meassure.do_reprojection(
+        unwrap,
+        mask,
+        camMatrix[0],
+        distCoeffs[0],
+        108.0,
+        10,
+        10,
+        0.2745, //PixelPitch  FH 0.277    BMZ: 
+        true,
+        path,
+        532, //Dispaly Width  FH    BMZ: 527.04
+        299.2 //Dispaly Height FH:      BMZ: 296.46
+    );
 
 
-
-    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask1, UnwrapMode::reference_Graycode, false, "", 108.0);
-
-
-
-
-
-
-
-
-
-    CameraSimulation simulation(processing);
-
-    CameraSimulationConfig Sim_config;
-    Sim_config.camera.camera_mat = camMatrix_test_simulation[0];
-    Sim_config.camera.dist_coeffs = distCoeffs[0];
-    Sim_config.scene.disp_shift_z = 4000.0;
-    Sim_config.scene.disp_shift_x = -1920 /2.0 * 0.2745;
-    Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745;
-        
-    //Sim_config.scene.disp_tilt_x = CV_PI / 10.0;
-    Sim_config.scene.disp_tilt_y = CV_PI / 10.0;
-    Sim_config.scene.luminance = true;
-    Sim_config.disp.gamma = 2.2;
-    Sim_config.data.begin = pattern.begin()._Ptr;
-    Sim_config.data.end = pattern.end()._Ptr;
    
-    std::vector<cv::Mat> simulate = 
-        simulation.simulate(Sim_config);
-
-    
-
-
     /*auto& eval = config.getEvalParameter();
     eval.start = simulate.begin();
     eval.end = simulate.end();
@@ -168,100 +191,62 @@ int main()
 
     meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel_Bias);
 
-
     meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveLut);*/
 
     // AbstandsMessung 
-    meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
-    std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
+   // meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
+   // std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
 
-    meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
-    std::vector<cv::Mat> camToCam = meassure.get(FrameRole::CalibCamToCam);
+   // meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
+   // std::vector<cv::Mat> camToCam = meassure.get(FrameRole::CalibCamToCam);
 
-    std::vector<cv::Mat> dist_Coeffs = meassure.get(FrameRole::DistortionCoeff);
+   // std::vector<cv::Mat> dist_Coeffs = meassure.get(FrameRole::DistortionCoeff);
 
-    std::optional<std::vector<cv::Mat>> cameramatrix_distCoeff;
-    cameramatrix_distCoeff.emplace({ camMatrix[0], dist_Coeffs[0] });
+   // meassure.testReprojection(
+   //     camMatrix_path,
+   //     path_gray_calibration,
+   //     path,
+   //     Shift_mode::four_phase_shift,
+   //     _defl_::GrayCal::Method::ActiveLut,
+   //     33.75,
+   //     false,
+   //     UnwrapMode::opencv,
+   //     true);
 
-    meassure.testReprojection(
-        camMatrix_path,
-        path_gray_calibration,
-        path,
-        Shift_mode::four_phase_shift,
-        _defl_::GrayCal::Method::ActiveLut,
-        33.75,
-        false,
-        UnwrapMode::opencv,
-        true);
+   // std::vector<cv::Mat> pattern10 =
+   //     meassure.generatePattern(Shift_mode::four_phase_shift, _defl_::GrayCal::Method::None, path_gray_calibration, FrameRole::Debug, false, " ", 10);
+
+   // std::vector<cv::Mat> wrappedPhase =
+   //     meassure.do_wrapped_phase(pattern10, 1, 4, true, path);
+
+   // std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
+
+   // cv::Mat mask = meassure.getMask(contrastPhase, 0.0, false);
+
+   // std::vector<cv::Mat> unwrappedPhase =
+   //     meassure.do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::manually, true, path, 108);
+
+   // cv::Mat reference_img =
+   //     meassure.generate_reference_Pattern(ReferenceMode::checkerboard, (int)4, true, path);
+
+   ///* std::vector<cv::Mat> reference =
+   //     meassure.getFrames(FrameRole::Debug, 1, reference_img);*/
+
+   // mask = meassure.getMask(contrastPhase, 0.0, true);
+
+   // std::vector<cv::Vec2d> ref_point =
+   //     meassure.getReferencePoint(
+   //         std::vector<cv::Mat>{reference_img},
+   //         ReferenceMode::checkerboard, 
+   //         mask);
+
+   // std::vector<cv::Mat> pattern_distorted;
+   // for (auto& img : unwrappedPhase) {
+   //     pattern_distorted.emplace_back(meassure.distortImage_manual(img, camMatrix[0], dist_Coeffs[0]));
+   // }
 
     
-    std::vector<cv::Mat> pattern10 =
-        meassure.generatePattern(Shift_mode::four_phase_shift, _defl_::GrayCal::Method::None, path_gray_calibration, FrameRole::Debug, false, " ", 10);
-
-    std::vector<cv::Mat> wrappedPhase =
-        meassure.do_wrapped_phase(pattern10, 1, 4, true, path);
-
-    std::vector<cv::Mat> contrastPhase = meassure.get(FrameRole::Contrast);
-
-    cv::Mat mask = meassure.getMask(contrastPhase, 0.0, false);
-
-    std::vector<cv::Mat> unwrappedPhase =
-        meassure.do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::manually, true, path, 108);
-
-    cv::Mat reference_img =
-        meassure.generate_reference_Pattern(ReferenceMode::checkerboard, (int)4, true, path);
-
-   /* std::vector<cv::Mat> reference =
-        meassure.getFrames(FrameRole::Debug, 1, reference_img);*/
-
-    mask = meassure.getMask(contrastPhase, 0.0, true);
-
-    std::vector<cv::Vec2d> ref_point =
-        meassure.getReferencePoint(
-            std::vector<cv::Mat>{reference_img},
-            ReferenceMode::checkerboard, 
-            mask);
-
-    std::vector<cv::Mat> pattern_distorted;
-    for (auto& img : unwrappedPhase) {
-        pattern_distorted.emplace_back(meassure.distortImage_manual(img, camMatrix[0], dist_Coeffs[0]));
-    }
-
-
-    std::vector<cv::Mat> reprojection = meassure.do_reprojection(
-        pattern_distorted,
-        mask,
-        ref_point[0],
-        camMatrix[0],
-        dist_Coeffs[0],
-        108.0,
-        unwrappedPhase[0].cols,
-        unwrappedPhase[0].rows,
-        0.2745, //PixelPitch  FH 0.277    BMZ: 
-        true,
-        path,
-        532, //Dispaly Width  FH    BMZ: 527.04
-        299.2 //Dispaly Height FH:      BMZ: 296.46
-    );
-
-
-    mask = meassure.getMask(contrastPhase, 0.3, true);
-
-    std::vector<cv::Mat> reprojection1 = meassure.do_reprojection(
-        unwrappedPhase,
-        mask,
-        ref_point[0],
-        camMatrix[0],
-        dist_Coeffs[0],
-        108.0,
-        unwrappedPhase[0].cols,
-        unwrappedPhase[0].rows,
-        0.2745, //PixelPitch  FH 0.277    BMZ: 
-        true,
-        path,
-        532, //Dispaly Width  FH    BMZ: 527.04
-        299.2 //Dispaly Height FH:      BMZ: 296.46
-    );
+   
 
     /*cv::Mat distortionError =
         meassure.calcDistortionError(distorted);
