@@ -837,7 +837,7 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
 
     cv::Size sz = unwrapped[0].size();
 
-    const int expected_pts{ cv::countNonZero(mask)};
+    const int expected_pts{ cv::countNonZero(mask)/(stepwidth_x*stepwidth_y)};
 
     imagePoints.reserve(static_cast<std::size_t>(expected_pts));
     objectPoints.reserve(static_cast<std::size_t>(expected_pts));
@@ -3116,20 +3116,44 @@ std::vector<cv::Mat> ImageProcessing::refineUnwrap(
     CV_Assert(unwrap[0].size() == unwrap[1].size());
     CV_Assert(unwrap[0].type() == CV_64F && unwrap[1].type() == CV_64F);
 
+    const int kernel_dist{ k_size_median / 2 };
+
     std::vector<cv::Mat> output{ unwrap[0].clone(), unwrap[1].clone() };
     for (std::size_t i = 0; i < unwrap.size(); ++i) {
         cv::Mat unwrap32, median;
         unwrap[i].convertTo(unwrap32, CV_32F);
         cv::medianBlur(unwrap32, median, k_size_median);
-        cv::Mat diff(unwrap32.size(), CV_64F);
+        cv::Mat diff(unwrap32.size(), CV_32F);
         cv::subtract(unwrap32, median, diff);
 
-        cv::parallel_for_(cv::Range(0, unwrap[i].rows),
+        cv::parallel_for_(cv::Range(kernel_dist, unwrap[i].rows - kernel_dist),
             [&](const cv::Range& range) {
                 for (int row = range.start; row < range.end; ++row) {
-                    double* row_ptr = diff.ptr<double>(row);
-                    for (int col = 0; col < unwrap[i].cols; ++col) {
-                        int error = std::round(diff.ptr<float>(row)[col] / CV_2PI);
+                    float* row_ptr = diff.ptr<float>(row);
+                    for (int col = kernel_dist; col < unwrap[i].cols - kernel_dist; ++col) {
+                        cv::Rect kernel{
+                            col - kernel_dist,
+                            row - kernel_dist,
+                            k_size_median,
+                            k_size_median };
+
+                        bool containsNan{ false };
+
+                        cv::Mat current_area = diff(kernel);
+
+
+                        // if (!cv::checkRange(current_area)) continue;
+
+                        for (int rowz = 0; rowz < current_area.rows; ++rowz) {
+                            const float* row_ptrk = current_area.ptr<float>(rowz);
+                            for (int colz = 0; colz < current_area.cols; ++colz) {
+                                if (std::isnan(row_ptrk[colz])) containsNan = true;
+                            }
+                        }
+
+                        if (containsNan) continue;
+
+                        int error = static_cast<int>(std::round(diff.ptr<float>(row)[col] / CV_2PI));
                         if (std::abs(error) > 2) {
                             std::cout << "Unrealistic Value. Be carefull \n";
                             continue;

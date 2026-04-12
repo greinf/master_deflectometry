@@ -104,12 +104,6 @@ namespace detail {
             // We cut first if the smaller than epsion.
             if (I < eps) continue;
 
-             
-            if ((I / Imax_obs) > sat_cut_rel) {
-                std::cout << "WARNING: Saturated Values were cut in Calibration \n";
-                continue;
-            }
-
             // normalize to value 0 ... 1
             double u = static_cast<double>(g) / 255.0;
             if (u <= 0.0) continue;
@@ -117,7 +111,7 @@ namespace detail {
             // Save the intensity Val 0 ... 255 I and normalized to 0 ... 1
             samples.push_back({ u, I });
         }
-        if (samples.size() < 80) return {}; //  throw std::runtime_error("Not enough samples for LM fit.");
+        if (samples.size() < 80) return {}; 
         return samples;
     }
 
@@ -354,7 +348,7 @@ cv::Mat GrayCalibration::applyModelFit(
                         continue;
                     }
 
-                    double normalized = (I) / i_max;
+                    double normalized = (I-I0) / i_max;
                     normalized = std::max(0.0, normalized);
 
                     cal_ptr[col] =
@@ -428,7 +422,7 @@ std::array<std::pair<double, double>, 256> GrayCalibration::createLut(
                     (img.channels() == 1);
             }));
 
-        mask = cv::Mat::ones(images[0].size(), CV_64FC1);
+        mask = cv::Mat::ones(images[0].size(), CV_8U);
     }
    
     std::array<std::pair<double, double>, 256> Lut{};
@@ -503,8 +497,6 @@ Gray_Calib_Result GrayCalibration::fitGammaBias_LM(
         result.stats.iters = result.stats.n = 0;
 
         result.stats.converged = false;
-
-        Gray_Calib_Result result;
 
         return result;
     }
@@ -722,7 +714,7 @@ bool GrayCalibration::setupCalibrationMethod(
     }
 
     m_img_store.loadRoleXML(FrameRole::Modell_Passive, path);
-    m_impl->gray_LUT.gray_Lut = m_img_store.getLut();
+    m_impl->modelBias_b = m_img_store.get(FrameRole::Modell_Passive);
 
     if (m_impl->empty(spec)) return false;
 

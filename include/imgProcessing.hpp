@@ -119,8 +119,8 @@ public:
 	// The Method aborts if the Values in the image are higher than max val or lower than minval !
 	cv::Mat quantizeImage(
 		const cv::Mat& img,
-		const double max_allowed = 255.0,
-		const double min_allowed = 0.0
+		const double max_allowed = 255.0 + 1e-6,
+		const double min_allowed = 0.0 - 1e-6
 	);
 
 

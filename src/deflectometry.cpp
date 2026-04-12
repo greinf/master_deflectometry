@@ -303,9 +303,7 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 	const int grid_points_y,
 	const double pixel_pitch,
 	bool save,
-	const std::string& save_path,
-	const double screen_width,
-	const double screen_height) 
+	const std::string& save_path) 
 {
 
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibrationPoints =
@@ -327,22 +325,22 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 
 	std::cout << "Rotation Vector " << rvec << '\n';
 	
-	std::vector<cv::Point2d> img_proj;
-	cv::projectPoints(
-		calibrationPoints.second, // objectPoints
-		rvec, tvec,
-		cam_Matrix,
-		dist_Coeffs,
-		img_proj
-	);
+	//std::vector<cv::Point2d> img_proj;
+	//cv::projectPoints(
+	//	calibrationPoints.second, // objectPoints
+	//	rvec, tvec,
+	//	cam_Matrix,
+	//	dist_Coeffs,
+	//	img_proj
+	//);
 
-	// jetzt Pixel-Reprojection-Error
-	double err = 0;
-	for (size_t i = 0; i < img_proj.size(); ++i) {
-		err += cv::norm(img_proj[i] - cv::Point2d(calibrationPoints.first[i]));
-	}
-	err /= img_proj.size();
-	std::cout << "Mean pixel reprojection error: " << err << std::endl;
+	//// jetzt Pixel-Reprojection-Error
+	//double err = 0;
+	//for (size_t i = 0; i < img_proj.size(); ++i) {
+	//	err += cv::norm(img_proj[i] - cv::Point2d(calibrationPoints.first[i]));
+	//}
+	//err /= img_proj.size();
+	//std::cout << "Mean pixel reprojection error: " << err << std::endl;
 
 	double sqrt_err, max_err;
 

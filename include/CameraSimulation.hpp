@@ -26,6 +26,10 @@ private:
 		const CameraSimulationConfig& config
 		);
 
+	std::vector<cv::Mat>& applyScalingAndBias(
+		const CameraSimulationConfig& config
+	);
+
 	struct Impl;
 	std::unique_ptr<Impl> m_impl = nullptr;
 

@@ -180,8 +180,7 @@ std::vector<cv::Mat> GrayCodeDecoder::binaries(
 	CV_Assert(!img.empty());
 	CV_Assert(std::all_of(img.begin(), img.end(),
 		[](const cv::Mat& pic) -> bool {
-			return (pic.type() == CV_8U) &&
-				(pic.channels() == 1);
+			return (pic.channels() == 1);
 		}));
 
 	// The White black images is appended to the back
@@ -218,8 +217,13 @@ std::vector<cv::Mat> GrayCodeDecoder::binaries(
 
 			cv::Mat sub = gray64mask - gray_inv64mask; // Subract inverse from normal GrayCode
 			sub = cv::max(sub, 0);
-			cv::Mat sub_bin;
-			cv::threshold(sub, sub_bin, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
+			cv::Mat sub_bin, sub8u;
+
+			cv::checkRange(sub, false, nullptr, -1e-9, 255 + 1e-9);
+
+			sub.convertTo(sub8u, CV_8U);
+
+			cv::threshold(sub8u, sub_bin, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
 			binary.push_back(sub_bin);
 		}
 	}
@@ -230,10 +234,15 @@ std::vector<cv::Mat> GrayCodeDecoder::binaries(
 		
 		for (std::size_t i = 0; i < (sz - 2); ++i) {
 			// Mask the image
-			cv::Mat gray_masked, gray_masked_bin;
+			cv::Mat gray_masked, gray_masked8u, gray_masked_bin;
 
 			gray_masked = img[i].clone().setTo(0, ~mask);
-			cv::threshold(gray_masked, gray_masked_bin, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
+
+			cv::checkRange(gray_masked, false, nullptr, -1e-9, 255 + 1e-9);
+
+			gray_masked.convertTo(gray_masked8u, CV_8U);
+
+			cv::threshold(gray_masked8u, gray_masked_bin, 0, 255, cv::THRESH_BINARY + cv::THRESH_OTSU);
 
 			binary.push_back(gray_masked_bin);
 		}

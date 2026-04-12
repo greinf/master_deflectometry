@@ -1,4 +1,4 @@
-﻿#define VERSION "1"
+#define VERSION "1"
 
 #include <cstddef>
 #include <iostream>
@@ -48,14 +48,6 @@ int main()
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO.xml" };
 
-    // std::string camMatrix_path1{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO" };
-
-    // std::string newCameraMAtrix{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO" };
-
-    // std::string calibPath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2026-02-09StereoCalibration" };
-
-    // std::string calibrationDisplayCampath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-17_Display_Cam" };
-
     Deflectometry meassure{};
 
     Pattern& pat = meassure.img_generation();
@@ -78,7 +70,7 @@ int main()
     config.creation.resolution_x = 500;
     config.creation.resolution_y = 500;
     config.creation.starBit = config.msb;
-    
+
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
 
     std::size_t grayCodesz{ grayCode1.size() };
@@ -121,7 +113,7 @@ int main()
     for (const auto& img : sin_pattern) {
         pattern.push_back(img);
     }
-    
+
     CameraSimulation simulation(processing);
 
     CameraSimulationConfig Sim_config;
@@ -172,10 +164,10 @@ int main()
     }*/
 
     std::vector<cv::Mat> wrapped_ref{ config };
-    
+
 
     std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(sin_pattern_sim, 1, 4, true, path);
-    
+
     std::vector<cv::Mat> unwrapVector;
     unwrapVector.push_back(wrapped[0]);
     unwrapVector.push_back(wrapped_ref[0]);
@@ -192,74 +184,11 @@ int main()
         108.0,
         1,
         1,
-        0.2745, 
+        0.2745,
         true,
         path
     );
 
-   // AbstandsMessung 
-   // meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
-   // std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
 
-   // meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
-   // std::vector<cv::Mat> camToCam = meassure.get(FrameRole::CalibCamToCam);
-
-   // std::vector<cv::Mat> dist_Coeffs = meassure.get(FrameRole::DistortionCoeff);
-
-   // std::vector<cv::Vec2d> ref_point =
-   //     meassure.getReferencePoint(
-   //         std::vector<cv::Mat>{reference_img},
-   //         ReferenceMode::checkerboard, 
-   //         mask);
-
-   // std::vector<cv::Mat> pattern_distorted;
-   // for (auto& img : unwrappedPhase) {
-   //     pattern_distorted.emplace_back(meassure.distortImage_manual(img, camMatrix[0], dist_Coeffs[0]));
-   // }
-
-    /*cv::Mat distortionError =
-        meassure.calcDistortionError(distorted);
-
-    cv::Mat undistortionError =
-        meassure.calcDistortionError(undistorted);
-
-    std::vector<cv::Mat> gray_simulated(simulate.begin(), std::next(simulate.begin(), sz_gray));
-
-    std::vector<cv::Mat> phase_simulated(std::next(simulate.begin(), sz_gray), simulate.end());
-
-    meassure.saveSingleImage(FrameRole::DistortErrX, distortionError, true, path);
-
-    meassure.saveSingleImage(FrameRole::DistortErrX, undistortionError, true, path);
-
-
-    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel);
-
-    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveLut);
-
-    meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel);
-
-    meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveLut);
-
-    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel_Bias);
-
-    meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel_Bias);
-
-    
-    
-    
-    */
-
-    //meassure.loadPhaseConfig("C:/Users/grein/Desktop/Master/Project/deflectometrie/out/2025-11-23/0.xml");
 }
 
-//// ************ Triangulation *******************
-
-    //auto result = meassure.computeLaserDistanceFrom4Images(
-    //    LaserFr[0], LaserFr[1], LaserFr[2], LaserFr[3],
-    //    camMatrix[0], dist_Coeffs[0], camMatrix[1], dist_Coeffs[1], camToCam[0], camToCam[1]
-    //);
-
-    //std::cout << "p1 (px): " << result.p1_px << "\n";
-    //std::cout << "p2 (px): " << result.p2_px << "\n";
-    //std::cout << "3D (cam1): [" << result.X_cam1.x << ", " << result.X_cam1.y << ", " << result.X_cam1.z << "]\n";
-    //std::cout << "distance to cam1: " << result.distance_cam1 << " (same units as T)\n";

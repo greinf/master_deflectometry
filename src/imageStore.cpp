@@ -295,6 +295,7 @@ void ImageStore::loadCalibrationMatrix(const std::string& path) {
                 fs["camera_matrix1"] >> camMatrix.at(0);
                 fs["camera_matrix2"] >> camMatrix.at(1);
             }
+            else camMatrixn >> camMatrix.at(0);
 
             for (const auto& mat : camMatrix) {
                 if (mat.empty()) continue;

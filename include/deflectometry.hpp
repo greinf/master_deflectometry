@@ -190,9 +190,7 @@ public:
 		 const int grid_points_y,
 		 const double pixel_pitch,
 		 bool save, 
-		 const std::string& save_path,
-		 const double screen_width,
-		 const double screen_height
+		 const std::string& save_path
 	 );
 
 	 cv::Mat generate_reference_Pattern(

@@ -24,34 +24,36 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 {
 	extractImages(config);
 
-	// --- Gamma distortion ---
-	if (config.disp.gamma != 1.0) {
-		CV_Assert(config.disp.gamma >= 1.0);
-		for (auto& img : m_impl->images) {
-			// Be carefull: This function is defaulted to UniformRowsCols{} as third paraemter.
-			// For Phase Shift and GrayCode Analysis this is fine (Horizontal and Veritcal Patterns)
-			// If this is not the case, set the third parameter of do_gamma_distortion(.., .. , PerElement{});
-			img = m_img_processing.do_gamma_distortion(
-				config.disp.gamma,
-				img,
-				PerElement{});
-		}
-	}
+	CV_Assert(m_impl->images.begin() != m_impl->images.end());
 
-	// --- Apertur Smoothing ---
-	if (config.camera.apertureSmoothing == true) {
-		applyApertureSmoothing(config);
+
+	// Scaling and Bias
+	applyScalingAndBias(config);
+
+
+
+	// --- Gamma distortion ---
+	CV_Assert(config.disp.gamma >= 1.0);
+	for (auto& img : m_impl->images) {
+		// Be carefull: This function is defaulted to UniformRowsCols{} as third paraemter.
+		// For Phase Shift and GrayCode Analysis this is fine (Horizontal and Veritcal Patterns)
+		// If this is not the case, set the third parameter of do_gamma_distortion(.., .. , PerElement{});
+		img = m_img_processing.do_gamma_distortion(
+			config.disp.gamma,
+			img,
+			PerElement{});
 	}
 
 	// --- Quantization ---
-	if (config.disp.displayQuantization == true) {
+	if (config.disp.quantization == true) {
 		for (auto& img : m_impl->images) {
 			img = m_img_processing.quantizeImage(img);
 		}
 	}
 
-	CV_Assert(m_impl->images.begin() != m_impl->images.end());
+	
 
+	
 	
 	const cv::Size disp_size{ m_impl->images[0].size()};
 	const cv::Size cam_size{ config.camera.pixel_x, config.camera.pixel_y };
@@ -121,19 +123,24 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 		}
 	}
 
+	// --- Apertur Smoothing ---
+	if (config.camera.apertureSmoothing == true) {
+		applyApertureSmoothing(config);
+	}
+
 	// Quantize from the camera values 
 	if (config.camera.quantization == true)
 	{
 		for (auto& img : m_impl->images) {
 			img = m_img_processing.quantizeImage(img);
 		}
-	}
 
-	for (auto it = start; it != end; ++it)
-	{
-		// Throw Exception if values are out of bounds. 
-		cv::checkRange(*it, false, nullptr, 0, 256);
-		it->convertTo(*it, CV_8U);
+		//for (auto it = start; it != end; ++it)
+		//{
+		//	// Throw Exception if values are out of bounds. 
+		//	cv::checkRange(*it, false, nullptr, 0, 256);
+		//	it->convertTo(*it, CV_8U);
+		//}
 	}
 
 	// If an output container is specified than fill it
@@ -146,6 +153,31 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 
 	return m_impl->images;
 }
+
+std::vector<cv::Mat>& CameraSimulation::applyScalingAndBias(
+	const CameraSimulationConfig& config)
+{
+	CV_Assert((config.disp.scaling <= 1.0) && (config.disp.scaling > 0.0));
+	CV_Assert((config.disp.bias >= 0) && (config.disp.bias < 200.0));
+
+	for (auto& img : m_impl->images) {
+		cv::Mat img64;
+		if (img.type() != CV_64F) {
+			img.convertTo(img64, CV_64F);
+		}
+		else img64 = img;
+
+		img64 *= config.disp.scaling;
+
+		img64 += config.disp.bias;
+
+		cv::checkRange(img64, false, nullptr, 0 - 1E-6, 255 + 1E6);
+
+		img = img64;
+	}
+	return m_impl->images;
+}
+
 
 std::vector<cv::Mat> CameraSimulation::remapFromHitpoints(
 	const std::vector<cv::Mat>::iterator start,
@@ -324,13 +356,27 @@ std::vector<cv::Mat>& CameraSimulation::applyApertureSmoothing(
 	// Normalize the Mask 
 	circular_binary /= sum;
 
-	for (auto it = m_impl->images.begin(); it != m_impl->images.end(); ++it)
-	{
-		cv::Mat smoothed;
-		cv::filter2D(*it, smoothed, CV_64F, circular_binary);
-		*it = smoothed;
-	}
+	int dist = std::distance(m_impl->images.begin(), m_impl->images.end());
 
+	cv::parallel_for_(cv::Range(0, dist),
+		[&](const cv::Range& range) {
+			for (int index = range.start; index < range.end; ++index) {
+
+				cv::Mat& img = *std::next(m_impl->images.begin(), index);
+
+				cv::Mat temp(img == 0);
+
+				cv::Mat filtered;
+				cv::filter2D(img, filtered, CV_64F, circular_binary);
+
+				filtered.setTo(0, temp);
+
+				// 5. zurückschreiben
+				img = filtered;
+			}
+		});
+
+	
 	return m_impl->images;
 }
 

@@ -28,6 +28,9 @@ namespace cv {
 // |	|-> bool displayQuantization: If true the display value are quantized to std::uint8_t
 // |	|-> double pixelPitch: The display Pixlepitch
 // |	|-> double gamma: The gamma value that is applied to the dispaly values. 
+// |	|-> double scaling: Scaling value between (0, 1]. The pattern is 0 ... 255. this is not the case for the real values the camera sees. 
+// |	|		-> Therefore the pattern values can be scaled down 
+// |	|-> double bias: A bias Value [0, 
 // |-> SceneConfig:
 // |	|-> int disp_shift_z: The Distance in z_dir between disp and Camera coordinate System -> in the Camera System
 // |	|-> int disp_shift_x: The Distance in x_dir between disp and Camera coordinate System -> in the Camera System
@@ -56,9 +59,11 @@ private:
 	};
 
 	struct DisplayConfig {
-		bool displayQuantization{ true };
+		bool quantization{ true };
 		double pixelPitch{ 0.2745 };
 		double gamma{ 1 };
+		double scaling{ 1 };
+		double bias{ 0 };
 	};
 
 	// All translations and Rotations are in the camera coordiante System
