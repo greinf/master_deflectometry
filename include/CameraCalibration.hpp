@@ -71,12 +71,12 @@ public:
         bool drawDetectedCorners = false,
         int subPixWindow = 11) const;
 
-    [[nodiscard]] bool saveMonoCalibration(
+    bool saveMonoCalibration(
         const std::string& filename,
         const CalibrationConfig& config,
         const MonoCalibrationResult& result) const;
 
-    [[nodiscard]] bool saveStereoCalibration(
+    bool saveStereoCalibration(
         const std::string& filename,
         const CalibrationConfig& config,
         const StereoCalibrationResult& result) const;

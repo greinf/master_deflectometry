@@ -47,8 +47,6 @@ int main()
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO.xml" };
 
-    std::string calibrationDisplayCampath{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-17_Display_Cam" };
-
     Deflectometry meassure{};
 
     //meassure.GrayCalibrationClassTest(_defl_::GrayCal::Method::ActiveModel_Bias, path_gray_calibration);

@@ -66,7 +66,7 @@ add_executable (${PROJECT_NAME}
     src/deflectometry.cpp
     src/imgProcessing.cpp
     src/imageStore.cpp
- "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp" "src/GrayCodeDecoder.cpp" "src/CameraSimulation.cpp" "src/CameraCalibration.cpp" )
+ "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp" "src/GrayCodeDecoder.cpp" "src/CameraSimulation.cpp" "src/CameraCalibration.cpp")
 
 
 #Debug 

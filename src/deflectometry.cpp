@@ -138,7 +138,7 @@ cv::Mat rotImage180(const cv::Mat&);
 
 cv::Mat showRawMaxValred(const cv::Mat& mat) {
 	cv::Mat color;
-	cv::Mat mask(mat > 250);
+	cv::Mat mask(mat > 253);
 	cv::cvtColor(mat, color, cv::COLOR_GRAY2BGR);
 	color.setTo(cv::Scalar(0, 0, 255), mask);
 	return color;

@@ -86,13 +86,13 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 			}
 		});
 
-	/*for (const auto& img : config.results.result_img) {
+	for (const auto& img : config.results.result_img) {
 		cv::Mat norm;
 		cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
 		cv::imshow("img", norm);
 		cv::waitKey(0);
 		cv::destroyWindow("img");
-	}*/
+	}
 
 	// Overloaded typecast std::vector<cv::Mat> only return the result images.
 	return config;
@@ -199,17 +199,21 @@ std::vector<cv::Mat> GrayCodeDecoder::binaries(
 	{
 		// double for each bitdepth and two images for masking
 		const int expected{ bitdepth_x * 2 + bitdepth_y * 2 + 2};
+		
+		const int inv_shift{ bitdepth_x + bitdepth_y };
 
 		CV_Assert(expected == static_cast<int>(sz));
 		CV_Assert(sz % 2 != 1);
 
 		for (std::size_t i = 0; i < ((sz-2)/2); ++i) {
 			// Change type to double
-			int bitdepth = bitdepth_x;
-			if (i >= bitdepth_x) bitdepth = bitdepth_y;
 			cv::Mat gray64, gray_inv64, gray64mask, gray_inv64mask;
-			img[i].convertTo(gray64, CV_64F);
-			img[i + bitdepth].convertTo(gray_inv64, CV_64F);
+			if (img[i].type() != CV_64F) 
+				img[i].convertTo(gray64, CV_64F);
+			else gray64 = img[i];
+			if (img[i + inv_shift].type() != CV_64F) 
+				img[i + inv_shift].convertTo(gray_inv64, CV_64F);
+			else gray_inv64 = img[i + inv_shift];
 
 			// Mask the images
 			gray64mask = gray64.setTo(0, ~mask);

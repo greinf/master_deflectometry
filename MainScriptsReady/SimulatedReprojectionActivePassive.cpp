@@ -188,6 +188,35 @@ int main()
         true,
         path
     );
+    //// Active Calibration
+   //cv::Mat mask_c = cv::Mat::ones(grayValues[0].size(), CV_8U);
+
+   //int border = 50;
+
+   //// oben
+   //mask_c(cv::Range(0, border), cv::Range::all()) = 0;
+
+   //// unten
+   //mask_c(cv::Range(mask_c.rows - border, mask_c.rows), cv::Range::all()) = 0;
+
+   //// links
+   //mask_c(cv::Range::all(), cv::Range(0, border)) = 0;
+
+   //// rechts
+   //mask_c(cv::Range::all(), cv::Range(mask_c.cols - border, mask_c.cols)) = 0;
+
+   //for (auto& img : sin_pattern) {
+   //    img = meassure.applyCalibration(img, mask_c, method);
+   //}
+
+
+
+//cv::Mat mask = config.results.mask;
+
+//// Just make the mask a bit smaller 
+//cv::Mat kernel = cv::Mat::ones(5, 5, CV_8U);
+
+//cv::erode(mask, mask, kernel, { -1,-1 }, 50);
 
 
 }

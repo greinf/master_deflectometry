@@ -283,7 +283,7 @@ cv::Mat GrayCalibration::applyCalibration(
 {
     // Checks if image is valid
     CV_Assert(!image.empty());
-    CV_Assert(image.type() == CV_64F);
+
     CV_Assert(image.channels() == 1);
 
     // Checks if the calibrationdata is available
@@ -296,7 +296,11 @@ cv::Mat GrayCalibration::applyCalibration(
 
     if (mask.empty()) mask = cv::Mat::ones(image.size(), CV_8U);
 
-    return applyModelFit(image, mask, m_impl->modelBias_b);
+    cv::Mat img64;
+    if (image.type() != CV_64F) image.convertTo(img64, CV_64F);
+    else img64 = image;
+
+    return applyModelFit(img64, mask, m_impl->modelBias_b);
 }
 
 

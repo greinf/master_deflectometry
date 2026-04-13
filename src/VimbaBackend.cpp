@@ -561,8 +561,8 @@ bool VimbaBackend::adjustSettings()
         // --- find Features can be used to search in the feature tree for string snippets ---
         //findFeatures(cam, key);
 
-        double exposure_time{ 100000.0 };
-        double frame_rate{ 3.0 };
+        double exposure_time{ 150000.0 };
+        double frame_rate{ 5.0 };
 
         bool forceFree = forceFreerunTimedExposure(cam);
         bool frameRate = setFrameRate(cam, frame_rate);

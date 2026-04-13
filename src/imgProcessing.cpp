@@ -3507,13 +3507,15 @@ cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
             throw std::runtime_error ("All pictures must be same kind and type. \n");
         }
     }
-    cv::Mat acc;
+
+    cv::Mat acc(vec[0].size(), CV_64F, cv::Scalar(0));
 
     if(vec[0].type() != CV_64F) vec[0].convertTo(acc, CV_64F);
     
     for (size_t i = 0; i < vec.size(); ++i) {
         cv::Mat temp;
-        vec[i].convertTo(temp, CV_64F);
+        if (vec[i].type() != CV_64F)
+            vec[0].convertTo(acc, CV_64F);
         acc += temp;   // pixelweise Addition
     }
 

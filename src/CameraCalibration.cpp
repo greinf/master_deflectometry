@@ -180,6 +180,7 @@ MonoCalibrationResult CameraCalibration::calibrateMono(
             cv::drawChessboardCorners(vis, config.boardSize, corners, true);
             cv::imshow("Mono calibration corners", vis);
             cv::waitKey(50);
+            cv::destroyWindow("Mono calibration corners");
         }
     }
 
@@ -224,6 +225,8 @@ MonoCalibrationResult CameraCalibration::calibrateMono(
         result.perViewErrors);
 
     result.success = cv::checkRange(result.cameraMatrix) && cv::checkRange(result.distCoeffs);
+
+    saveMonoCalibration(config.outputFileName, config, result);
 
     return result;
 }
@@ -390,6 +393,8 @@ StereoCalibrationResult CameraCalibration::calibrateStereo(
 
     result.success = result.left.success && result.right.success &&
         cv::checkRange(result.R) && cv::checkRange(result.T);
+
+    saveStereoCalibration(config.outputFileName, config, result);
 
     return result;
 }
