@@ -315,16 +315,57 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			grid_points_y,
 			pixel_pitch);
 
-	cv::Mat rvec, tvec;
-	bool ok = cv::solvePnP(calibrationPoints.second, calibrationPoints.first,
-		cam_Matrix, dist_Coeffs, rvec, tvec,
-		false,
-		cv::SOLVEPNP_ITERATIVE);
-	if (!ok) throw std::runtime_error("solvePnP failed.");
-	std::cout << "Translation vec " << cv::norm(tvec) << '\n';
-
-	std::cout << "Rotation Vector " << rvec << '\n';
 	
+	cv::Mat rvec, tvec;
+	cv::Mat inliers;
+
+	// --- First: robust estimation with RANSAC ---
+	bool ok = cv::solvePnPRansac(
+		calibrationPoints.second,   // objectPoints
+		calibrationPoints.first,    // imagePoints
+		cam_Matrix,
+		dist_Coeffs,
+		rvec,
+		tvec,
+		false,                      // no extrinsic guess
+		200,                        // iterationsCount
+		1.0,                        // reprojectionError in pixel
+		0.999,                      // confidence
+		inliers,
+		cv::SOLVEPNP_ITERATIVE);
+
+	if (!ok) {
+		throw std::runtime_error("solvePnPRansac failed.");
+	}
+
+	std::cout << "RANSAC inliers: " << inliers.rows
+		<< " / " << calibrationPoints.first.size() << '\n';
+
+	// --- Then: refine with LM using all inliers only ---
+	std::vector<cv::Vec2d> imagePointsInlier;
+	std::vector<cv::Vec3d> objectPointsInlier;
+
+	imagePointsInlier.reserve(inliers.rows);
+	objectPointsInlier.reserve(inliers.rows);
+
+	for (int i = 0; i < inliers.rows; ++i) {
+		int idx = inliers.at<int>(i, 0);
+		imagePointsInlier.push_back(calibrationPoints.first[idx]);
+		objectPointsInlier.push_back(calibrationPoints.second[idx]);
+	}
+
+	cv::solvePnPRefineLM(
+		objectPointsInlier,
+		imagePointsInlier,
+		cam_Matrix,
+		dist_Coeffs,
+		rvec,
+		tvec);
+
+	std::cout << "Translation vec norm: " << cv::norm(tvec) << '\n';
+	std::cout << "Rotation Vector:\n" << rvec << '\n';
+	std::cout << "Translation Vector:\n" << tvec << '\n';
+
 	//std::vector<cv::Point2d> img_proj;
 	//cv::projectPoints(
 	//	calibrationPoints.second, // objectPoints
@@ -843,6 +884,7 @@ std::optional<cv::Point3d> Deflectometry::triangulateFromPixels(
 	);
 }
 
+
 bool Deflectometry::setupCalibration(
 	const _defl_::GrayCal::Method method,
 	const std::string& path)
@@ -884,10 +926,11 @@ cv::Mat Deflectometry::applyCalibration(
 	switch (methode) {
 	case(_defl_::GrayCal::Method::None): 
 		return m_calibration->applyCalibration(GrayCalibration_specifier::NoCalib{}, image, mask);
-	case(_defl_::GrayCal::Method::ActiveLut):
-		[[fallthrough]];
 	case(_defl_::GrayCal::Method::PassiveLut):
-		return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::LUT{}, image, mask);
+		 return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::LUT{}, image, mask);
+		 //[[fallthrough]];
+	case(_defl_::GrayCal::Method::ActiveLut):
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::LUT{}, image, mask);
 	case(_defl_::GrayCal::Method::ActiveModel):
 		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::Model{}, image, mask);
 	case(_defl_::GrayCal::Method::PassiveModel):
@@ -925,8 +968,7 @@ std::vector<cv::Mat> Deflectometry::generatePattern(
 			127.5,
 			1920,
 			1080,
-			UniformRowsCols{},
-			true);
+			UniformRowsCols{});
 
 	m_img_store->saveRole(FrameRole::Pattern, path);
 
@@ -1137,8 +1179,7 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 		127.5,   // Amplitude
 		1920,
 		1080,
-		UniformRowsCols{},
-		true);   // if Return value should be double 
+		UniformRowsCols{});   // if Return value should be double 
 
 	
 	std::vector<cv::Mat> pattern_cal;
@@ -1187,49 +1228,7 @@ std::vector<cv::Mat> Deflectometry::do_phase_measurement(
 
 	acquire_img(pattern8U, FrameRole::RawInput, 5);
 
-	//std::vector<cv::Mat> patterns = m_img_store->get(FrameRole::Pattern);
-	//std::vector<cv::Mat>::const_iterator iter = patterns.cbegin();
-	//std::vector<cv::Mat>::const_iterator end_iter = patterns.cend();
-	//
-	//// Assign category for save class
-	//m_acquisition_controller->mode = FrameRole::RawInput;
-
-	//// Start Acquisitionworker and ScreenDisplay
-	//m_screenDisplay->assignCameraPreProcessing(showRawMaxValred);
-	//m_screenDisplay->start();
-	//m_acquisition_worker->start();
-	//
-	//std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-	//std::cout << "Press ENTER to start phase shift ...\n";
-	//std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-
-	//std::unique_lock img_save_lock(m_acquisition_controller->mtx);
-
-	//int n_frequencies = static_cast<int>(m_pattern_config.size());
-	//for (int i = 0; i < n_frequencies; ++i) {
-	//	int n_shifts = m_pattern_config.at(i)->steps;
-	//	for (int y = 0; y < n_shifts * 2; ++y) { //n_shifts*2 for horizontral and vertical
-	//		if (iter == end_iter) {throw std::runtime_error("Iterator is not in boundaries \n"); }
-	//		m_screenDisplay->showPattern(*iter);
-	//		for (int x = 0; x < n_pics_per; ++x) {
-	//			if(!x) std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-	//			m_acquisition_worker->requestSave();
-	//			m_acquisition_controller->cv.wait(img_save_lock);
-	//			std::this_thread::sleep_for(std::chrono::milliseconds(600));
-	//		}
-	//		iter++;
-	//	}
-	//}
-	//
-	//img_save_lock.unlock();
-
-	//m_acquisition_worker->stop();
-	//m_screenDisplay->stop();
-	//
-	//if (!disconnect()) {
-	//	std::cerr << "The Class AcquisitionWorker and Class could not be destroyed \n";
-	//}
+	
 
 	if (save) {
 		//m_img_store->saveRoleXML(FrameRole::PatternDouble, save_path);
@@ -1341,7 +1340,7 @@ std::vector<cv::Mat> Deflectometry::acquire_img(
 	for (const auto& img : src) {
 		cv::Mat img8;
 		if (img.type() != CV_8U) {
-			img.convertTo(img8, CV_8U);
+			img.convertTo(img8, CV_8U, 1.0, 0.0);
 		}
 		else img8 = img;
 		img8U.push_back(img8);
@@ -1536,6 +1535,7 @@ GrayCalibVector Deflectometry::calc_response_curve_sections(
 
 bool Deflectometry::do_grayvalue_calibration(
 	const std::vector<cv::Mat>& gray_val,
+	cv::Mat& mask,
 	const int n_pics_perValue,
 	const int n_steps,
 	bool save,
@@ -1571,20 +1571,6 @@ bool Deflectometry::do_grayvalue_calibration(
 	}
 
 	CV_Assert(mean_images.size() == 256);
-
-	// Active Calibration mask is allowed to be empty 
-	cv::Mat mask;
-
-	//process.grayCalibMask(
-	//std::vector<cv::Mat>{*mean_images.begin(), * std::prev(mean_images.end())});
-
-	// For passive 
-	if (method == _defl_::GrayCal::Method::PassiveLut ||
-		method == _defl_::GrayCal::Method::PassiveModel ||
-		method == _defl_::GrayCal::Method::PassiveModel_Bias) {
-		mask = process.grayCalibMask(
-			std::vector<cv::Mat>{*mean_images.begin(), * std::prev(mean_images.end())});
-	}
 
 	return do_grayvalue_calibrationTypeDispatch(
 		method,
@@ -1690,6 +1676,7 @@ bool Deflectometry::do_grayvalue_calibration(
 
 	return do_grayvalue_calibration(
 		gray_calib,
+		mask,
 		n_pics_per_value,
 		n_steps,
 		save,
@@ -1988,8 +1975,6 @@ std::vector<cv::Mat> Deflectometry::do_camera_display_calibration(
 	cv::Mat mask =
 		getMask(contrast, 0.2, false);
 
-	
-
 	std::vector<cv::Mat> unwrapped =
 		do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::opencv, false, "", 108);
 
@@ -2003,7 +1988,6 @@ std::vector<cv::Mat> Deflectometry::do_camera_display_calibration(
 			unwrapped[0].cols,
 			unwrapped[0].rows,
 			pixelPitch);
-
 
 	std::vector<cv::Mat> baseIntensity = 
 		m_img_store->get(FrameRole::BaseIntensity);
@@ -2054,7 +2038,6 @@ std::vector<cv::Mat> Deflectometry::do_camera_display_calibration(
 		imagePointsDisp.push_back(cv::Point2d(calibPoints.first[i]));
 	}
 
-
 	bool solvePnP = cv::solvePnP(object, image,
 		cam_Mat, distCoeffs, rvec, tvec,
 		false,
@@ -2065,9 +2048,9 @@ std::vector<cv::Mat> Deflectometry::do_camera_display_calibration(
 		return{};
 	}
 
-	cv::Mat tvec_virtual, H;
+	cv::Mat H;
 
-	m_img_processing->calculatehousholder(rvec, tvec, tvec_virtual, H);
+	m_img_processing->calculatehousholder(rvec, tvec, H);
 
 	cv::Mat rvec1_virutell, tvec1_virtuell;
 
@@ -2076,7 +2059,7 @@ std::vector<cv::Mat> Deflectometry::do_camera_display_calibration(
 
 	cv::Mat rvec_world, tvec_world;
 
-	m_img_processing->backToWorld(rvec_world, tvec_world, rvec1_virutell, tvec1_virtuell, H, rvec, tvec);
+	m_img_processing->backToWorld(rvec_world, tvec_world, rvec1_virutell, tvec1_virtuell, rvec, tvec);
 
 	m_img_store->add(FrameRole::CalibDispToCam, rvec);
 

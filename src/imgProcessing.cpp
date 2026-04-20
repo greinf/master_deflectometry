@@ -193,8 +193,10 @@ double ImageProcessing::bilinearInterpolation(
     CV_Assert(img.type() == CV_64F);
     CV_Assert(img.size().area() > 2);
     CV_Assert(img.channels() == 1);
-    CV_Assert(coord.val[0] >= 0 && coord.val[1] >= 0);
-    CV_Assert(img.rows > coord.val[0] && img.cols > coord.val[1]);
+    
+
+    if (coord[0] < 0.0 || coord[1] < 0.0) return 0.0;
+    if (coord[0] > img.rows - 1 || coord[1] > img.cols - 1) return 0.0;
 
     double floorX, ceilX, floorY, ceilY;
     cv::Mat coordMat(2, 2, CV_64F);
@@ -219,8 +221,8 @@ double ImageProcessing::bilinearInterpolation(
         else {
             double val;
             double denom = ceilY - floorY;
-            val = (ceilY - coord[0]) * img.at<double>(static_cast<int>(ceilY), static_cast<int>(coord[1])) / denom +
-                (coord[0] - floorY) * img.at<double>(static_cast<int>(floorY), static_cast<int>(coord[1])) / denom;
+            val = (ceilY - coord[0]) * img.at<double>(static_cast<int>(floorY), static_cast<int>(coord[1])) / denom +
+                (coord[0] - floorY) * img.at<double>(static_cast<int>(ceilY), static_cast<int>(coord[1])) / denom;
             return val;
         }
     }
@@ -229,8 +231,8 @@ double ImageProcessing::bilinearInterpolation(
         // same X was checked before
         double val;
         double denom = ceilX - floorX;
-        val = (ceilX - coord[1]) * img.at<double>(static_cast<int>(coord[0]), static_cast<int>(ceilX)) / denom +
-            (coord[1] - floorX) * img.at<double>(static_cast<int>(coord[0]), static_cast<int>(floorX)) / denom;
+        val = (ceilX - coord[1]) * img.at<double>(static_cast<int>(coord[0]), static_cast<int>(floorX)) / denom +
+            (coord[1] - floorX) * img.at<double>(static_cast<int>(coord[0]), static_cast<int>(ceilX)) / denom;
         return val;
     }
 
@@ -1060,41 +1062,25 @@ std::pair<double, double> ImageProcessing::fitLine1D(const std::vector<double>& 
     return { a, b };
 }
 
-
 // Left handed Coordiante System is created
 void ImageProcessing::calculatehousholder(
-    const cv::Mat& rvec_mirror, 
-    const cv::Mat& tvec_mirror,
-    cv::Mat& tvec_virt,
+    const cv::Mat& rvec_mirror, // Mirror -> Cam
+    const cv::Mat& tvec_mirror, // Mirror -> Cam
     cv::Mat& H) 
 {
+    // Rvec and tvec is from mirror to cam. 
+    // negative rvec is 
+    cv::Mat cam2mirror_rvec;
+    cv::Rodrigues(-rvec_mirror, cam2mirror_rvec);
 
-    cv::Mat R_mirror;
-    cv::Rodrigues(rvec_mirror, R_mirror);
+    // Z-axis from Mirror coordiante System observed from Camera Coordinate system 
+    cv::Vec3d n = cam2mirror_rvec.col(2);
 
-    // Z-Axis should be equal to the normal of the surface. Extract z col
-    cv::Vec3d n = R_mirror.col(2);
-
-    // 3. Berechne den Abstand d der Kamera zur Ebene (Hesse-Normalform)
-    // d = n * P. Da die Kamera bei (0,0,0) ist, nutzen wir tvec_mirror als Punkt auf der Ebene.
-    double d = n.dot(cv::Vec3d(tvec_mirror.at<double>(0),
-        tvec_mirror.at<double>(1),
-        tvec_mirror.at<double>(2)));
-
-    // 4. Position der virtuellen Kamera (tvec_virt)
-    // Spiegelung des Ursprungs (0,0,0) an der Ebene: P' = P - 2*(n*P - d)*n
-    // Da P = (0,0,0), vereinfacht es sich zu: P' = 2 * d * n
-    cv::Mat t_virt = cv::Mat(2.0 * d * cv::Mat(n));
-    t_virt.copyTo(tvec_virt);
-
-    // 5. Orientierung der virtuellen Kamera (R_virt)
     // Wir spiegeln die Achsen der echten Kamera an der Ebene.
     // Reflexionsmatrix Householder: H = I - 2 * n * n^T
     cv::Mat I = cv::Mat::eye(3, 3, CV_64F);
     cv::Mat n_mat = cv::Mat(n);
     H = I - 2.0 * n_mat * n_mat.t();
-    
-    cv::Mat R_virt_mat = H * I; 
 }
 
 
@@ -1337,75 +1323,76 @@ auto createaffine = [](const cv::Mat& r_vec,
         }
     };
 
-
 void ImageProcessing::backToWorld(
     cv::Mat& rvec_w,
     cv::Mat& tvec_w,
-    const cv::Mat& rvec_c,
-    const cv::Mat& tvec_c,
-    const cv::Mat& housholder,
-    const cv::Mat& cam_mirror_rvec,
-    const cv::Mat& cam_mirror_trans)
+    const cv::Mat& vdisp2cam_rvec,  // Vitual dispaly -> cam
+    const cv::Mat& vdisp2cam_tvec,  // vitual dipslay -> cam 
+    const cv::Mat& mirror2cam_rvec, // Mirror -> cam
+    const cv::Mat& mirror2cam_tvec) // Mirror -> cam
 {
+    cv::Matx44d virtualdisp2cam, observer;
 
-    cv::Matx44d observer;
+    // Create Transform from VirtualDispaly to Camera
+    createaffine(vdisp2cam_rvec, vdisp2cam_tvec, virtualdisp2cam);
 
-    // Create Transform from VirtualMirror to cam.
+    observer = virtualdisp2cam;
 
-    cv::Matx44d affine_virt_mirr_to_cam;
+    // Create Transofrm from Camera To Mirror !!!
+    cv::Mat cam2mirror_rvec;
+    // Negative rot Vector so inverse rotation.
+    cv::Rodrigues(-mirror2cam_rvec, cam2mirror_rvec);
 
-    createaffine(rvec_c, tvec_c, affine_virt_mirr_to_cam);
+    // Creates the inverse translation. (inverse_rot_mirror2cam * - mirror2cam_translation)
+    cv::Mat cam2mirror_tvec = -cam2mirror_rvec * mirror2cam_tvec;
 
-    observer = affine_virt_mirr_to_cam;
-
-    // Create Transofrm from Cam to mirror
-    
-    cv::Mat rot_mirror_cam_inv;
-    cv::Rodrigues(-cam_mirror_rvec, rot_mirror_cam_inv);
-
-    cv::Mat cam_mirror_trans_inv = -rot_mirror_cam_inv * cam_mirror_trans;
-
+    // The Affine transformation from Camera to Mirror
     cv::Matx44d affine_cam_to_mirr;
+    createaffine(-mirror2cam_rvec, cam2mirror_tvec, affine_cam_to_mirr);
 
-    createaffine(-cam_mirror_rvec, cam_mirror_trans_inv, affine_cam_to_mirr);
-
-    observer = affine_cam_to_mirr * affine_virt_mirr_to_cam;
+    // Transformation VirtualDispCoord -> CameraCoord -> MirrorCoord
+    observer = affine_cam_to_mirr * virtualdisp2cam;
 
     // In the mirror coordiante System apply the mirroring
+    cv::Mat M = cv::Mat::eye(4, 4, CV_64F);
 
-    cv::Mat M = cv::Mat::eye(4, 4, housholder.type());
-
-    M.at<double>(3, 3) = -1;
+    M.at<double>(2, 2) = -1.0;
 
     cv::Matx44d householder(M);
 
-    observer = householder * affine_cam_to_mirr * affine_virt_mirr_to_cam;
+    // Transformation: VirtualdispalyCoord -> CameraCoord -> MirrorCoord -> Apply MirrorMatrix 
+    // oberserver is no left handed !!!! 
+    observer = householder * affine_cam_to_mirr * virtualdisp2cam;
 
-    // And now back Mirror -> cam
+    cv::Matx44d affine_mirror2cam;
 
-    cv::Matx44d mirror_to_cam;
-
-    createaffine(cam_mirror_rvec, cam_mirror_trans, mirror_to_cam);
+    createaffine(mirror2cam_rvec, mirror2cam_tvec, affine_mirror2cam);
     
-    observer = mirror_to_cam * householder * affine_cam_to_mirr * affine_virt_mirr_to_cam;
+    // The Transformation to the real coordiante System
+    observer = affine_mirror2cam * householder * affine_cam_to_mirr * virtualdisp2cam;
 
-    // Cam to real Disp
+    cv::Vec3d x_axis(observer(0, 0), observer(1, 0), observer(2, 0));
+    x_axis /= cv::norm(x_axis);
 
-   /* cv::Matx44d cam_to_real_disp;
+    cv::Vec3d y_axis(observer(0, 1), observer(1, 1), observer(2, 1));
+    y_axis /= cv::norm(y_axis);
 
-    cv::Mat cam_disp_rvec_inv;
+    cv::Vec3d z_axis_new = x_axis.cross(y_axis);
+    z_axis_new /= cv::norm(z_axis_new);
 
-    cv::Rodrigues(-rvec_c, cam_disp_rvec_inv);
+    // rebuild y so that the frame is orthonormal
+    y_axis = z_axis_new.cross(x_axis);
+    y_axis /= cv::norm(y_axis);
 
-    cv::Mat cam_disp_tvec_inv = -cam_disp_rvec_inv * tvec_c;
+    cv::Mat R = (cv::Mat_<double>(3, 3) <<
+        x_axis[0], y_axis[0], z_axis_new[0],
+        x_axis[1], y_axis[1], z_axis_new[1],
+        x_axis[2], y_axis[2], z_axis_new[2]);
 
-    createaffine(-rvec_c, cam_disp_tvec_inv, cam_to_real_disp);
+    cv::Rodrigues(R, rvec_w);
+    tvec_w = (cv::Mat_<double>(3, 1) <<
+        observer(0, 3), observer(1, 3), observer(2, 3));
 
-    observer = cam_to_real_disp * mirror_to_cam * householder * affine_cam_to_mirr * affine_virt_mirr_to_cam;*/
-    cv::Mat dd(observer);
-    tvec_w = dd;
-
-    //rvec_w = cv::Mat(observer.get_minor<3, 3>(0, 0)).clone();
 }
 
 std::vector<std::pair<double,double>> ImageProcessing::find_ParallelogramCorners(const cv::Mat& bin)
@@ -2054,7 +2041,8 @@ cv::Vec3d ImageProcessing::getNormalofPlane(
 
 std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
     const cv::Mat_<cv::Vec3d> rays,
-    const cv::Mat_<cv::Vec3d> display_coordiantes)
+    const cv::Mat_<cv::Vec3d> display_coordiantes,
+    cv::Mat_<cv::Vec3d> origin)
 {
     CV_Assert(!display_coordiantes.empty());
     CV_Assert(display_coordiantes.type() == CV_64FC3);
@@ -2062,6 +2050,10 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
     CV_Assert(!rays.empty());
     CV_Assert(rays.type() == CV_64FC3);
     CV_Assert(rays.rows >= 2 && rays.cols >= 2);
+
+    if (origin.empty()) {
+        origin = cv::Mat(rays.size(), CV_64FC3, cv::Scalar(0, 0, 0));
+    }
 
     const double eps = 1e-10;
 
@@ -2085,10 +2077,8 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
 
     const cv::Vec3d surface_normal(n);
 
-    const double numer = surface_normal.ddot(p0);
-
     // hitpoints: Holds the for all rays the intersectionpoint with the surface (surface without boundaries)
-    cv::Mat_<cv::Vec3d> hitpoints(rays.size());
+    cv::Mat_<cv::Vec3d> hitpoints(rays.size(), cv::Vec3d(-1.0, -1.0, -1.0));
     // t_map: Holds for each rays the distance t to the surface
     cv::Mat t_map(rays.size(), CV_64F, cv::Scalar(0));
     // hitMask: Holds for each rays a bool value if a hit occured
@@ -2099,6 +2089,7 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
     cv::parallel_for_(cv::Range(0, rays.rows), [&](const cv::Range& range) {
         for (int r = range.start; r < range.end; ++r) {
             const cv::Vec3d* drow = rays.ptr<cv::Vec3d>(r);
+            const cv::Vec3d* origin_ptr = origin.ptr<cv::Vec3d>(r);
             cv::Vec3d* hit = hitpoints.ptr<cv::Vec3d>(r);
             double* t_ptr = t_map.ptr<double>(r);
             uchar* hit_ptr = hitMask.ptr<uchar>(r);
@@ -2106,12 +2097,12 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
 
             for (int col = 0; col < rays.cols; ++col) {
 
+                const double numer = surface_normal.ddot(p0 - origin_ptr[col]);
                 const cv::Vec3d ray = drow[col];
 
                 // If Ray is set to {-1,-1,-1} they are masked as invalid and we jump this part
-                if (ray[0] == -1 && ray[1] == -1 && ray[2] == -1) {
+                if (ray[0] == -1.0 && ray[1] == -1.0 && ray[2] == -1.0) {
                     t_ptr[col] = std::numeric_limits<double>::quiet_NaN();
-                    hit[col] = cv::Vec3d(0, 0, 0);
                     hit_ptr[col] = 0;
                     continue;
                 }
@@ -2135,12 +2126,13 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
                     continue;
                 }
 
-                hit[col] =  t * ray;
+                hit[col] = origin_ptr[col] + t * ray;
                 t_ptr[col] = t;
                 hit_ptr[col] = 255;
                 // Calc Angle between Normal and Vector
                 double cosangle = surface_normal.ddot(ray) /
                     (cv::norm(surface_normal) * cv::norm(ray));
+                cosangle = std::clamp(cosangle, -1.0, 1.0);
                 angle_ptr[col] = std::acos(cosangle);
             }
         }
@@ -2157,7 +2149,7 @@ cv::Mat ImageProcessing::mapHitPointsToDisplayCoords(
 ) {
     CV_Assert(!hitpoints.empty() && hitpoints.type() == CV_64FC3);
     CV_Assert(!display_points.empty() && display_points.type() == CV_64FC3);
-    CV_Assert(display_points.rows >= 2 && display_points.cols >= 2);
+    CV_Assert(display_points.rows >= 3 && display_points.cols >= 3);
 
     const int H = display_points.rows;
     const int W = display_points.cols;
@@ -2207,6 +2199,9 @@ cv::Mat ImageProcessing::mapHitPointsToDisplayCoords(
 
             for (int c = 0; c < hitpoints.cols; ++c) {
                 const cv::Vec3d X = hp[c];
+                if (X.val[0] == -1.0 &&
+                    X.val[1] == -1.0 &&
+                    X.val[2] == -1.0) continue;
                
                 const cv::Vec3d d = X - P00;
 
@@ -3509,13 +3504,12 @@ cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
     }
 
     cv::Mat acc(vec[0].size(), CV_64F, cv::Scalar(0));
-
-    if(vec[0].type() != CV_64F) vec[0].convertTo(acc, CV_64F);
     
     for (size_t i = 0; i < vec.size(); ++i) {
         cv::Mat temp;
         if (vec[i].type() != CV_64F)
-            vec[0].convertTo(acc, CV_64F);
+            vec[0].convertTo(temp, CV_64F);
+        else temp = vec[i];
         acc += temp;   // pixelweise Addition
     }
 

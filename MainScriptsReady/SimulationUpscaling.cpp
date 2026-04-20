@@ -37,21 +37,14 @@ auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName 
         cv::waitKey(0);
     };
 
-auto shownormalized = [](const cv::Mat& d) {
-    cv::Mat img;
-    cv::normalize(d, img, 0, 255, cv::NORM_MINMAX, CV_8U);
-    cv::imshow("norm", img);
-    cv::waitKey(0);
-    };
-
 
 int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-12_ReprojektionSimulated/NoQuantNoLumGamma2.2NoCalib" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-14_ReprojektionSimulated/NoQuantNolumNodistCoeffs" };
 
-    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-11_Sim_G2.2_AllOf_Scale0.8_Bias10.0_n" };
+    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-11_Grauwertkalbirierung_Data_Simulated/2026-04-11_Sim_G2.2_nLumQuantDispApertureQantCam" };
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-02-09_StereoMAKO.xml" };
 
@@ -59,6 +52,7 @@ int main()
 
     Pattern& pat = meassure.img_generation();
     ImageProcessing& processing = meassure.processing();
+
 
     // Method used for calibration 
     _defl_::GrayCal::Method method = _defl_::GrayCal::Method::None;
@@ -69,48 +63,52 @@ int main()
     std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
     std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
 
+    distCoeffs[0].setTo(0);
+
+    double scale = 4.0;
+
+
     GrayCodeConfig config{};
     config.creation.inverse = false;
-    config.creation.pixel_x = 1920;
-    config.creation.pixel_y = 1080;
-    config.creation.resolution_x = 500;
-    config.creation.resolution_y = 500;
+    config.creation.pixel_x = 1920 * scale;
+    config.creation.pixel_y = 1080 * scale;
+    config.creation.resolution_x = 500 * scale;
+    config.creation.resolution_y = 500 * scale;
     config.creation.starBit = config.msb;
 
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
 
     std::size_t grayCodesz{ grayCode1.size() };
 
-    std::vector<cv::Mat> sin_pattern = pat.generate_phaseShift<UniformRowsCols>(
+    std::vector<cv::Mat> sin_pattern = pat.generate_phaseShift<PerElement>(
         Shift_mode::four_phase_shift,
         10.0,
         127.5,
         127.5,
-        1920,
-        1080,
-        {}
-    );
+        1920 * scale,
+        1080 * scale,
+        {});
 
-    // Active Calibration
-    cv::Mat mask_c = cv::Mat::ones(sin_pattern[0].size(), CV_8U);
+    //// Active Calibration
+    //cv::Mat mask_c = cv::Mat::ones(sin_pattern[0].size(), CV_8U);
 
-    int border = 50;
+    //int border = 50;
 
-    // oben
-    mask_c(cv::Range(0, border), cv::Range::all()) = 0;
+    //// oben
+    //mask_c(cv::Range(0, border), cv::Range::all()) = 0;
 
-    // unten
-    mask_c(cv::Range(mask_c.rows - border, mask_c.rows), cv::Range::all()) = 0;
+    //// unten
+    //mask_c(cv::Range(mask_c.rows - border, mask_c.rows), cv::Range::all()) = 0;
 
-    // links
-    mask_c(cv::Range::all(), cv::Range(0, border)) = 0;
+    //// links
+    //mask_c(cv::Range::all(), cv::Range(0, border)) = 0;
 
-    // rechts
-    mask_c(cv::Range::all(), cv::Range(mask_c.cols - border, mask_c.cols)) = 0;
+    //// rechts
+    //mask_c(cv::Range::all(), cv::Range(mask_c.cols - border, mask_c.cols)) = 0;
 
-    /*for (auto& img : sin_pattern) {
-        img = meassure.applyCalibration(img, mask_c, method);
-    }*/
+    //for (auto& img : sin_pattern) {
+    //    img = meassure.applyCalibration(img, mask_c, method);
+    //}
 
     std::size_t pattern_size{ sin_pattern.size() };
 
@@ -126,22 +124,23 @@ int main()
     Sim_config.camera.camera_mat = camMatrix[0];
     Sim_config.camera.dist_coeffs = distCoeffs[0];
     Sim_config.scene.disp_shift_z = 4000.0;
-    Sim_config.scene.disp_shift_x = -1920 / 2.0 * 0.2745;
-    Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745;
+    Sim_config.scene.disp_shift_x = (-1920 * scale) / 2.0 * 0.2745 / scale;
+    Sim_config.scene.disp_shift_y = (-1080 * scale) / 2.0 * 0.2745 / scale;
     Sim_config.disp.scaling = 1.0;
     Sim_config.disp.bias = 0;
+    Sim_config.disp.pixelPitch = 0.2745 / scale;
 
     Sim_config.scene.disp_tilt_x = 0;
     Sim_config.scene.disp_tilt_y = 0;
-    Sim_config.scene.luminance = true;
-    Sim_config.disp.gamma = 2.2;
+    Sim_config.scene.luminance = false;
+    Sim_config.disp.gamma = 1.0;
     Sim_config.data.begin = pattern.begin()._Ptr;
     Sim_config.data.end = pattern.end()._Ptr;
     Sim_config.camera.apertureSmoothing = false;
-    Sim_config.camera.f_number = 16.0;  // The phase has a wavelength of 108pix/2pi -> goal circl of confusion ~ 50pix ->  50mm/4 / 0.2745(pixepitch) = 45pix
+    Sim_config.camera.f_number = 4.0;  // The phase has a wavelength of 108pix/2pi -> goal circl of confusion ~ 50pix ->  50mm/4 / 0.2745(pixepitch) = 45pix
     Sim_config.camera.circle_of_confusion_n_disp = 0;
-    Sim_config.camera.quantization = true;
-    Sim_config.disp.quantization = true;
+    Sim_config.camera.quantization = false;
+    Sim_config.disp.quantization = false;
 
     std::vector<cv::Mat> simulate =
         simulation.simulate(Sim_config);
@@ -164,16 +163,11 @@ int main()
     std::vector<cv::Mat> sin_pattern_sim(std::next(simulate.begin(), grayCodesz), simulate.end());
 
     // Passive Calib
-    for (auto& img : sin_pattern_sim) {
-        // shownormalized(img);
-        //cv::Mat img_blur;
-        //cv::blur(img, img_blur, { 21,21 }, { -1,-1 });
+    /*for (auto& img : sin_pattern_sim) {
         img = meassure.applyCalibration(img, mask, method);
-        // shownormalized(img);
-    }
+    }*/
 
     std::vector<cv::Mat> wrapped_ref{ config };
-
 
     std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(sin_pattern_sim, 1, 4, true, path);
 
@@ -183,17 +177,17 @@ int main()
     unwrapVector.push_back(wrapped[1]);
     unwrapVector.push_back(wrapped_ref[1]);
 
-    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, true, path, 108.0);
+    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, true, path, 108.0 * scale);
 
     std::vector<cv::Mat> reprojection = meassure.do_reprojection(
         unwrap,
         mask,
         camMatrix[0],
         distCoeffs[0],
-        108.0,
+        108.0 * scale,
         1,
         1,
-        0.2745,
+        0.2745 / scale,
         true,
         path
     );

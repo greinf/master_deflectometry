@@ -71,10 +71,18 @@ private:
     void updateModelActive(const std::vector<cv::Mat>);
 
     void updateModelPassive(const std::vector<cv::Mat>);
-
+    
     void updateModel_BiasActive(const std::vector<cv::Mat>);
 
     void updateModel_BiasPassive(const std::vector<cv::Mat>);
+
+    void smoothModelImages(std::vector<cv::Mat>&, int kernel = 15);
+
+    void boundariesCheck(cv::Mat&, double max, double min, double threshold = 3);
+
+    cv::Mat applyLutBackwards(const cv::Mat& img, const cv::Mat& mask);
+
+    double getLutvalBackwards(const double);
 
 public:
     // GrayCalibration Must have a member reference to the ImageStore instance (internally 
@@ -186,6 +194,7 @@ public:
         return img;
     }
 
+
     // Input [1]: calib_specfier -> Must be struct that inherits from _Base::Specifier_Base (GrayCalibrationUtils.hpp)
     // Input [2]: const std::vector<cv::Mat>& images -> Vector of type cv::Mat of Type CV_64FC1
     // Input [3]: cv::Mat& mask -> Must be CV_8UC1
@@ -197,6 +206,8 @@ public:
     // [2] -> I_0 (Only Really used in fitGammaBias_LM, esle set to zero)
     // [3] -> Fitting Error R_2
     // [4] -> Used Iterations (Only Actively used in Gamma fitGammaBias_LM)
+    // [5] -> Sample Imax val
+    // [6] -> Sample Imin val
     // Destinction Between active and passive:
     // To simplify the procedures, essentially the same algorithm is used. 
     // - Passive (afterwards):
@@ -244,7 +255,7 @@ public:
         if constexpr (std::is_same<T, GrayCalibration_specifier::Active::LUT>::value ||
            std::is_same<T, GrayCalibration_specifier::Passive::LUT>::value)
         {
-            std::array<std::pair<double, double>, 256> lut =
+           std::array<std::pair<double, double>, 256> lut =
                 createLut(images, mask);
 
            m_img_store.add(FrameRole::GrayLUT, lut);
@@ -261,6 +272,9 @@ public:
         cv::Mat errorR2(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
         cv::Mat iter(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
 
+        cv::Mat sample_imax(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+        cv::Mat sample_imin(mask.size(), CV_64FC1, cv::Scalar(std::numeric_limits<double>::quiet_NaN()));
+
         // Parallel iterating over the rows 
         //cv::setNumThreads(0);
         cv::parallel_for_(cv::Range(0, mask.rows),
@@ -274,6 +288,9 @@ public:
                     double* r2Ptr = errorR2.ptr<double>(r);
                     double* iterPtr = iter.ptr<double>(r);
 
+                    double* imax_sample_ptr = sample_imax.ptr<double>(r);
+                    double* imin_sample_ptr = sample_imin.ptr<double>(r);
+
                     for (int c = 0; c < mask.cols; ++c) {
                         if (maskPtr[c] == 0)continue;
 
@@ -284,11 +301,18 @@ public:
                             y[i] = images[i].ptr<double>(r)[c];
                         }
 
+                        auto minmaxit = std::minmax_element(y.begin(), y.end());
+
+                        if (*minmaxit.first == *minmaxit.second) continue;
+
+                        imax_sample_ptr[c] = *minmaxit.second;
+                        imin_sample_ptr[c] = *minmaxit.first;
+
                         // This is checked at compile time. Therefore no expensive check is done in each iteration 
                         if constexpr (std::is_same<T, GrayCalibration_specifier::Active::Model>::value ||
                             std::is_same<T, GrayCalibration_specifier::Passive::Model>::value) 
                         {
-                            auto res = fitGamma(y);
+                            auto res = fitGamma(y, 2.0, 1.0);
                             gammaPtr[c] = res.stats.gamma;
                             ImaxPtr[c] = res.stats.Imax;
                             I_0Ptr[c] = res.stats.I_0;
@@ -317,6 +341,8 @@ public:
             m_img_store.add(FrameRole::Modell_Active, I_0);
             m_img_store.add(FrameRole::Modell_Active, errorR2);
             m_img_store.add(FrameRole::Modell_Active, iter);
+            m_img_store.add(FrameRole::Modell_Active, sample_imax);
+            m_img_store.add(FrameRole::Modell_Active, sample_imin);
             // Save to path provided
             m_img_store.saveRoleXML(FrameRole::Modell_Active, path);
         }
@@ -326,6 +352,8 @@ public:
             m_img_store.add(FrameRole::Modell_Passive, I_0);
             m_img_store.add(FrameRole::Modell_Passive, errorR2);
             m_img_store.add(FrameRole::Modell_Passive, iter);
+            m_img_store.add(FrameRole::Modell_Passive, sample_imax);
+            m_img_store.add(FrameRole::Modell_Passive, sample_imin);
             m_img_store.saveRoleXML(FrameRole::Modell_Passive, path);
         }
         else if constexpr (std::is_same<T, GrayCalibration_specifier::Active::Model_Bias>::value) {
@@ -334,6 +362,8 @@ public:
             m_img_store.add(FrameRole::ModellBias_Active, I_0);
             m_img_store.add(FrameRole::ModellBias_Active, errorR2);
             m_img_store.add(FrameRole::ModellBias_Active, iter);
+            m_img_store.add(FrameRole::ModellBias_Active, sample_imax);
+            m_img_store.add(FrameRole::ModellBias_Active, sample_imin);
             m_img_store.saveRoleXML(FrameRole::ModellBias_Active, path);
         }
         else if constexpr (std::is_same<T, GrayCalibration_specifier::Passive::Model_Bias>::value) {
@@ -342,6 +372,8 @@ public:
             m_img_store.add(FrameRole::ModellBias_Passive, I_0);
             m_img_store.add(FrameRole::ModellBias_Passive, errorR2);
             m_img_store.add(FrameRole::ModellBias_Passive, iter);
+            m_img_store.add(FrameRole::ModellBias_Passive, sample_imax);
+            m_img_store.add(FrameRole::ModellBias_Passive, sample_imin);
             m_img_store.saveRoleXML(FrameRole::ModellBias_Passive, path);
         }
 

@@ -66,6 +66,11 @@ private:
 		double bias{ 0 };
 	};
 
+	struct MirrorConfig {
+		bool contains_mirror{ false };
+		cv::Size mirror_sz{ 0, 0 }; //[mm]
+	};
+
 	// All translations and Rotations are in the camera coordiante System
 	struct SceneConfig {
 		double disp_shift_z{ 3000.0 };  // z-Dist from Cam coord to Disp coord. Defaulted to 3000 [mm]
@@ -73,6 +78,12 @@ private:
 		double disp_shift_y{ 0.2745 * 1080/2 }; // y-Dist from Cam coord. to Disp coord. Defaulted to 0.2745*1080/2 -> Display coord in left upper corner. [mm]
 		double disp_tilt_x{ }; 
 		double disp_tilt_y{ };
+		double mirror_shift_z{};
+		double mirror_shift_x{};
+		double mirror_shift_y{};
+		double mirror_tilt_x{};
+		double mirror_tilt_y{};
+
 		double object_size{400.0};
 		bool luminance{false};
 	};
@@ -89,6 +100,7 @@ public:
 	CameraConfig camera{};
 	DisplayConfig disp{};
 	SceneConfig scene{};
+	MirrorConfig mirror{};
 	Data data{};
 };
 

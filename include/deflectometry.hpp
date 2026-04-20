@@ -218,6 +218,7 @@ public:
 
 	 bool do_grayvalue_calibration(
 		 const std::vector<cv::Mat>& gray_val,
+		 cv::Mat& mask,
 		 const int n_pics_per_value,
 		 const int steps,
 		 bool save,

@@ -81,8 +81,7 @@ public:
 		double ampl = 127.5,
 		int pixelX = 1920,
 		int pixelY = 1080,
-		RowPolicy policy = {},
-		bool return_double = false)
+		RowPolicy policy = {})
 	{
 		static_assert(is_row_policy_v<RowPolicy>,
 			"RowPolicy must be PerElement or UniformRowsCols");
@@ -90,7 +89,7 @@ public:
 		CV_Assert(pixelX >= 1);
 		CV_Assert(pixelY >= 1);
 		const bool uniformRow = uniform::is_uniform_rows(policy);
-		return generate_phaseShift(mode, n_periods_y, mean, ampl, pixelX, pixelY, uniformRow, return_double);
+		return generate_phaseShift(mode, n_periods_y, mean, ampl, pixelX, pixelY, uniformRow);
 	}
 
 
@@ -179,8 +178,7 @@ private:
 		double ampl = 127.5,
 		int pixelX = 1920,
 		int pixelY = 1080,
-		bool uniformRow = true,
-		bool return_double = false);
+		bool uniformRow = true);
 
 	bool prepareShiftParameters(
 		double n_periods_in_y, 

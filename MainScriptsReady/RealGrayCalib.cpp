@@ -43,9 +43,9 @@ int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-12_ReprojektionSimulated/QuantDispCamGamma2.2Lum_ActiveModelBiasNoAper" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-16_ReprojektionSimulated/QuantDispCamGamma2.2Lum_ActiveModelBiasNoAper" };
 
-    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-13_Grauwertkalbirierung_Data_Real/2026-04-13_dark_room" };
+    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-16_Grauwertkalbirierung_Data_Real/2026-04-16_dark_room" };
 
     Deflectometry meassure{};
 
@@ -75,21 +75,21 @@ int main()
 
     std::size_t n_pics = grayCodesz + patternSize;
 
-    int n_pics_per_val = 1;
+    int n_pics_per_val = 3;
 
     std::vector<cv::Mat> images = meassure.acquire_img(images_gt, FrameRole::Debug, n_pics_per_val);
 
     auto it = images.begin();
 
-    /*std::vector<cv::Mat> mean_img(n_pics);
+    std::vector<cv::Mat> meanimg;
 
     for (std::size_t i = 0; i < n_pics; ++i) {
         auto it_end = std::next(it, n_pics_per_val);
-        mean_img[i] = processing.mean(std::vector<cv::Mat>(it, it_end));
+        meanimg.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
         it = it_end;
     }
 
-    images = mean_img;*/
+    images = meanimg;
 
     auto& eval = config.getEvalParameter();
     eval.start = images.begin();
@@ -108,17 +108,46 @@ int main()
 
     std::vector<cv::Mat> grayValues_mapped = processing.remapCameraToScreen(grayValues, maps);
 
-    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel);
+    // Active Calibration
+    cv::Mat mask_active = cv::Mat::ones(grayValues_mapped[0].size(), CV_8U);
+
+    int border = 50;
+
+    // oben
+    mask_active(cv::Range(0, border), cv::Range::all()) = 0;
+
+    // unten
+    mask_active(cv::Range(mask_active.rows - border, mask_active.rows), cv::Range::all()) = 0;
+
+    // links
+    mask_active(cv::Range::all(), cv::Range(0, border)) = 0;
+
+    // rechts
+
+    cv::Mat mask_passive = config.results.mask;
+
+    mask_active(cv::Range::all(), cv::Range(mask_active.cols - border, mask_active.cols)) = 0;
+
+    // Just make the mask a bit smaller 
+    cv::Mat kernel = cv::Mat::ones(5, 5, CV_8U);
+
+    cv::erode(mask_passive, mask_passive, kernel, { -1,-1 }, 50);
+
+    cv::Mat mask_Lut;
+
+    cv::erode(mask_passive, mask_Lut, kernel, { -1,-1 }, 50);
+
+    meassure.do_grayvalue_calibration(grayValues_mapped, mask_active, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel);
 
     //meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveLut);
 
-    meassure.do_grayvalue_calibration(grayValues, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel);
+    meassure.do_grayvalue_calibration(grayValues, mask_passive, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel);
 
-    meassure.do_grayvalue_calibration(grayValues, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveLut);
+    meassure.do_grayvalue_calibration(grayValues, mask_Lut, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveLut);
 
-    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel_Bias);
+    meassure.do_grayvalue_calibration(grayValues_mapped, mask_active, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel_Bias);
 
-    meassure.do_grayvalue_calibration(grayValues, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel_Bias);
+    meassure.do_grayvalue_calibration(grayValues, mask_passive, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel_Bias);
 
 
 }

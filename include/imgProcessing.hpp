@@ -49,12 +49,13 @@ public:
 		cv::Mat& tvec_w,
 		const cv::Mat& rvec_c,
 		const cv::Mat& tvec_c,
-		const cv::Mat& housholder,
 		const cv::Mat& cam_mirror_rvec,
 		const cv::Mat& cam_mirror_trans);
 
-	void calculatehousholder(const cv::Mat& rvec_mirror, const cv::Mat& tvec_mirror,
-		cv::Mat& tvec_virt, cv::Mat& H);
+	void calculatehousholder(
+		const cv::Mat& rvec_mirror,
+		const cv::Mat& tvec_mirror,
+		cv::Mat& H);
 
 	std::vector<cv::Point3d> transformPointsToMirrorWorld(
 		const std::vector<cv::Point3d>& realPoints,
@@ -583,7 +584,8 @@ public:
 	// Rays can be masked as invalid rays when set to {-1,-1,-1}
 	std::vector<cv::Mat> calculateHitPoints(
 		const cv::Mat_<cv::Vec3d> rays,
-		const cv::Mat_<cv::Vec3d> display_coordiantes
+		const cv::Mat_<cv::Vec3d> display_coordiantes,
+		cv::Mat_<cv::Vec3d> origin = cv::Mat_<cv::Vec3d>()
 	);
 
 	cv::Mat mapHitPointsToDisplayCoords(

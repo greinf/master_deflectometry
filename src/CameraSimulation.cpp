@@ -26,12 +26,6 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 
 	CV_Assert(m_impl->images.begin() != m_impl->images.end());
 
-
-	// Scaling and Bias
-	applyScalingAndBias(config);
-
-
-
 	// --- Gamma distortion ---
 	CV_Assert(config.disp.gamma >= 1.0);
 	for (auto& img : m_impl->images) {
@@ -44,6 +38,9 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 			PerElement{});
 	}
 
+	// Scaling and Bias
+	applyScalingAndBias(config);
+
 	// --- Quantization ---
 	if (config.disp.quantization == true) {
 		for (auto& img : m_impl->images) {
@@ -51,21 +48,68 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 		}
 	}
 
-	
-
-	
-	
 	const cv::Size disp_size{ m_impl->images[0].size()};
 	const cv::Size cam_size{ config.camera.pixel_x, config.camera.pixel_y };
 	cv::Mat_<cv::Vec2d> coordinatedImage =
 		generateCoordinateImage(cam_size);
 
+
+	// Ray Calculation
 	cv::Mat_<cv::Vec3d> rays =
 		m_img_processing.calulateRays(
 			config.camera.camera_mat,
 			config.camera.dist_coeffs,
 			coordinatedImage
 		);
+	
+	// Create a Matrix containing the starting Points for the rays.
+	cv::Mat ray_origin = cv::Mat(rays.size(), CV_64FC3, cv::Scalar(0, 0, 0));
+
+	if (config.mirror.contains_mirror == true) {
+
+		// Calculate Discrete MirrorPoints in Cameracoordinates
+		cv::Mat mirrorPointsinCameraCoordiantes =
+			calcDisplayPointinCameracoordinates(
+				config.mirror.mirror_sz,
+				config.scene.mirror_shift_z,
+				config.scene.mirror_shift_x,
+				config.scene.mirror_shift_y,
+				config.scene.mirror_tilt_x,
+				config.scene.mirror_tilt_y,
+				1.0 
+			);
+
+		std::vector<cv::Mat> hitpoints_on_mirror_surface =
+			m_img_processing.calculateHitPoints(
+				rays, 
+				mirrorPointsinCameraCoordiantes,
+				ray_origin);
+
+		cv::Mat hitpoints_mir = m_img_processing.mapHitPointsToDisplayCoords(
+			hitpoints_on_mirror_surface[0],
+			mirrorPointsinCameraCoordiantes
+		);
+
+		cv::Mat hitpoints_on_mirror = hitpoints_on_mirror_surface[0].clone();
+		std::vector<cv::Mat> channels;
+		cv::split(hitpoints_mir, channels);
+
+		cv::Mat mask = (channels[0] == -1.0) & (channels[1] == -1.0);
+
+		hitpoints_on_mirror.setTo(cv::Vec3d(0, 0, 0), mask);
+
+		ray_origin = hitpoints_on_mirror;
+
+		rays.setTo(cv::Vec3d(-1.0, -1.0, -1.0), mask);
+
+		cv::Vec3d rvec(config.scene.mirror_tilt_x, config.scene.mirror_tilt_y, 0);
+		cv::Mat rot;
+
+		cv::Rodrigues(rvec, rot);
+		cv::Vec3d surface_normal = rot.col(2);
+
+		mirrorRays(rays, surface_normal);
+	}
 
 	cv::Mat displayPixelInCameraCoordinates =
 		calcDisplayPointinCameracoordinates(
@@ -75,12 +119,16 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 			config.scene.disp_shift_y,
 			config.scene.disp_tilt_x,
 			config.scene.disp_tilt_y,
-			config.disp.pixelPitch
+			config.disp.pixelPitch,
+			true 
 		);
 
 	// Here the Hitpoints are calculated for surface without bondaries 
 	std::vector<cv::Mat> hitpoints_on_disp_surface =
-		m_img_processing.calculateHitPoints(rays, displayPixelInCameraCoordinates);
+		m_img_processing.calculateHitPoints(
+			rays,
+			displayPixelInCameraCoordinates,
+			ray_origin);
 
 	cv::Mat hitpoints = m_img_processing.mapHitPointsToDisplayCoords(
 		hitpoints_on_disp_surface[0],
@@ -134,13 +182,6 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 		for (auto& img : m_impl->images) {
 			img = m_img_processing.quantizeImage(img);
 		}
-
-		//for (auto it = start; it != end; ++it)
-		//{
-		//	// Throw Exception if values are out of bounds. 
-		//	cv::checkRange(*it, false, nullptr, 0, 256);
-		//	it->convertTo(*it, CV_8U);
-		//}
 	}
 
 	// If an output container is specified than fill it
@@ -178,6 +219,27 @@ std::vector<cv::Mat>& CameraSimulation::applyScalingAndBias(
 	return m_impl->images;
 }
 
+void CameraSimulation::mirrorRays(
+	cv::Mat_<cv::Vec3d>& rays,
+	const cv::Vec3d surface_normal)
+{
+	cv::Vec3d n = surface_normal / cv::norm(surface_normal);
+	cv::Mat reflectionMat = (cv::Mat::eye(cv::Size(3, 3), CV_64F) - 2 * n * n.t());
+	cv::parallel_for_(cv::Range(0, rays.rows),
+		[&](const cv::Range& range)
+		{
+			for (int row = range.start; row < range.end; ++row) {
+				cv::Vec3d* ray_ptr = rays.ptr<cv::Vec3d>(row);
+				for (int col = 0; col < rays.cols; ++col) {
+					if (ray_ptr[col].val[0] == -1.0 &&
+						ray_ptr[col].val[1] == -1.0 &&
+						ray_ptr[col].val[2] == -1.0) continue;
+					cv::Mat reflected = reflectionMat * ray_ptr[col];
+					ray_ptr[col] = cv::Vec3d(reflected);
+				}
+			}
+		});
+}
 
 std::vector<cv::Mat> CameraSimulation::remapFromHitpoints(
 	const std::vector<cv::Mat>::iterator start,
@@ -207,6 +269,25 @@ std::vector<cv::Mat> CameraSimulation::remapFromHitpoints(
 		}
 		);
 
+	//for (auto it = start; it != end; ++it) {
+	//	const cv::Size sz = it->size();
+	//	cv::Mat img(hitpoints.size(), CV_64F);
+	//	cv::parallel_for_(cv::Range(0, hitpoints.rows),
+	//		[&](const cv::Range& range) {
+	//			for (int row = range.start; row < range.end; ++row) {
+	//				//double* img_ptr = it->ptr<double>(row);
+	//				const cv::Vec2d* map_ptr = hitpoints.ptr<cv::Vec2d>(row);
+	//				double* img_ptr_out = img.ptr<double>(row);
+	//				for (int col = 0; col < hitpoints.cols; ++col) {
+	//					img_ptr_out[col] = m_img_processing.bilinearInterpolation(
+	//						*it, cv::Vec2d(map_ptr[col].val[1], map_ptr[col].val[0]));
+	//				}
+	//			}
+	//		}
+	//	);
+	//	*it = img;
+	//}
+
 	return out;
 }
 
@@ -218,15 +299,23 @@ cv::Mat CameraSimulation::calcDisplayPointinCameracoordinates(
 	const double shift_y,
 	const double tilt_x,
 	const double tilt_y,
-	const double pixel_pitch)
+	const double pixel_pitch,
+	bool flip_vertical)
 {
 	CV_Assert(sz.area() > 0);
-	CV_Assert(shift_z > 0);
-	CV_Assert(std::abs(tilt_x) <= CV_PI /4.0);
-	CV_Assert(std::abs(tilt_y) <= CV_PI / 4.0);
+	CV_Assert(shift_z >= 0);
+	CV_Assert(std::abs(tilt_x) <= CV_PI);
+	CV_Assert(std::abs(tilt_y) <= CV_PI);
 
 	cv::Mat displayPixel_inCameraCoordinates =
 		generateCoordinateImage(sz, 3);
+
+	if (flip_vertical) {
+		cv::Mat flipped;
+		cv::flip(displayPixel_inCameraCoordinates, flipped, 1);
+		displayPixel_inCameraCoordinates = flipped;
+	}
+	
 
 	//// Shift the image coordiante System in the middle of the Display
 	//const double shift_x =
@@ -367,7 +456,7 @@ std::vector<cv::Mat>& CameraSimulation::applyApertureSmoothing(
 				cv::Mat temp(img == 0);
 
 				cv::Mat filtered;
-				cv::filter2D(img, filtered, CV_64F, circular_binary);
+				cv::filter2D(img, filtered, CV_64F, circular_binary, { -1,-1 }, 0.0, cv::BORDER_REFLECT);
 
 				filtered.setTo(0, temp);
 

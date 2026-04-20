@@ -46,6 +46,10 @@ private:
 		const int dimension = 2
 	);
 
+	void mirrorRays(
+		cv::Mat_<cv::Vec3d>& rays,
+		const cv::Vec3d surface_normal
+	);
 
 	cv::Mat calcDisplayPointinCameracoordinates(
 		const cv::Size& pattern_size,
@@ -54,7 +58,8 @@ private:
 		const double shift_y,
 		const double tilt_x,
 		const double tilt_y,
-		const double pixel_pitch
+		const double pixel_pitch,
+		bool flip_vertical = false
 	);
 
 	std::vector<cv::Mat> remapFromHitpoints(

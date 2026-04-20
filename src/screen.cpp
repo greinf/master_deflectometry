@@ -145,7 +145,7 @@ std::vector<cv::Mat> Pattern::generateXGray(
 	std::vector<cv::Mat> grayCodeimgX(n_pics);
 	std::size_t n_bit = grayCode[0].size();
 
-	cv::parallel_for_(cv::Range(0, n_pics),
+	cv::parallel_for_(cv::Range(0, static_cast<int>(n_pics)),
 		[&](const cv::Range& range) {
 			for (int i = range.start; i < range.end; ++i) {
 				cv::Mat line(1, config.creation.pixel_x, CV_8U);
@@ -185,7 +185,7 @@ std::vector<cv::Mat> Pattern::generateYGray(
 	std::vector<cv::Mat> grayCodeimgY(n_pics);
 	std::size_t n_bit = grayCode[0].size();
 
-	cv::parallel_for_(cv::Range(0, n_pics),
+	cv::parallel_for_(cv::Range(0, static_cast<int>(n_pics)),
 		[&](const cv::Range& range) {
 			for (int i = range.start; i < range.end; ++i) {
 				cv::Mat line(1, config.creation.pixel_y, CV_8U);
@@ -500,7 +500,9 @@ std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 	assert(phaseMaps[0].size() == phaseMaps[1].size());
 	assert(steps > 0);
 	CV_Assert(phaseMaps[0].type() == CV_64F);
-	CV_Assert((amplitude + mean_value) < 256);
+	CV_Assert(phaseMaps[1].type() == CV_64F);
+	CV_Assert(mean_value + amplitude <= 255.0);
+	CV_Assert(mean_value - amplitude >= 0.0);
 	
 	m_amplitude = amplitude;
 	m_mean_value = mean_value;
@@ -571,14 +573,19 @@ std::vector<cv::Mat> Pattern::generateSinusPatternFromPhase(
 			// cosine contains cos(phi + shift) in [-1,1]
 			cv::Mat pattern64 = mean_value + amplitude * cosine;  // range [mean-ampl, mean+ampl]
 
+			cv::checkRange(pattern64, false, nullptr, 0.0 - 1e-6, 255 + 1e-6);
+
+
+			outPatterns.push_back(pattern64);
+
 			m_img_store.add(FrameRole::PatternDouble, pattern64.clone());
 
-			cv::Mat pattern8;
-			//cv::normalize(pattern64, pattern8, 0, 255, cv::NORM_MINMAX, CV_8U);
+			//cv::Mat pattern8;
+			////cv::normalize(pattern64, pattern8, 0, 255, cv::NORM_MINMAX, CV_8U);
 
-			// Here Changed to double OUTPUT 
-			pattern64.convertTo(pattern8, CV_8U, 1.0, 0.0);
-			outPatterns.push_back(pattern8);  // Instead of pattern8 !!!!!!!!!!1
+			//// Here Changed to double OUTPUT 
+			//pattern64.convertTo(pattern8, CV_8U, 1.0, 0.0);
+			//outPatterns.push_back(pattern8);  
 		}
 	}
 	return outPatterns;
@@ -592,9 +599,6 @@ cv::Mat Pattern::generateColumnPhase(int pixel_y, double wave_length) {
 
 		cv::Mat column(pixel_y, 1, CV_64F);
 		
-
-		double step = CV_2PI / static_cast<double>(wave_length);
-
 		for (int y = 0; y < pixel_y; ++y) {
 			double* ptr = column.ptr<double>(y);
 			*ptr = CV_2PI * (static_cast<double>(y) / wave_length);
@@ -616,8 +620,6 @@ cv::Mat Pattern::generateRowPhase(int pixel_x, double wave_length) {
 
 		cv::Mat row(1, pixel_x, CV_64F);
 		double* ptr = row.ptr<double>(0);
-
-		double step = CV_2PI / static_cast<double>(wave_length);
 
 		for (int x = 0; x < pixel_x; ++x) {
 			//ptr[x] = step * x;
@@ -645,8 +647,7 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 	double ampl,
 	int pixelX,
 	int pixelY,
-	bool uniformRow,
-	bool return_double)
+	bool uniformRow)
 {
 	m_numberPeriods = n_periods_in_y;
 	m_pixel_x = pixelX;
@@ -667,8 +668,8 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 		auto patterns = generateSinusPatternFromPhase(
 			phaseMaps,
 			m_steps,
-			127.5,
-			127.5,
+			ampl,
+			mean,
 			uniformRow);
 		
 		//Store the files in Image_storage File
@@ -677,11 +678,7 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 
 		logging();
 
-		// Extra path if Double Values of the pattern are needed
-		if (return_double) {
-			std::vector<cv::Mat> pattern_double{ m_img_store.get(FrameRole::PatternDouble) };
-			return pattern_double;
-		}
+		
 
 		return patterns;
 	}
@@ -713,10 +710,7 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 
 		logging();
 
-		if (return_double) {
-			std::vector<cv::Mat> pattern_double{ m_img_store.get(FrameRole::PatternDouble) };
-			return pattern_double;
-		}
+		
 
 		return patterns;
 	}

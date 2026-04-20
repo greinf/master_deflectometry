@@ -184,6 +184,22 @@ void GrayCalibration::updateModel_BiasPassive(
     m_impl->modelBias_b = images;
 }
 
+void GrayCalibration::smoothModelImages(
+    std::vector<cv::Mat>& images,
+    int kernel_size)
+{
+    CV_Assert(kernel_size > 0);
+    CV_Assert(kernel_size % 2 == 1);
+
+    cv::Mat k = cv::Mat::ones(kernel_size, 1, CV_64F);
+    k /= cv::sum(k)[0];
+
+    for (auto& img : images) {
+        cv::Mat out;
+        cv::sepFilter2D(img, out, CV_64F, k, k, cv::Point(-1, -1), 0.0, cv::BORDER_REPLICATE);
+        img = out;
+    }
+}
 
 cv::Mat GrayCalibration::applyCalibration(
     const GrayCalibration_specifier::Active::LUT spec,
@@ -191,12 +207,19 @@ cv::Mat GrayCalibration::applyCalibration(
     cv::Mat& mask)
 {
     CV_Assert(!image.empty());
-    CV_Assert(image.type() == CV_64F);
     CV_Assert(image.channels() == 1);
     CV_Assert(m_impl != nullptr);
 
+    cv::Mat image64;
+    if (image.type() != CV_64F) image.convertTo(image64, CV_64F);
+    else image64 = image;
+
+    // Cause of the limited values
+    cv::Mat img_scaled = image64 * m_impl->gray_LUT.m_scale_factorLUT;
+    img_scaled = img_scaled + m_impl->gray_LUT.m_biasLut ;
+
     if (mask.empty()) mask = cv::Mat::ones(image.size(), CV_8U);
-    return applyLut(image, mask);
+    return applyLut(img_scaled, mask);
 }
 
 cv::Mat GrayCalibration::applyCalibration(
@@ -204,7 +227,23 @@ cv::Mat GrayCalibration::applyCalibration(
     const cv::Mat& image,
     cv::Mat& mask)
 {
-    return applyCalibration(GrayCalibration_specifier::Active::LUT{}, image, mask);
+    CV_Assert(!image.empty());
+    CV_Assert(image.channels() == 1);
+    CV_Assert(m_impl != nullptr);
+
+    cv::Mat image64;
+    if (image.type() != CV_64F) image.convertTo(image64, CV_64F);
+    else image64 = image;
+
+    // Cause of the limited values
+    cv::Mat img_scaled = image64 * 0.9;
+    /*double max, min;
+    cv::minMaxLoc(img_scaled, &min, &max, nullptr, nullptr);*/
+
+    if (mask.empty()) mask = cv::Mat::ones(image.size(), CV_8U);
+    
+
+    return applyLut(img_scaled, mask);
 }
 
 cv::Mat GrayCalibration::applyCalibration(
@@ -219,15 +258,34 @@ cv::Mat GrayCalibration::applyCalibration(
 
     // Checks if the calibrationdata is available
     CV_Assert(m_impl != nullptr);
-    CV_Assert(m_impl->model_a.size() > 2);
+    CV_Assert(m_impl->model_a.size() == 7 );
     CV_Assert(std::all_of(m_impl->model_a.begin(), m_impl->model_a.end(),
         [&](const cv::Mat& img) {
             return img.size() == image.size();
         }));
 
+    cv::checkRange(image, false, nullptr, 0.0 - 1e-6, 255.0 + 1e-6);
+
+    const cv::Mat& minImg = m_impl->model_a.at(6);
+    const cv::Mat& maxImg = m_impl->model_a.at(5);
+
+    cv::Mat range = maxImg - minImg;
+    range /= 255.0;
+    range = cv::max(range, 0.0);
+
+    cv::Mat scaled;
+    cv::multiply(range, image, scaled);
+    scaled += minImg;
+
+    scaled *= 0.8;
+
     if (mask.empty()) mask = cv::Mat::ones(image.size(), CV_8U);
 
-    return applyModelFit(image, mask, m_impl->model_a);
+    cv::Mat cal_img = applyModelFit(scaled, mask, m_impl->model_a);
+
+    boundariesCheck(cal_img, 255.0 + 1e-6, 0 - 1e-6);
+
+    return cal_img;
 }
 
 cv::Mat GrayCalibration::applyCalibration(
@@ -265,17 +323,83 @@ cv::Mat GrayCalibration::applyCalibration(
 
     // Checks if the calibrationdata is available
     CV_Assert(m_impl != nullptr);
-    CV_Assert(m_impl->modelBias_a.size() > 2); // We should have at least 3 images. 
+    CV_Assert(m_impl->modelBias_a.size() == 7); // We should have at least 3 images. 
     CV_Assert(std::all_of(m_impl->modelBias_a.begin(), m_impl->modelBias_a.end(),
         [&](const cv::Mat& img) {
             return img.size() == image.size();
         }));
 
+    cv::checkRange(image, false, nullptr, 0.0 - 1e-6, 255.0 + 1e-6);
+
+    const cv::Mat& min = m_impl->modelBias_a.at(6);
+    const cv::Mat& max = m_impl->modelBias_a.at(5);
+
+    cv::Mat range = max - min, scaled;
+
+    range /= 255.0;
+
+    range = cv::max(range, 0.0);
+
+    cv::multiply(range, image, scaled);
+
+    scaled += min;
+
     if (mask.empty()) mask = cv::Mat::ones(image.size(), CV_8U);
 
-    return applyModelFit(image, mask, m_impl->modelBias_a);
+    cv::Mat cal_img = applyModelFit(scaled, mask, m_impl->modelBias_a);
+
+    boundariesCheck(cal_img, 255.0 + 1e-6, 0 - 1e-6);
+
+    return cal_img;
 }
 
+void GrayCalibration::boundariesCheck(
+    cv::Mat& img,
+    double maxVal,
+    double minVal,
+    double threshold)
+{
+    CV_Assert(!img.empty());
+    CV_Assert(img.type() == CV_64F);
+    CV_Assert(minVal <= maxVal);
+    CV_Assert(threshold >= 0.0);
+
+    img *= 0.9;
+
+    double imageMin, imageMax;
+    cv::minMaxLoc(img, &imageMin, &imageMax);
+
+    // too high?
+    if (imageMax > maxVal) {
+        double overshoot = imageMax - maxVal;
+
+        if (overshoot <= threshold) {
+            img -= overshoot;
+            cv::minMaxLoc(img, &imageMin, &imageMax);
+
+            if (imageMin < minVal) {
+                throw std::runtime_error("Boundary correction pushed image below minimum.");
+            }
+            return;
+        }
+        else {
+            throw std::runtime_error("Upper boundary exceeded too much.");
+        }
+    }
+
+    // too low?
+    if (imageMin < minVal) {
+        double undershoot = minVal - imageMin;
+
+        if (undershoot <= threshold) {
+            img += undershoot;
+            return;
+        }
+        else {
+            throw std::runtime_error("Lower boundary exceeded too much.");
+        }
+    }
+}
 cv::Mat GrayCalibration::applyCalibration(
     const GrayCalibration_specifier::Passive::Model_Bias spec,
     const cv::Mat& image,
@@ -371,6 +495,33 @@ cv::Mat GrayCalibration::applyModelFit(
     return calibrated;
 }
 
+cv::Mat GrayCalibration::applyLutBackwards(
+    const cv::Mat& image,
+    const cv::Mat& mask)
+{
+    CV_Assert(image.type() == CV_64F);
+    CV_Assert(image.channels() == 1);
+    CV_Assert(mask.type() == CV_8U);
+    CV_Assert(mask.channels() == 1);
+    CV_Assert(mask.size() == image.size());
+
+    cv::Mat calibrated(image.size(), CV_64F, cv::Scalar(0));
+
+    cv::parallel_for_(cv::Range(0, image.rows),
+        [&](const cv::Range& range) {
+            for (int row = range.start; row < range.end; ++row) {
+                const double* img_ptr = image.ptr<double>(row);
+                double* cal_ptr = calibrated.ptr<double>(row);
+                const uchar* mask_ptr = mask.ptr<uchar>(row);
+                for (int col = 0; col < image.cols; ++col) {
+                    if (mask_ptr[col] == 0 || std::isnan(img_ptr[col])) continue;
+                    cal_ptr[col] = getLutvalBackwards(img_ptr[col]);
+                }
+            }
+        });
+
+    return calibrated;
+}
 
 cv::Mat GrayCalibration::applyLut(
     const cv::Mat& image,
@@ -429,6 +580,9 @@ std::array<std::pair<double, double>, 256> GrayCalibration::createLut(
         mask = cv::Mat::ones(images[0].size(), CV_8U);
     }
    
+    cv::Mat kernel = cv::Mat::ones({ 5,5 }, CV_8U);
+
+
     std::array<std::pair<double, double>, 256> Lut{};
 
     for (std::size_t i = 0; i < images.size(); ++i) {
@@ -440,7 +594,53 @@ std::array<std::pair<double, double>, 256> GrayCalibration::createLut(
     return Lut;
 }
 
-//struct GrayCalibration_specifier::Active::LUT;
+double GrayCalibration::getLutvalBackwards(
+    const double value)
+{
+    // Is dataptr set and is in the dataptr the LUT available
+    CV_Assert(m_impl != nullptr);
+    CV_Assert(!m_impl->empty(GrayCalibration_specifier::Active::LUT{}));
+
+    // binary search on "second" values
+    auto it = std::lower_bound(
+        m_impl->gray_LUT.gray_Lut.begin(),
+        m_impl->gray_LUT.gray_Lut.end(),
+        value,
+        [](const auto& a, const double val) {
+            return a.first < val;
+        }
+    );
+
+    if (it == m_impl->gray_LUT.gray_Lut.begin())
+        return it->second;
+
+    if (it == m_impl->gray_LUT.gray_Lut.end())
+        return std::prev(it)->second;
+
+    /*double hi_dist = std::abs(it->first - value);
+    double lo_dist = std::abs(std::prev(it)->first - value);
+
+    if (lo_dist < hi_dist) 
+        return std::prev(it)->second; 
+    
+    else return it->second;*/
+
+
+    auto it_lo = std::prev(it);
+    auto it_hi = it;
+
+    const double x0 = it_lo->first;
+    const double x1 = it_hi->first;
+    const double y0 = it_lo->second;
+    const double y1 = it_hi->second;
+
+    if (std::abs(x1 - x0) < 1e-12)
+        return y0;
+
+    const double t = (value - x0) / (x1 - x0);
+    return y0 + t * (y1 - y0);
+}
+
 
 double GrayCalibration::getLutVal(
     const double value)
@@ -448,9 +648,6 @@ double GrayCalibration::getLutVal(
     // Is dataptr set and is in the dataptr the LUT available
     CV_Assert(m_impl != nullptr);
     CV_Assert(!m_impl->empty(GrayCalibration_specifier::Active::LUT{}));
-    
-    double worker_val = (value * m_impl->gray_LUT.m_scale_factorLUT)
-        + m_impl->gray_LUT.m_biasLut;
 
     // binary search on "second" values
     auto it = std::lower_bound(
@@ -468,14 +665,20 @@ double GrayCalibration::getLutVal(
     if (it == m_impl->gray_LUT.gray_Lut.end())
         return std::prev(it)->first;
 
-    // choose closer of the two neighbors
-    double hi_dist = std::abs(it->second - value);
-    double lo_dist = std::abs(std::prev(it)->second - value);
+    auto it_lo = std::prev(it);
+    auto it_hi = it;
 
-    if (lo_dist < hi_dist)
-        return std::prev(it)->first;
-    else
-        return it->first;
+    const double x0 = it_lo->second;
+    const double x1 = it_hi->second;
+    const double y0 = it_lo->first;
+    const double y1 = it_hi->first;
+
+    // Schutz gegen degenerierten Fall
+    if (std::abs(x1 - x0) < 1e-12)
+        return y0;
+
+    const double t = (value - x0) / (x1 - x0);
+    return y0 + t * (y1 - y0);
 }
 
 
@@ -513,6 +716,14 @@ Gray_Calib_Result GrayCalibration::fitGammaBias_LM(
             1, 1, 1, 1>(new ceresCost::ExponentialResidual(values[i].u, values[i].I));
 
         problem.AddResidualBlock(costfunction, nullptr, &i_max, &gamma, &i_min);
+
+        problem.SetParameterLowerBound(&gamma, 0, 0.01);
+        problem.SetParameterLowerBound(&i_max, 0, 1e-6);
+        problem.SetParameterLowerBound(&i_min, 0, 0.0);
+
+        problem.SetParameterUpperBound(&gamma, 0, 8.0);
+        problem.SetParameterUpperBound(&i_max, 0, 255.0);
+        problem.SetParameterUpperBound(&i_min, 0, 255.0);
     }
 
     ceres::Solver::Options options;
@@ -523,9 +734,6 @@ Gray_Calib_Result GrayCalibration::fitGammaBias_LM(
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 
-    //std::cout << summary.BriefReport() << "\n";
-
-    
     result.stats.gamma = gamma;
     result.stats.Imax = i_max;
     result.stats.I_0 = i_min;
@@ -660,6 +868,8 @@ bool GrayCalibration::setupCalibrationMethod(
     m_img_store.loadRoleXML(FrameRole::Modell_Active, path);
     m_impl->model_a = m_img_store.get(FrameRole::Modell_Active);
 
+    smoothModelImages(m_impl->model_a);
+
     if (m_impl->empty(spec)) return false;
 
     return true;
@@ -679,6 +889,8 @@ bool GrayCalibration::setupCalibrationMethod(
 
     m_img_store.loadRoleXML(FrameRole::ModellBias_Active, path);
     m_impl->modelBias_a = m_img_store.get(FrameRole::ModellBias_Active);
+
+    smoothModelImages(m_impl->modelBias_a);
 
     if (m_impl->empty(spec)) return false;
 
@@ -700,6 +912,8 @@ bool GrayCalibration::setupCalibrationMethod(
     m_img_store.loadRoleXML(FrameRole::Modell_Passive, path);
     m_impl->model_b = m_img_store.get(FrameRole::Modell_Passive);
 
+    smoothModelImages(m_impl->model_b);
+
     if (m_impl->empty(spec)) return false;
 
     return true;
@@ -717,8 +931,10 @@ bool GrayCalibration::setupCalibrationMethod(
         return false;
     }
 
-    m_img_store.loadRoleXML(FrameRole::Modell_Passive, path);
-    m_impl->modelBias_b = m_img_store.get(FrameRole::Modell_Passive);
+    m_img_store.loadRoleXML(FrameRole::ModellBias_Passive, path);
+    m_impl->modelBias_b = m_img_store.get(FrameRole::ModellBias_Passive);
+
+    smoothModelImages(m_impl->modelBias_b);
 
     if (m_impl->empty(spec)) return false;
 
@@ -729,7 +945,7 @@ bool GrayCalibration::prepareLUT()
 {
     std::cout << "Prepare LUT \n";
 
-    double safety = 0.85;
+    double safety = 0.95;
 
     // Small valid Check is max val != 0 
     // Also check for Lut values != 0 if there are values Lut must be filled
@@ -756,9 +972,9 @@ bool GrayCalibration::prepareLUT()
         double scale_factor = m_impl->gray_LUT.m_scale_factorLUT
             = range_safety / 255.0;
 
-        // Save the Bias value for the application of Calibration on the Gray Curve
-        // Scaling and Pushing the curve up must be done on the wanted values !
-        double bias = (1-safety)/2.0 * 255.0; 
+        // These bias values and scaling must be applied at the active case. 
+
+        double bias = (1-safety)/1.25 * 255.0; 
 
         m_impl->gray_LUT.m_biasLut = bias;
     }

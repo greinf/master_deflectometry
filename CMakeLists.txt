@@ -66,7 +66,7 @@ add_executable (${PROJECT_NAME}
     src/deflectometry.cpp
     src/imgProcessing.cpp
     src/imageStore.cpp
- "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp" "src/GrayCodeDecoder.cpp" "src/CameraSimulation.cpp" "src/CameraCalibration.cpp")
+ "src/cameraN.cpp" "src/VimbaBackend.cpp" "src/GrayCalibration.cpp" "src/GrayCodeDecoder.cpp" "src/CameraSimulation.cpp" "src/CameraCalibration.cpp" "src/GeometricCalibration.cpp")
 
 
 #Debug 
@@ -89,6 +89,9 @@ set(Boost_NO_BOOST_CMAKE ON)
 find_package (Threads REQUIRED)
 find_package(Ceres CONFIG REQUIRED)
 find_package(OpenCV REQUIRED) # Normal OpenCV find
+set(Open3D_DIR "C:/Users/grein/Documents/libraries/open3d-devel-windows-amd64-0.19.0/CMake")
+find_package(Open3D REQUIRED)
+
 
 find_package(Boost CONFIG REQUIRED)
 
@@ -100,6 +103,7 @@ target_link_libraries (${PROJECT_NAME}
     VimbaX::VmbCPP 
     Ceres::ceres
     Boost::boost
+    Open3D::Open3D
 )
 
 
