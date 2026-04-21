@@ -315,7 +315,6 @@ std::vector<cv::Mat> Deflectometry::do_reprojection(
 			grid_points_y,
 			pixel_pitch);
 
-	
 	cv::Mat rvec, tvec;
 	cv::Mat inliers;
 

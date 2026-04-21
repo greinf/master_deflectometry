@@ -120,7 +120,7 @@ std::vector<cv::Mat> CameraSimulation::simulate(
 			config.scene.disp_tilt_x,
 			config.scene.disp_tilt_y,
 			config.disp.pixelPitch,
-			true 
+			config.scene.disp_flip_vertical
 		);
 
 	// Here the Hitpoints are calculated for surface without bondaries 
@@ -307,6 +307,8 @@ cv::Mat CameraSimulation::calcDisplayPointinCameracoordinates(
 	CV_Assert(std::abs(tilt_x) <= CV_PI);
 	CV_Assert(std::abs(tilt_y) <= CV_PI);
 
+	double shift_x_{};
+
 	cv::Mat displayPixel_inCameraCoordinates =
 		generateCoordinateImage(sz, 3);
 
@@ -314,8 +316,10 @@ cv::Mat CameraSimulation::calcDisplayPointinCameracoordinates(
 		cv::Mat flipped;
 		cv::flip(displayPixel_inCameraCoordinates, flipped, 1);
 		displayPixel_inCameraCoordinates = flipped;
+		shift_x_ = std::abs(shift_x);
 	}
-	
+	else
+		shift_x_ = shift_x;
 
 	//// Shift the image coordiante System in the middle of the Display
 	//const double shift_x =
@@ -344,7 +348,6 @@ cv::Mat CameraSimulation::calcDisplayPointinCameracoordinates(
 }
 
 
-
 cv::Mat CameraSimulation::generateCoordinateImage(
 	const cv::Size& sz,
 	const int dimension)
@@ -361,7 +364,6 @@ cv::Mat CameraSimulation::generateCoordinateImage(
 				for (int cols = 0; cols < sz.width; ++cols) {
 					row_ptr[cols] = cv::Vec2d(cols, row);
 				}
-
 			}
 		});
 

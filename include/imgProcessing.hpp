@@ -515,6 +515,7 @@ public:
 		const double pixel_pitch_mm
 	);
 
+
 	cv::Mat do_reprojection_error(
 		const std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>>& caliPoints,
 		const cv::Mat& caliMatrix,
@@ -594,6 +595,14 @@ public:
 	);
 
 	cv::Mat mean(const std::vector<cv::Mat>&);
+
+	cv::Mat convertUnwrapToWorldCoord(
+		const std::vector<cv::Mat>& unwrap,
+		const double wavelength,
+		const double pixelpitch
+	);
+
+
 
 private:	
 	//New class to hold the data

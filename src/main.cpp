@@ -100,7 +100,7 @@ int main()
     Sim_config.camera.camera_mat = camMatrix[0];
     Sim_config.camera.dist_coeffs = distCoeffs[0];
     Sim_config.mirror.contains_mirror = true;
-    Sim_config.mirror.mirror_sz = cv::Size(300, 300);
+    Sim_config.mirror.mirror_sz = cv::Size(2000, 2000);
     Sim_config.scene.disp_shift_z = 0.0;
     Sim_config.scene.disp_shift_x = -1920 / 2.0 * 0.2745;
     Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745; 
@@ -110,11 +110,11 @@ int main()
     Sim_config.scene.disp_tilt_y = 0;
     Sim_config.scene.luminance = false;
     Sim_config.disp.gamma = 1.0;
-    Sim_config.scene.mirror_shift_x = -100.0;
-    Sim_config.scene.mirror_shift_y = -100.0;
+    Sim_config.scene.mirror_shift_x = -1000.0;
+    Sim_config.scene.mirror_shift_y = -1000.0;
     Sim_config.scene.mirror_shift_z = 4000.0;
-    Sim_config.scene.mirror_tilt_x = 0.0;
-    Sim_config.scene.mirror_tilt_y = 0.0;
+    Sim_config.scene.mirror_tilt_x = 0.00;
+    Sim_config.scene.mirror_tilt_y = 0.00;
     Sim_config.data.begin = sim_inputFrames.begin()._Ptr;
     Sim_config.data.end = sim_inputFrames.end()._Ptr;
     Sim_config.camera.apertureSmoothing = false;
@@ -122,13 +122,10 @@ int main()
     Sim_config.camera.circle_of_confusion_n_disp = 0;
     Sim_config.camera.quantization = false;
     Sim_config.disp.quantization = false;
+    Sim_config.scene.disp_flip_vertical = true;
 
     std::vector<cv::Mat> simulate =
         simulation.simulate(Sim_config);
-
-    //for (const auto& img : simulate) {
-    //    shownormalized(img);
-    //}
 
     auto& eval = config.getEvalParameter();
     eval.start = simulate.begin();
@@ -159,7 +156,7 @@ int main()
     geoConfig.displayPixelPitch = 0.2745;
     geoConfig.point_dist = 10;
     geoConfig.wavelength_phase = 108.0;
-    geoConfig.pattern_size = cv::Size{ 10,10 };
+    geoConfig.pattern_size = cv::Size{ 200,200 };
 
     GeometricCalibration geoCalib(geoConfig, processing);
     GeometricCalibrationData geodata{camMatrix[0], distCoeffs[0]};
@@ -168,6 +165,19 @@ int main()
     geodata.biasIntensity = &baseIntensity;
     
     auto result = geoCalib.calibrate(geodata);
+
+    GeometricCalibrationTestData geotestData{ camMatrix[0], distCoeffs[0] };
+    geotestData.unwrap = &unwrap;
+    geotestData.contrast = &contrast;
+    geotestData.biasIntensity = &baseIntensity;
+    geotestData.disp2cam_rvec = result.disp2cam_rvec;
+    geotestData.disp2cam_tvec = result.disp2cam_tvec;
+    geotestData.cam2mir_rvec = result.cam2mir_rvec;
+    geotestData.cam2mir_tvec = result.cam2mir_tvec;
+
+    auto surfaces = geoCalib.test_calibration(geotestData);
+
+
     
     std::cout << "Happy ? \n";
  

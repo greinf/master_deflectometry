@@ -78,6 +78,7 @@ private:
 		double disp_shift_y{ 0.2745 * 1080/2 }; // y-Dist from Cam coord. to Disp coord. Defaulted to 0.2745*1080/2 -> Display coord in left upper corner. [mm]
 		double disp_tilt_x{ }; 
 		double disp_tilt_y{ };
+		bool disp_flip_vertical{ false }; //Set true if Display and Camera "look" into the same direction
 		double mirror_shift_z{};
 		double mirror_shift_x{};
 		double mirror_shift_y{};

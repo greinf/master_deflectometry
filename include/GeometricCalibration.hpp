@@ -57,9 +57,44 @@ struct GeometricCalibrationData {
 	}
 };
 
+
+struct GeometricCalibrationTestData : GeometricCalibrationData
+{
+	cv::Mat disp2cam_rvec{};
+	cv::Mat disp2cam_tvec{};
+
+	cv::Mat cam2mir_rvec{};
+	cv::Mat cam2mir_tvec{};
+
+	cv::Vec3d surfacePoint{};
+
+	bool validData() const {
+		if (GeometricCalibrationData::validData() == false) return false;
+		if (disp2cam_rvec.empty()) return false;
+		if (disp2cam_rvec.type() != CV_64F) return false;
+		if (disp2cam_tvec.empty()) return false;
+		if (disp2cam_tvec.type() != CV_64F) return false;
+		return true;
+	}
+};
+
+struct ResultNormal_Vectors {
+	double n_vectors{};
+
+	std::vector<cv::Vec3d> calc_vectors{};
+	cv::Vec3d surface_normal{};
+
+	cv::Mat surface_normal_images{};
+	cv::Mat reprojection_error_image{};
+};
+
+
 struct GeometricCalibrationResult {
-	cv::Mat Rvec;
-	cv::Mat tvec;
+	cv::Mat disp2cam_rvec{};
+	cv::Mat disp2cam_tvec{};
+
+	cv::Mat cam2mir_rvec{};
+	cv::Mat cam2mir_tvec{};
 };
 
 class ImageProcessing;
@@ -69,6 +104,8 @@ public:
 	explicit GeometricCalibration(const GeometricCalibrationConfig& config, ImageProcessing& process);
 	
 	GeometricCalibrationResult calibrate(const GeometricCalibrationData&);
+
+	cv::Mat test_calibration(const GeometricCalibrationTestData&);
 
 	~GeometricCalibration();
 
@@ -83,6 +120,16 @@ private:
 
 	ImageProcessing& m_img_processing;
 
+	cv::Mat calculateSurfaceNormals(
+		const cv::Mat& rays,
+		const cv::Mat& rays_refelcted,
+		const cv::Mat& mask
+	);
+
+	cv::Mat generateCoordinateImage(
+		const cv::Size& sz,
+		const int dimension = 2
+	);
 
 	
 };

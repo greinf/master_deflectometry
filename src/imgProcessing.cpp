@@ -1328,8 +1328,8 @@ void ImageProcessing::backToWorld(
     cv::Mat& tvec_w,
     const cv::Mat& vdisp2cam_rvec,  // Vitual dispaly -> cam
     const cv::Mat& vdisp2cam_tvec,  // vitual dipslay -> cam 
-    const cv::Mat& mirror2cam_rvec, // Mirror -> cam
-    const cv::Mat& mirror2cam_tvec) // Mirror -> cam
+    const cv::Mat& cam2mirror_rvec, // Mirror -> cam
+    const cv::Mat& cam2mirror_tvec) // Mirror -> cam
 {
     cv::Matx44d virtualdisp2cam, observer;
 
@@ -1339,19 +1339,19 @@ void ImageProcessing::backToWorld(
     observer = virtualdisp2cam;
 
     // Create Transofrm from Camera To Mirror !!!
-    cv::Mat cam2mirror_rvec;
+    cv::Mat mirror2cam_Rot;
     // Negative rot Vector so inverse rotation.
-    cv::Rodrigues(-mirror2cam_rvec, cam2mirror_rvec);
+    cv::Rodrigues(-cam2mirror_rvec, mirror2cam_Rot);
 
     // Creates the inverse translation. (inverse_rot_mirror2cam * - mirror2cam_translation)
-    cv::Mat cam2mirror_tvec = -cam2mirror_rvec * mirror2cam_tvec;
+    cv::Mat mirror2cam_Tvec = -mirror2cam_Rot * cam2mirror_tvec;
 
     // The Affine transformation from Camera to Mirror
     cv::Matx44d affine_cam_to_mirr;
-    createaffine(-mirror2cam_rvec, cam2mirror_tvec, affine_cam_to_mirr);
+    createaffine(cam2mirror_rvec, cam2mirror_tvec, affine_cam_to_mirr);
 
     // Transformation VirtualDispCoord -> CameraCoord -> MirrorCoord
-    observer = affine_cam_to_mirr * virtualdisp2cam;
+    observer = virtualdisp2cam * affine_cam_to_mirr;
 
     // In the mirror coordiante System apply the mirroring
     cv::Mat M = cv::Mat::eye(4, 4, CV_64F);
@@ -1362,14 +1362,14 @@ void ImageProcessing::backToWorld(
 
     // Transformation: VirtualdispalyCoord -> CameraCoord -> MirrorCoord -> Apply MirrorMatrix 
     // oberserver is no left handed !!!! 
-    observer = householder * affine_cam_to_mirr * virtualdisp2cam;
+    observer = virtualdisp2cam * affine_cam_to_mirr * householder;
 
     cv::Matx44d affine_mirror2cam;
 
-    createaffine(mirror2cam_rvec, mirror2cam_tvec, affine_mirror2cam);
+    createaffine(-cam2mirror_rvec, mirror2cam_Tvec, affine_mirror2cam);
     
     // The Transformation to the real coordiante System
-    observer = affine_mirror2cam * householder * affine_cam_to_mirr * virtualdisp2cam;
+    observer = virtualdisp2cam * affine_cam_to_mirr * householder * affine_mirror2cam;
 
     cv::Vec3d x_axis(observer(0, 0), observer(1, 0), observer(2, 0));
     x_axis /= cv::norm(x_axis);
@@ -2142,6 +2142,41 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
     return returnvalues;
 }
 
+cv::Mat ImageProcessing::convertUnwrapToWorldCoord(
+    const std::vector<cv::Mat>& unwrap,
+    const double wavelength,
+    const double pixelpitch)
+{
+    CV_Assert(!unwrap.empty());
+    CV_Assert(unwrap.size() == 2);
+    CV_Assert(unwrap[0].size() == unwrap[1].size());
+    CV_Assert(unwrap[0].type() == CV_64F);
+    CV_Assert(unwrap[1].type() == CV_64F);
+    CV_Assert(wavelength > 0);
+    CV_Assert(pixelpitch > 0);
+
+    cv::Mat unwrapx = unwrap[0].clone();
+    cv::Mat unwrapy = unwrap[1].clone();
+    cv::Mat unwrapz = cv::Mat::zeros(unwrap[0].size(), CV_64F);
+
+    cv::Mat nanMask = (unwrapx == unwrapx) | (unwrapy == unwrapy);
+
+    unwrapz.setTo(std::numeric_limits<double>::quiet_NaN(), ~nanMask);
+
+    cv::Mat unwrap_world(unwrapx.size(), CV_64FC3);
+
+    cv::Mat matArray[3] = { unwrapx, unwrapy, unwrapz };
+
+    int from_to[] = { 0,0 , 1,1 , 2,2 };
+
+    cv::mixChannels(matArray, 3, &unwrap_world, 1, from_to, 3);
+    
+    unwrap_world *= (wavelength / CV_2PI) * pixelpitch;
+
+    return unwrap_world;
+}
+
+
 
 cv::Mat ImageProcessing::mapHitPointsToDisplayCoords(
     const cv::Mat& hitpoints,        // CV_64FC3, size = rays.size()
@@ -2246,11 +2281,8 @@ cv::Mat ImageProcessing::shiftCoordinateGrid(
                 }
             }
         });
-
     return shifted;
-
 }
-
 
 cv::Mat ImageProcessing::calcCoordinateImage(
     const cv::Size& sz,
@@ -2329,7 +2361,6 @@ cv::Mat ImageProcessing::rotateCoordinatedGrid(
 
             }
         });
-
 
     return output;
 }
@@ -3228,9 +3259,15 @@ cv::Mat ImageProcessing::createMask(
     }
 
     cv::Mat sum_contrast = (vec[0] + vec[1])/2;
+
+    cv::Mat nanMask = ~(sum_contrast == sum_contrast);
+
+    sum_contrast.setTo(0.0, nanMask);
+
     // minMaxloc data for sum_contrast
     cv::Mat mask_8u;
     cv::normalize(sum_contrast, mask_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
+
     minmaxloc data{ get_minmaxloc(mask_8u) };
     // Threshold
 
