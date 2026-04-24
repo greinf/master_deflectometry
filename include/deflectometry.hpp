@@ -273,17 +273,6 @@ public:
 	 );
 
 
-	 // Method allows singel and stereo camera calibration
-	 // [In] n_cams ammount of used cameras [1-2]
-	 // [In] save path -> where images are saved. Not where the calibartion Data is saved
-	 // [Out] bool value if calibration was succesfull
-	 // Camera calibration file .xml is stored at location specified in 
-	 // "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/in_VID5.xml"
-	 // In the Current setup the k5 is locked. 
-	 bool do_camera_calibration(
-		 const std::size_t n_cams,
-		 const std::string& save_path);
-
 	 void load(FrameRole, const std::string&);
 
 	 std::vector<cv::Mat> get(FrameRole role);
@@ -539,6 +528,10 @@ public:
 	 // Same here for the pattern class but this should be also done at another time. 
 	 Pattern& img_generation() const {
 		 return *m_pattern;
+	 }
+
+	 ImageStore& image_store() const {
+		 return *m_img_store;
 	 }
 
 	 

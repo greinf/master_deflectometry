@@ -1,4 +1,4 @@
-﻿#define VERSION "1"
+#define VERSION "1"
 #include <cstddef>
 #include <iostream>
 #include "deflectometry.hpp"
@@ -49,10 +49,10 @@ int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-24_GeometricCalibration_StereoCamera" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-21_GeometricCalibration_SurfaceNormals" };
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie"
-        "/data/2026-04-23_CameraStereoCalibration/Stereo_Calib.xml" };
+        "/data/2026-04-13_CameraCalibration/Mono_Calib.xml" };
 
     Deflectometry meassure{};
 
@@ -62,8 +62,6 @@ int main()
     meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
     std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
     std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
-
-    meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
 
     //std::vector<cv::Mat> img = meassure.getFrames(FrameRole::Debug, 1);
 
@@ -132,7 +130,7 @@ int main()
 
     std::vector<cv::Mat> wrapped_ref{ config };
 
-    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 100, true, path);
+    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 50, true, path);
     std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
     std::vector<cv::Mat> baseIntensity = meassure.get(FrameRole::BaseIntensity);
 
@@ -144,14 +142,6 @@ int main()
 
     std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, true, path, 108.0);
 
-    std::vector<cv::Mat> images_secondary = meassure.acquire_img(sin_pattern, FrameRole::Debug, n_pics_per_val);
-
-    std::vector<cv::Mat> 
-
-    
-
-    
-
     GeometricCalibrationConfig geoConfig{};
     geoConfig.displayPixelPitch = 0.2745;
     geoConfig.point_dist = 4;
@@ -159,15 +149,13 @@ int main()
     geoConfig.pattern_size = cv::Size{ 20,20 };
 
     GeometricCalibration geoCalib(geoConfig, processing);
-    GeometricCalibrationData geodata;
-    geodata.camMat = camMatrix[0];
-    geodata.camMat = distCoeffs[0];
+    GeometricCalibrationData geodata{ camMatrix[0], distCoeffs[0] };
     geodata.unwrap = &unwrap;
     geodata.contrast = &contrast;
     geodata.biasIntensity = &baseIntensity;
     geodata.mask = mask;
 
-    auto result = geoCalib.calibrateMono(geodata);
+    auto result = geoCalib.calibrate(geodata);
 
     auto& store = meassure.image_store();
 
@@ -195,5 +183,33 @@ int main()
     std::cout << "Happy ? \n";
 
 }
+    //////// ************ Triangulation *******************
+////
+////    //auto result = meassure.computeLaserDistanceFrom4Images(
+////    //    LaserFr[0], LaserFr[1], LaserFr[2], LaserFr[3],
+////    //    camMatrix[0], dist_Coeffs[0], camMatrix[1], dist_Coeffs[1], camToCam[0], camToCam[1]
+////    //);
+////
+////    //std::cout << "p1 (px): " << result.p1_px << "\n";
+////    //std::cout << "p2 (px): " << result.p2_px << "\n";
+////    //std::cout << "3D (cam1): [" << result.X_cam1.x << ", " << result.X_cam1.y << ", " << result.X_cam1.z << "]\n";
+////    //std::cout << "distance to cam1: " << result.distance_cam1 << " (same units as T)\n";
+
+
+    // AbstandsMessung 
+    // meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
+    // std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
+
+    // meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
+    // std::vector<cv::Mat> camToCam = meassure.get(FrameRole::CalibCamToCam);
+
+    // std::vector<cv::Mat> dist_Coeffs = meassure.get(FrameRole::DistortionCoeff);
+
+
+    // std::vector<cv::Mat> pattern_distorted;
+    // for (auto& img : unwrappedPhase) {
+    //     pattern_distorted.emplace_back(meassure.distortImage_manual(img, camMatrix[0], dist_Coeffs[0]));
+    // }
+
 
 

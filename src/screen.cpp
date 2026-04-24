@@ -683,7 +683,7 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 		return patterns;
 	}
 	else if (mode == Shift_mode::user_defined) {
-		std::cout << "Enter an integer for the amount of shifts (4 < x <= 100)\n";
+		std::cout << "Enter an integer for the amount of shifts (4 < x <= 500)\n";
 		int steps = 0;
 		do {
 			std::cin >> steps;
@@ -693,7 +693,7 @@ std::vector<cv::Mat> Pattern::generate_phaseShift(
 				std::cout << "Not a valid Input. Try again.\n";
 				continue;
 			}
-		} while (steps < 5 || steps > 100);
+		} while (steps < 5 || steps > 500);
 
 		m_steps = steps;
 		if (!prepareShiftParameters(n_periods_in_y, m_steps)) {

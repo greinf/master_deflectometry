@@ -4,7 +4,6 @@
 #include "cassert"
 #include "enums.hpp"
 #include "imgProcessing.hpp"
-#include "camera_calib.hpp"
 #include <fstream>
 #include <optional>
 #include <filesystem>
@@ -17,13 +16,10 @@
 #include "algorithm"
 #include "CameraNew.hpp"
 #include <iterator>
-// Response in Section
 #include "GrayCalibVector.hpp"
-// Gray Calib class
 #include "GrayCalibration.hpp"
 #include "RowPolicy.hpp"
 #include <ceres/ceres.h>
-#include "Bundadjustment.hpp"
 #include "GrayCalibration_Utils.hpp"
 
 
@@ -35,102 +31,6 @@
 // C++ forbits comparing two pointer of incompatible types. Therefor this will create a compile time error if types do not match.
 // The literal 0 gets cast to a pointer of type 'type*', this allows the comparison. 
 #define CHECK_TYPE(expr, type) ((void)((type*)0 == &(expr))))
-
-/*
- 
-// Very cool demonstratoin of perfect forwarding. 
-// Differences between compile time values and runtime values must be understood. 
-
-#include <iostream>
-#include <string>
-#include <utility>   // for std::forward
-
-// our wrapper template
-template<typename F, typename... Args>
-auto log_call(F&& f, Args&&... args)
-{
-	std::cout << "Calling function...\n";
-	// perfectly forward f and all args
-	return std::forward<F>(f)(std::forward<Args>(args)...);
-}
-
-// --- a few functions to test with ---
-
-void greet(const std::string& name)
-{
-	std::cout << "Hello, " << name << "!\n";
-}
-
-void modify(std::string& s)
-{
-	s += " (modified)";
-}
-
-void print_ref(std::string&& s)
-{
-	std::cout << "Rvalue received: " << s << '\n';
-}
-
-int sum(int a, int b)
-{
-	return a + b;
-}
-
-//Access datatype of N-th argument
-* By putting the compile time variables through std::forward_as_tuple, we create a tuple of references that preserve the value category (lvalue/rvalue) of each argument.
-* This can be accessed. The compiler itself just uses datatypes. Through the usage of a runtime variable, we can access it. 
-* Also very intersting: fold expression ((std::cout << args << ' '), ...); // fold expression. This is opened by the compiler to print all arguments.
-* ((expression), ...) -> (expr op ...) expands to -> (((expr1 op expr2) op expr3) op ...)
-* 
-template<std::size_t N, typename... Ts>
-decltype(auto) get_arg(Ts&&... ts)
-{
-	return std::get<N>(std::forward_as_tuple(std::forward<Ts>(ts)...));
-}
-
-int main()
-{
-	std::string name = "Guido";
-
-	//Call with a normal lvalue reference
-	log_call(greet, name);
-
-	//Call with an lvalue reference that gets modified
-	log_call(modify, name);
-	std::cout << "After modify: " << name << '\n';
-
-	//Call with an rvalue
-	log_call(print_ref, std::string("temporary"));
-
-	//Call with a function returning a value
-	int result = log_call(sum, 10, 20);
-	std::cout << "Sum result: " << result << '\n';
-
-	//Call with a lambda
-	log_call([](auto&& msg) { std::cout << "Lambda says: " << msg << '\n'; }, "hi");
-}
-
-
-// std::apply is more or less the inverse of std::forward_as_tuple. A small simplified example here:
-
-template<typename F, typename Tuple, std::size_t... I>
-decltype(auto) apply_impl(F&& f, Tuple&& t, std::index_sequence<I...>)
-{
-	// unpack tuple elements into the function call
-	return std::forward<F>(f)(std::get<I>(std::forward<Tuple>(t))...);
-}
-
-template<typename F, typename Tuple>
-decltype(auto) apply(F&& f, Tuple&& t)
-{
-	constexpr std::size_t N = std::tuple_size_v<std::decay_t<Tuple>>;
-	return apply_impl(
-		std::forward<F>(f),
-		std::forward<Tuple>(t),
-		std::make_index_sequence<N>{} // generates 0,1,2,...,N-1
-	);
-}
-*/
 
 
 
@@ -494,7 +394,7 @@ std::vector<cv::Vec2d> Deflectometry::getReferencePoint(
 		cv::drawMarker(color, point, cv::Scalar(255, 0, 0), 0, 100);
 
 		cv::imshow("checking", color);
-		cv::setWindowProperty("checking", WINDOW_NORMAL, WINDOW_FREERATIO);
+		cv::setWindowProperty("checking", cv::WINDOW_NORMAL, cv::WINDOW_FREERATIO);
 		cv::waitKey(0);
 		cv::destroyWindow("checking");
 
@@ -525,7 +425,7 @@ cv::Mat Deflectometry::undistortImage(const cv::Mat& img, const cv::Mat& cam_Mat
 	cv::Mat map1, map2;
 	
 	cv::initUndistortRectifyMap(
-		cam_Matrix, dist_Coeffs, Mat(),
+		cam_Matrix, dist_Coeffs, cv::Mat(),
 		cam_Matrix, imageSize,
 		CV_32FC2, map1, map2);
 
@@ -1840,6 +1740,8 @@ std::vector<cv::Mat> Deflectometry::getFrames(
 {
 	CV_Assert(n_cameras > 0 && n_cameras <= 2);
 
+	m_img_store->clear(role);
+
 	if (!init(n_cameras)) {
 		std::cerr << "Init failed. Aborte acquisation ...\n";
 		return {};
@@ -1934,140 +1836,6 @@ auto showNormalized = [](const cv::Mat& img) {
 	cv::destroyWindow("normalized");
 	};
 
-std::vector<cv::Mat> Deflectometry::do_camera_display_calibration(
-	const cv::Mat& cam_Mat,
-	const cv::Mat& distCoeffs,
-	const double point_distance,
-	const cv::Size pattern_size,
-	const Shift_mode mode,
-	const _defl_::GrayCal::Method method,
-	const std::string& gray_calib_path,
-	const std::string& calib_path,
-	const double pixelPitch,
-	const double waves_per_y)
-{
-	CV_Assert(!cam_Mat.empty() && !distCoeffs.empty());
-	CV_Assert(point_distance > 0);
-	CV_Assert(pattern_size.area() > 0);
-	CV_Assert(!calib_path.empty());
-
-	setupPattern(*m_img_store);
-
-	double wavelength = 1080 / waves_per_y;
-
-	// Defaulted to 1920 x 1080
-	std::vector<cv::Mat> raw_input =
-		do_phase_measurement(Shift_mode::four_phase_shift, 5, true, calib_path, waves_per_y, method, gray_calib_path);
-	
-	std::vector<cv::Mat> wrappedPhase =
-		do_wrapped_phase(raw_input, 5, 4, true, calib_path);
-
-	showNormalized(wrappedPhase[0]);
-
-	showNormalized(wrappedPhase[1]);
-
-	m_img_store->loadRoleXML(FrameRole::Contrast, calib_path);
-
-	std::vector<cv::Mat> contrast =
-		get(FrameRole::Contrast);
-
-	cv::Mat mask =
-		getMask(contrast, 0.2, false);
-
-	std::vector<cv::Mat> unwrapped =
-		do_unwrapped_phase(wrappedPhase, mask, UnwrapMode::opencv, false, "", 108);
-
-	std::vector<cv::Mat> biasIntensity;
-
-	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibPoints =
-		m_img_processing->do_calibration_Points(
-			unwrapped,
-			mask,
-			wavelength,
-			unwrapped[0].cols,
-			unwrapped[0].rows,
-			pixelPitch);
-
-	std::vector<cv::Mat> baseIntensity = 
-		m_img_store->get(FrameRole::BaseIntensity);
-
-	if (baseIntensity[0].type() != CV_64F) {
-		for (const auto& img : baseIntensity) {
-			cv::Mat img64;
-			img.convertTo(img64, CV_64F);
-			baseIntensity.push_back(img64);
-		}
-	}
-	else baseIntensity = baseIntensity;
-
-	cv::Mat working_img =
-		(baseIntensity[0] + baseIntensity[1]) / 2;
-
-	cv::Mat worker;
-	working_img.convertTo(worker, CV_8U);
-
-	std::vector<cv::Vec2d> imagePoints =
-		m_img_processing->getCircleCoordinates(
-			worker,
-			mask,
-			pattern_size);
-
-	std::vector<cv::Vec3d> patternObjectPoints =
-		m_img_processing->createCalibPatternObjectPoints(
-			pattern_size,
-			point_distance
-		);
-	
-	cv::Mat rvec, tvec;
-
-	std::vector<cv::Point3d> object;
-	std::vector<cv::Point2d> image;
-	std::vector<cv::Point3d> objectPointsDisp;
-	std::vector<cv::Point2d> imagePointsDisp;
-
-	CV_Assert(patternObjectPoints.size() == imagePoints.size());
-
-	for (std::size_t i = 0; i < patternObjectPoints.size(); ++i) {
-		object.push_back(cv::Point3d(patternObjectPoints[i]));
-		image.push_back(cv::Point2d(imagePoints[i]));
-	}
-
-	for (std::size_t i = 0; i < calibPoints.first.size(); ++i) {
-		objectPointsDisp.push_back(cv::Point3d(calibPoints.second[i]));
-		imagePointsDisp.push_back(cv::Point2d(calibPoints.first[i]));
-	}
-
-	bool solvePnP = cv::solvePnP(object, image,
-		cam_Mat, distCoeffs, rvec, tvec,
-		false,
-		cv::SOLVEPNP_ITERATIVE);
-
-	if (!solvePnP) {
-		std::cout << "SolvePnP failed for calculating the mirror pose \n";
-		return{};
-	}
-
-	cv::Mat H;
-
-	m_img_processing->calculatehousholder(rvec, tvec, H);
-
-	cv::Mat rvec1_virutell, tvec1_virtuell;
-
-	bool solve = cv::solvePnP(objectPointsDisp, imagePointsDisp, cam_Mat, distCoeffs,
-		rvec1_virutell, tvec1_virtuell, false, cv::SOLVEPNP_ITERATIVE);
-
-	cv::Mat rvec_world, tvec_world;
-
-	m_img_processing->backToWorld(rvec_world, tvec_world, rvec1_virutell, tvec1_virtuell, rvec, tvec);
-
-	m_img_store->add(FrameRole::CalibDispToCam, rvec);
-
-	m_img_store->add(FrameRole::CalibDispToCam, tvec_world);
-
-	m_img_store->saveRoleXML(FrameRole::CalibDispToCam, calib_path);
-
-	return std::vector<cv::Mat>{tvec_world, rvec};
-}
 
 std::vector<cv::Vec3d> Deflectometry::extractValidVectorfromMat(
 	const cv::Mat_<cv::Vec3d>& mat,
@@ -2091,32 +1859,6 @@ std::vector<cv::Vec3d> Deflectometry::extractValidVectorfromMat(
 	return returnVec;
 
 }
-
-
-
-bool Deflectometry::do_camera_calibration(
-	const std::size_t n_cams,
-	const std::string& path)
-{
-	// Method start camera acuqisation for possible multiple cameras and gives back 
-	std::vector<cv::Mat> checkerboard = 
-		getFrames(FrameRole::Calibration, n_cams);
-
-	m_img_store->saveRole(FrameRole::Calibration, path);
-
-	// Save Path for Calibration in settings path
-	std::array<std::vector<cv::Mat>, 2> camera = runCameraCalibration(checkerboard, n_cams, true,
-		std::string{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/in_VID5.xml" });
-
-	for (const auto& m : camera[0]) {
-		m_img_store->add(FrameRole::CalibImages, m);
-	}
-
-	m_img_store->saveRole(FrameRole::CalibImages, path);
-	return true;
-}
-
-
 
 // build function E(a,b)= sum 0...N-1 (y_i -(a*x_i+b^))^2
 // optamisation challenge for a and b ...

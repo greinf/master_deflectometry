@@ -688,7 +688,7 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     CV_Assert(img.type() == CV_8U);
     CV_Assert(mask.type() == CV_8U);
 
-    double upscale = 2;
+    double upscale = 2.0;
     std::vector<cv::Vec2f> centers;
     
     cv::Mat gray;
@@ -739,10 +739,6 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     cv::Mat bin;
     cv::threshold(up, bin, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
-    normalizeAndDisplay(bin);
-
-    cv::GaussianBlur(bin, bin, cv::Size(5, 5), 0);
-
     //normalizeAndDisplay(bin);
 
     cv::SimpleBlobDetector::Params p;
@@ -750,10 +746,10 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     p.blobColor = 0;                 // dunkle Punkte
 
     p.filterByArea = true;
-    p.minArea = 8;                   // anpassen!
-    p.maxArea = 50;                 // anpassen!
+    p.minArea = 5;                   // anpassen!
+    p.maxArea = 120;                 // anpassen!
 
-    p.minDistBetweenBlobs = 13;
+    p.minDistBetweenBlobs = 5;
 
     p.filterByCircularity = false;   // erst mal aus
 
@@ -1062,35 +1058,8 @@ std::pair<double, double> ImageProcessing::fitLine1D(const std::vector<double>& 
     return { a, b };
 }
 
-// Left handed Coordiante System is created
-void ImageProcessing::calculatehousholder(
-    const cv::Mat& rvec_mirror, // Mirror -> Cam
-    const cv::Mat& tvec_mirror, // Mirror -> Cam
-    cv::Mat& H) 
-{
-    // Rvec and tvec is from mirror to cam. 
-    // negative rvec is 
-    cv::Mat cam2mirror_rvec;
-    cv::Rodrigues(-rvec_mirror, cam2mirror_rvec);
-
-    // Z-axis from Mirror coordiante System observed from Camera Coordinate system 
-    cv::Vec3d n = cam2mirror_rvec.col(2);
-
-    // Wir spiegeln die Achsen der echten Kamera an der Ebene.
-    // Reflexionsmatrix Householder: H = I - 2 * n * n^T
-    cv::Mat I = cv::Mat::eye(3, 3, CV_64F);
-    cv::Mat n_mat = cv::Mat(n);
-    H = I - 2.0 * n_mat * n_mat.t();
-}
 
 
-/**
- * Spiegelt Objektpunkte an einer Ebene, um sie für eine virtuelle Kamera nutzbar zu machen.
- * @param realPoints    Die originalen 3D-Punkte (z.B. deine Löcher in der Oberfläche)
- * @param rvec_mirror   Rotation des Spiegels (aus der vorigen Resektion)
- * @param tvec_mirror   Translation des Spiegels (aus der vorigen Resektion)
- * @return              Vektor mit den gespiegelten 3D-Punkten
- */
 std::vector<cv::Point3d> ImageProcessing::transformPointsToMirrorWorld(
     const std::vector<cv::Point3d>& realPoints,
     const cv::Mat& housholder,
@@ -1323,77 +1292,6 @@ auto createaffine = [](const cv::Mat& r_vec,
         }
     };
 
-void ImageProcessing::backToWorld(
-    cv::Mat& rvec_w,
-    cv::Mat& tvec_w,
-    const cv::Mat& vdisp2cam_rvec,  // Vitual dispaly -> cam
-    const cv::Mat& vdisp2cam_tvec,  // vitual dipslay -> cam 
-    const cv::Mat& cam2mirror_rvec, // Mirror -> cam
-    const cv::Mat& cam2mirror_tvec) // Mirror -> cam
-{
-    cv::Matx44d virtualdisp2cam, observer;
-
-    // Create Transform from VirtualDispaly to Camera
-    createaffine(vdisp2cam_rvec, vdisp2cam_tvec, virtualdisp2cam);
-
-    observer = virtualdisp2cam;
-
-    // Create Transofrm from Camera To Mirror !!!
-    cv::Mat mirror2cam_Rot;
-    // Negative rot Vector so inverse rotation.
-    cv::Rodrigues(-cam2mirror_rvec, mirror2cam_Rot);
-
-    // Creates the inverse translation. (inverse_rot_mirror2cam * - mirror2cam_translation)
-    cv::Mat mirror2cam_Tvec = -mirror2cam_Rot * cam2mirror_tvec;
-
-    // The Affine transformation from Camera to Mirror
-    cv::Matx44d affine_cam_to_mirr;
-    createaffine(cam2mirror_rvec, cam2mirror_tvec, affine_cam_to_mirr);
-
-    // Transformation VirtualDispCoord -> CameraCoord -> MirrorCoord
-    observer = virtualdisp2cam * affine_cam_to_mirr;
-
-    // In the mirror coordiante System apply the mirroring
-    cv::Mat M = cv::Mat::eye(4, 4, CV_64F);
-
-    M.at<double>(2, 2) = -1.0;
-
-    cv::Matx44d householder(M);
-
-    // Transformation: VirtualdispalyCoord -> CameraCoord -> MirrorCoord -> Apply MirrorMatrix 
-    // oberserver is no left handed !!!! 
-    observer = virtualdisp2cam * affine_cam_to_mirr * householder;
-
-    cv::Matx44d affine_mirror2cam;
-
-    createaffine(-cam2mirror_rvec, mirror2cam_Tvec, affine_mirror2cam);
-    
-    // The Transformation to the real coordiante System
-    observer = virtualdisp2cam * affine_cam_to_mirr * householder * affine_mirror2cam;
-
-    cv::Vec3d x_axis(observer(0, 0), observer(1, 0), observer(2, 0));
-    x_axis /= cv::norm(x_axis);
-
-    cv::Vec3d y_axis(observer(0, 1), observer(1, 1), observer(2, 1));
-    y_axis /= cv::norm(y_axis);
-
-    cv::Vec3d z_axis_new = x_axis.cross(y_axis);
-    z_axis_new /= cv::norm(z_axis_new);
-
-    // rebuild y so that the frame is orthonormal
-    y_axis = z_axis_new.cross(x_axis);
-    y_axis /= cv::norm(y_axis);
-
-    cv::Mat R = (cv::Mat_<double>(3, 3) <<
-        x_axis[0], y_axis[0], z_axis_new[0],
-        x_axis[1], y_axis[1], z_axis_new[1],
-        x_axis[2], y_axis[2], z_axis_new[2]);
-
-    cv::Rodrigues(R, rvec_w);
-    tvec_w = (cv::Mat_<double>(3, 1) <<
-        observer(0, 3), observer(1, 3), observer(2, 3));
-
-}
 
 std::vector<std::pair<double,double>> ImageProcessing::find_ParallelogramCorners(const cv::Mat& bin)
 {
@@ -1628,8 +1526,6 @@ cv::Vec2d ImageProcessing::distortImagePoints(
     cv::Vec2d distorted = 
         newtonSolverdistort(imgPts, calimatrix, distcoeffs);
 
-    return distorted;
-    
     return distorted;
 }
 
@@ -2452,10 +2348,10 @@ cv::Mat ImageProcessing::grayCalibMask(const std::vector<cv::Mat>& img) {
 
     cv::Mat mask8u;
     if (maxVal <= 1.0) {
-        cv::threshold(diff, mask8u, 0.4, 255, cv::THRESH_BINARY);
+        cv::threshold(diff, mask8u, 0.5, 255, cv::THRESH_BINARY);
     }
     else {
-        cv::threshold(diff, mask8u, maxVal * 0.4, 255, cv::THRESH_BINARY);
+        cv::threshold(diff, mask8u, maxVal * 0.5, 255, cv::THRESH_BINARY);
     }
 
     mask8u.convertTo(mask8u, CV_8U);
@@ -3532,7 +3428,12 @@ cv::Mat ImageProcessing::mean(const std::vector<cv::Mat>& vec) {
         { return mat.channels() == 1; }
     ));
 
-    if (vec.size() == 1) return vec[0];
+    if (vec.size() == 1) {
+        cv::Mat img64;
+        if (vec[0].type() != CV_64F) vec[0].convertTo(img64, CV_64F);
+        else img64 = vec[0];
+        return img64;
+    }
 
     for (size_t i = 1; i < vec.size(); ++i) {
         if (vec[i].size() != vec[0].size() || vec[i].type() != vec[0].type()) {

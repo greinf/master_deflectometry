@@ -6,10 +6,16 @@
 
 
 struct GeometricCalibrationConfig {
+	enum setup {
+		mono_camera,
+		stereo_camera
+	};
+public:
 	cv::Size2i pattern_size{};
 	double point_dist{};
 	double wavelength_phase{};
 	double displayPixelPitch{};
+	setup calibrationSetup{ mono_camera };
 
 	bool validData() const { // easy scaleable
 		bool ok = true;
@@ -22,8 +28,10 @@ struct GeometricCalibrationConfig {
 };
 
 struct GeometricCalibrationData {
-	const cv::Mat& camMat;
-	const cv::Mat& distCoeffs;
+	cv::Mat camMat;
+	cv::Mat distCoeffs;
+
+	cv::Mat mask;
 
 	std::vector<cv::Mat>* unwrap = nullptr;
 	std::vector<cv::Mat>* contrast = nullptr;
@@ -56,6 +64,33 @@ struct GeometricCalibrationData {
 		return ok;
 	}
 };
+
+struct GeometricCalibrationData_Stereo : GeometricCalibrationData {
+	 cv::Mat camMat_secundaryCam;
+	 cv::Mat distCoeffs_secondaryCam;
+
+	 cv::Mat cam2cam_tvec;
+	 cv::Mat cam2cam_rotMat;
+
+	 std::vector<cv::Mat>* biasIntensity_sec_cam = nullptr;
+
+	 bool validData() const {
+		 if (GeometricCalibrationData::validData() == false) return false;
+		 if (camMat_secundaryCam.empty() == true) return false;
+		 if (camMat_secundaryCam.size() != cv::Size(3, 3)) return false;
+		 if (camMat_secundaryCam.type() != CV_64FC1) return false;
+		 if (distCoeffs_secondaryCam.empty() == true) return false;
+		 if (distCoeffs_secondaryCam.type() != CV_64FC1) return false;
+		 if (cam2cam_tvec.empty() == true) return false;
+		 if (cam2cam_tvec.type() == CV_64FC1) return false;
+		 if (cam2cam_rotMat.empty() == true) return false;
+		 if (cam2cam_rotMat.type() == CV_64FC1) return false;
+		 if (biasIntensity_sec_cam == nullptr) return false;
+
+		 return true;
+	 }
+};
+
 
 
 struct GeometricCalibrationTestData : GeometricCalibrationData
@@ -103,7 +138,9 @@ class GeometricCalibration {
 public:
 	explicit GeometricCalibration(const GeometricCalibrationConfig& config, ImageProcessing& process);
 	
-	GeometricCalibrationResult calibrate(const GeometricCalibrationData&);
+	GeometricCalibrationResult calibrateMono(const GeometricCalibrationData&);
+
+	GeometricCalibrationResult calibrateStereo(const GeometricCalibrationData_Stereo&);
 
 	cv::Mat test_calibration(const GeometricCalibrationTestData&);
 
@@ -131,6 +168,15 @@ private:
 		const int dimension = 2
 	);
 
+	void backToWorld(
+		cv::Mat& rvec_disp2cam,
+		cv::Mat& tvec_disp2cam,
+		const cv::Mat& rvec_virtdisp2cam,
+		const cv::Mat& tvec_virt2disp2cam,
+		const cv::Mat& cam_mirror_rvec,
+		const cv::Mat& cam_mirror_trans,
+		const cv::Mat& mir2cam_rvec,
+		const cv::Mat& mir2cam_tvec);
 	
 };
 

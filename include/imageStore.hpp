@@ -48,6 +48,7 @@ enum class FrameRole {
     GrayCode,          // GroundTruth GrayCodeImages
     GrayCode_Result,   // The Result of the GrayCode evaluation - should be 2 images. 
     CameraSimulation,  // Resulting Images of the Camera Calibration
+    SurfaceNormals,    // A pictre of Surface Normals used for validating the Geometric Calibration
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -130,7 +131,8 @@ private:
         "DistortErrY", "UndistortErrX", "UndistortErrY", "Modell_Active", "Modell_Passive",
         "ModellBias_Active", "ModellBias_Passive",
         "CalibDisp_Cam", "ReferenceCheckerBoard", "CalibDispToCam",
-        "CalibCamToCam", "GrayCode", "GrayCode_Result", "CameraSimulation", "UnwrapError"
+        "CalibCamToCam", "UnwrapError", "GrayCode", "GrayCode_Result", "CameraSimulation", 
+        "SurfaceNormals"
     } };
     
 };

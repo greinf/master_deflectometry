@@ -44,19 +44,6 @@ public:
 		const cv::Mat& mask,
 		const double wavelength);
 	
-	void backToWorld(
-		cv::Mat& rvec_w,
-		cv::Mat& tvec_w,
-		const cv::Mat& rvec_c,
-		const cv::Mat& tvec_c,
-		const cv::Mat& cam_mirror_rvec,
-		const cv::Mat& cam_mirror_trans);
-
-	void calculatehousholder(
-		const cv::Mat& rvec_mirror,
-		const cv::Mat& tvec_mirror,
-		cv::Mat& H);
-
 	std::vector<cv::Point3d> transformPointsToMirrorWorld(
 		const std::vector<cv::Point3d>& realPoints,
 		const cv::Mat& housholder,

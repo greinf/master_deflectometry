@@ -568,11 +568,11 @@ bool VimbaBackend::adjustSettings()
         bool frameRate = setFrameRate(cam, frame_rate);
         bool forceGain = setGain(cam, 0.0);
         bool exposure = setExposureAbsRobust(cam, exposure_time);
-        bool gamma = setGamma(cam, 1.0);
+        bool gamma = setGamma(cam, 1);
         bool roi = setRoi(cam);
         bool format = setFormat(cam);
         // Package size auf 2500, 9000---------------
-        bool package = checkPackagesize(cam, 1500);
+        bool package = checkPackagesize(cam, 9000);
         if (!(forceFree && forceGain && exposure && roi && format && package && frameRate))
             return false;
     }

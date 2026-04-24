@@ -321,12 +321,22 @@ void ImageStore::loadCalibCamToCam(const std::string& path) {
 
     cv::Mat rotationMat, translationMat;
 
-    fs["rotationMat"] >> rotationMat;
-    fs["translationMat"] >> translationMat;
+    cv::FileNode rotMat(fs["R"]);
+    if (rotMat.empty()) {
+        std::cout << "No FileNode R in the file available " << std::endl;
+        throw std::invalid_argument("Node not available");
+    }
+    else rotMat >> rotationMat;
+
+    cv::FileNode trans_vec(fs["T"]);
+    if (trans_vec.empty()) {
+        std::cout << "No fileNode T in the file available " << std::endl;
+        throw std::invalid_argument("Node not available");
+    }
+    else trans_vec >> translationMat;
 
     storage_[FrameRole::CalibCamToCam].push_back(rotationMat);
     storage_[FrameRole::CalibCamToCam].push_back(translationMat);
-
 }
 
 

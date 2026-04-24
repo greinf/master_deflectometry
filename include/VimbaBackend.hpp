@@ -213,7 +213,12 @@ public:
 				m_pCamera->GetID(cam_name);
 				std::cout << "[Cam " << cam_name << "] non-complete status=" << status << " err=" << err << "\n";
 			}
-			m_pCamera->QueueFrame(pFrame);
+			auto qerr = m_pCamera->QueueFrame(pFrame);
+			if (qerr != VmbErrorSuccess) {
+				std::string cam_name;
+				m_pCamera->GetID(cam_name);
+				std::cout << "[Cam " << cam_name << "] QueueFrame failed err=" << qerr << "\n";
+			}
 			return;
 		}
 
@@ -222,14 +227,24 @@ public:
 		
 		if (!m_buffer->extractData(pFrame, index)) {
 			std::cout << "crashed ? \n";
-			m_pCamera->QueueFrame(pFrame);
+			auto qerr = m_pCamera->QueueFrame(pFrame);
+			if (qerr != VmbErrorSuccess) {
+				std::string cam_name;
+				m_pCamera->GetID(cam_name);
+				std::cout << "[Cam " << cam_name << "] QueueFrame failed err=" << qerr << "\n";
+			}
 			return;
 		}
 
 		m_buffer->m_counter.store(m_buffer->m_counter.load(std::memory_order_acquire)
 			% m_buffer->m_size, std::memory_order_release);
 
-		m_pCamera->QueueFrame(pFrame);
+		auto qerr = m_pCamera->QueueFrame(pFrame);
+		if (qerr != VmbErrorSuccess) {
+			std::string cam_name;
+			m_pCamera->GetID(cam_name);
+			std::cout << "[Cam " << cam_name << "] QueueFrame failed err=" << qerr << "\n";
+		}
 
 		m_buffer->start();
 	}
