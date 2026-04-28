@@ -682,7 +682,8 @@ std::vector<cv::Vec2d> ImageProcessing::harrisCornerDetection(
 std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     const cv::Mat& img,
     const cv::Mat& mask,
-    const cv::Size pattern_size) const
+    const cv::Size pattern_size,
+    const std::string& path) const
 {
     CV_Assert(!img.empty() && !mask.empty());
     CV_Assert(img.type() == CV_8U);
@@ -694,7 +695,7 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     cv::Mat gray;
     img.copyTo(gray);
     
-    cv::medianBlur(gray, gray, 3);
+    cv::medianBlur(gray, gray, 5);
     cv::GaussianBlur(gray, gray, { 5,5 }, 0);
 
     std::vector<std::vector<cv::Point>> contours;
@@ -712,7 +713,7 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     roi.width = std::min(mask.cols - roi.x, roi.width + 2 * roiPadding);
     roi.height = std::min(mask.rows - roi.y, roi.height + 2 * roiPadding);
 
-    cv::Mat roiGray = img(roi).clone();
+    cv::Mat roiGray = gray(roi).clone();
 
     // 2) Upscale to make blobs easier
     cv::Mat up;
@@ -734,10 +735,10 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
 
     //normalizeAndDisplay(up);
 
-    cv::GaussianBlur(up, up, cv::Size(3, 3), 0);
+    cv::GaussianBlur(up, up, cv::Size(5, 5), 0);
 
-    cv::Mat bin;
-    cv::threshold(up, bin, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+    cv::Mat bin = up;
+    //cv::threshold(up, bin, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
     //normalizeAndDisplay(bin);
 
@@ -746,27 +747,48 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     p.blobColor = 0;                 // dunkle Punkte
 
     p.filterByArea = true;
-    p.minArea = 5;                   // anpassen!
-    p.maxArea = 120;                 // anpassen!
+    p.minArea = 5;
+    p.maxArea = 130;
 
-    p.minDistBetweenBlobs = 5;
+    p.minDistBetweenBlobs = 1;
 
-    p.filterByCircularity = false;   // erst mal aus
-
-    //p.minCircularity = 0.5;
     p.filterByInertia = false;
+    p.filterByCircularity = false;   // erst mal aus
+    //p.maxCircularity = 1.0;
+    //p.minCircularity = 0.5;
+    
     p.filterByConvexity = false;
+    p.minThreshold = 0;
+    p.maxThreshold = 255;
+    p.thresholdStep = 5;
+
 
     auto detector = cv::SimpleBlobDetector::create(p);
 
+    std::vector<cv::KeyPoint> keypoints;
+    detector->detect(bin, keypoints);
+
+    cv::Mat dbg;
+    cv::drawKeypoints(bin, keypoints, dbg, cv::Scalar(0, 0, 255),
+        cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+
+    
+    // normalizeAndDisplay(dbg);
+    std::cout << "Detected blobs: " << keypoints.size() << std::endl;
+
+    // Try to seperate this two. 
     bool ok = cv::findCirclesGrid(
         bin, pattern_size, centers,
-        cv::CALIB_CB_SYMMETRIC_GRID, //| cv::CALIB_CB_CLUSTERING,
+        cv::CALIB_CB_SYMMETRIC_GRID,
         detector
     );
 
     cv::Mat imagePointsstart = bin.clone();
     cv::drawChessboardCorners(imagePointsstart, pattern_size, centers, ok);
+
+    if (!path.empty()) {
+        cv::imwrite(path, imagePointsstart);
+    }
 
     normalizeAndDisplay(imagePointsstart);
 
@@ -802,8 +824,8 @@ std::vector<cv::Vec3d> ImageProcessing::createCalibPatternObjectPoints(
         for (int col = 0; col < pattern_size.width; ++col) {
             calibrationObjectPoints.emplace_back(
                 cv::Vec3d(
-                    static_cast<double>(row) * distance,
                     static_cast<double>(col) * distance,
+                    static_cast<double>(row) * distance,
                     0.0)
             );
         }
@@ -819,7 +841,9 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
     const double wavelength,
     const int stepwidth_x,
     const int stepwidth_y,
-    const double pixe_pitch_mm) 
+    const double pixe_pitch_mm,
+    bool flipUnwrap_x_coordinates,
+    bool flipUnwrap_y_coordinates) 
 {
     CV_Assert(unwrapped.size() == 2);
     CV_Assert(unwrapped[0].type() == CV_64F);
@@ -842,6 +866,9 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
 
     //Debug image
     cv::Mat debug(mask.clone());
+
+    double mirror_x{ static_cast<double>(1920.0 * pixe_pitch_mm) };
+    double mirror_y{ static_cast<double>(1080.0 * pixe_pitch_mm) };
 
     // --- Debug ---
     double minX = std::numeric_limits<double>::infinity();
@@ -878,9 +905,19 @@ std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> ImageProcessing::do_ca
             minY = std::min(minY, Y_mm_rel);
             maxX = std::max(maxX, X_mm_rel);
             maxY = std::max(maxY, Y_mm_rel);
+            
+            double X_mm = X_mm_rel;
+            if (flipUnwrap_x_coordinates) X_mm = mirror_x - X_mm;
+            double Y_mm = Y_mm_rel;
+            if (flipUnwrap_y_coordinates) Y_mm = mirror_y - Y_mm;
 
-            imagePoints.push_back(cv::Vec2d(cols, row));
-            objectPoints.push_back(cv::Vec3d(X_mm_rel, Y_mm_rel, 0));
+            imagePoints.push_back(cv::Vec2d(
+                static_cast<double>(cols), 
+                static_cast<double>(row)));
+            objectPoints.push_back(cv::Vec3d(
+                X_mm,
+                Y_mm,
+                0));
             
             // Increment counter
             ++counter;
@@ -2014,10 +2051,18 @@ std::vector<cv::Mat> ImageProcessing::calculateHitPoints(
 
                 const double t = numer / denom;
 
-                if (t <= 0.0) { // behind camera
-                    std::cout << "Seems Surface is behind Camera \n";
+                if (t < -eps) {
+                    std::cout << "Surface is behind Camera\n";
                     t_ptr[col] = t;
                     hit[col] = cv::Vec3d(0, 0, 0);
+                    hit_ptr[col] = 0;
+                    continue;
+                }
+
+                if (std::abs(t) <= eps) {
+                    std::cout << "Surface is at ray origin or too close\n";
+                    t_ptr[col] = t;
+                    hit[col] = origin_ptr[col];
                     hit_ptr[col] = 0;
                     continue;
                 }

@@ -3,19 +3,17 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <memory>
+#include <Eigen/dense>
+#include <fstream>
+
 
 
 struct GeometricCalibrationConfig {
-	enum setup {
-		mono_camera,
-		stereo_camera
-	};
 public:
 	cv::Size2i pattern_size{};
 	double point_dist{};
 	double wavelength_phase{};
 	double displayPixelPitch{};
-	setup calibrationSetup{ mono_camera };
 
 	bool validData() const { // easy scaleable
 		bool ok = true;
@@ -39,11 +37,11 @@ struct GeometricCalibrationData {
 	
 	bool validData() const  {
 		bool ok = true;
-		if (camMat.empty()) return false;
-		if (!(camMat.size() == cv::Size(3, 3))) return false;
-		if (camMat.type() != CV_64FC1) return false;
-		if (distCoeffs.empty()) return false;
-		if (distCoeffs.type() != CV_64FC1) return false;
+		if (camMat.empty() == true) return false;
+		if (camMat.size() != cv::Size(3, 3)) return false;
+		if (camMat.type() != CV_64F) return false;
+		if (distCoeffs.empty() == true) return false;
+		if (distCoeffs.type() != CV_64F) return false;
 		if (unwrap == nullptr) return false;
 		if (unwrap->size() != 2) return false;
 		if (contrast == nullptr) return false;
@@ -73,6 +71,9 @@ struct GeometricCalibrationData_Stereo : GeometricCalibrationData {
 	 cv::Mat cam2cam_rotMat;
 
 	 std::vector<cv::Mat>* biasIntensity_sec_cam = nullptr;
+	 std::vector<cv::Mat>* contrast_sec_cam = nullptr;
+
+	 std::string path{};
 
 	 bool validData() const {
 		 if (GeometricCalibrationData::validData() == false) return false;
@@ -82,10 +83,13 @@ struct GeometricCalibrationData_Stereo : GeometricCalibrationData {
 		 if (distCoeffs_secondaryCam.empty() == true) return false;
 		 if (distCoeffs_secondaryCam.type() != CV_64FC1) return false;
 		 if (cam2cam_tvec.empty() == true) return false;
-		 if (cam2cam_tvec.type() == CV_64FC1) return false;
+		 if (cam2cam_tvec.type() != CV_64FC1) return false;
 		 if (cam2cam_rotMat.empty() == true) return false;
-		 if (cam2cam_rotMat.type() == CV_64FC1) return false;
+		 if (cam2cam_rotMat.type() != CV_64FC1) return false;
 		 if (biasIntensity_sec_cam == nullptr) return false;
+		 if (biasIntensity->size() != 2) return false;
+		 if (contrast_sec_cam->empty() == true) return false;
+		 if (contrast_sec_cam->size() != 2) return false;
 
 		 return true;
 	 }
@@ -133,6 +137,11 @@ struct GeometricCalibrationResult {
 };
 
 class ImageProcessing;
+namespace open3d {
+	namespace geometry {
+		class PointCloud;
+	}
+}
 
 class GeometricCalibration {
 public:
@@ -140,7 +149,7 @@ public:
 	
 	GeometricCalibrationResult calibrateMono(const GeometricCalibrationData&);
 
-	GeometricCalibrationResult calibrateStereo(const GeometricCalibrationData_Stereo&);
+	GeometricCalibrationResult calibrateStereo(GeometricCalibrationData_Stereo&);
 
 	cv::Mat test_calibration(const GeometricCalibrationTestData&);
 
@@ -150,6 +159,13 @@ public:
 	GeometricCalibration(GeometricCalibration&&) = delete;
 	GeometricCalibration& operator=(GeometricCalibration&) = delete;
 	GeometricCalibration& operator=(GeometricCalibration&&) = delete;
+
+	void calculateDistanceToPlane(
+		const open3d::geometry::PointCloud& points,
+		const double inliers_distance,
+		bool visualize = true
+	);
+
 
 private:
 	struct Impl;
@@ -168,6 +184,10 @@ private:
 		const int dimension = 2
 	);
 
+	cv::Vec2d normalizePoints(
+		const cv::Vec2d& p,
+		const cv::Mat& K);
+
 	void backToWorld(
 		cv::Mat& rvec_disp2cam,
 		cv::Mat& tvec_disp2cam,
@@ -177,6 +197,26 @@ private:
 		const cv::Mat& cam_mirror_trans,
 		const cv::Mat& mir2cam_rvec,
 		const cv::Mat& mir2cam_tvec);
+
+	Eigen::Vector4d fitPlane(
+		const open3d::geometry::PointCloud&,
+		double distance_threshold
+	);
+
+	void savePointsToCSV(const std::string& filename,
+		const std::vector<cv::Point3d>& pts)
+	{
+		std::ofstream file(filename);
+		if (!file.is_open()) {
+			throw std::runtime_error("Could not open file");
+		}
+
+		file << "x,y,z\n";
+
+		for (const auto& p : pts) {
+			file << p.x << "," << p.y << "," << p.z << "\n";
+		}
+	}
 	
 };
 

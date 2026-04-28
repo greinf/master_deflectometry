@@ -86,13 +86,13 @@ std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 			}
 		});
 
-	for (const auto& img : config.results.result_img) {
+	/*for (const auto& img : config.results.result_img) {
 		cv::Mat norm;
 		cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
 		cv::imshow("img", norm);
 		cv::waitKey(0);
 		cv::destroyWindow("img");
-	}
+	}*/
 
 	// Overloaded typecast std::vector<cv::Mat> only return the result images.
 	return config;
@@ -103,11 +103,9 @@ void GrayCodeDecoder::gray2dec(
 	Samples& sam)
 {
 	CV_Assert(sam.pixel_x != -1 && sam.pixel_y != -1);
-
-	const std::size_t bit_depth = (sam.orientation == Samples::x_dir) ?
-		(config.getBitdepth(config.creation.pixel_x)) : 
-		(config.getBitdepth(config.creation.pixel_y));
-
+	
+	const std::size_t bit_depth = sam.m_data.size();
+		
 	boost::dynamic_bitset<> output(bit_depth, 0);
 	bool last_bit = false;
 	unsigned long binary_val = 0;
@@ -158,7 +156,7 @@ void GrayCodeDecoder::extractSample(
 	
 	for (std::size_t i = 0; i < bin_size; ++i)
 	{
-		std::size_t counter;
+		/*std::size_t counter;
 		if (config.creation.starBit == GrayCodeConfig::msb) {
 			counter = static_cast<std::size_t>(bitdepth_real) - 1 - i;
 		}
@@ -166,7 +164,21 @@ void GrayCodeDecoder::extractSample(
 
 		const uchar* bin_ptr = img[i].ptr<uchar>(sam.pixel_y);
 		bool bit = static_cast<bool>(bin_ptr[sam.pixel_x] != 0);
-		sam.m_data.set(counter, bit);
+		sam.m_data.set(counter, bit);*/
+		std::size_t bit_index;
+		if (config.creation.starBit == GrayCodeConfig::msb) {
+			// Sicherstellen, dass wir nicht unter 0 springen
+			if (i >= static_cast<std::size_t>(bitdepth_real)) break;
+			bit_index = static_cast<std::size_t>(bitdepth_real) - 1 - i;
+		}
+		else {
+			bit_index = i;
+			if (bit_index >= static_cast<std::size_t>(bitdepth_real)) break;
+		}
+
+		const uchar* bin_ptr = img[i].ptr<uchar>(sam.pixel_y);
+		bool bit = (bin_ptr[sam.pixel_x] != 0); 
+		sam.m_data.set(bit_index, bit);
 	}
 
 	return;

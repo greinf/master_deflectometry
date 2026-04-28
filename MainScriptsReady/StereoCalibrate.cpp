@@ -79,8 +79,8 @@ int main()
 
     for (std::size_t i = 0; i < cam1.size(); ++i) {
         StereoImagePair imgpair;
-        imgpair.right = cam1[i];
-        imgpair.left = cam2[i];
+        imgpair.left = cam1[i];
+        imgpair.right = cam2[i];
         images.push_back(imgpair);
     }
 

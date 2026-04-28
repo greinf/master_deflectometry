@@ -4,8 +4,11 @@
 #include "imgProcessing.hpp"
 #include <open3d/pipelines/registration/TransformationEstimation.h>
 #include <open3d/geometry/PointCloud.h>
+#include <open3d/geometry/TriangleMesh.h>
+#include <open3d/visualization/utility/DrawGeometry.h>
 #include "cmath"
-
+#include <tuple>
+#include <Eigen/Dense>
 
 struct GeometricCalibration::Impl {
 private:
@@ -49,99 +52,240 @@ auto createaffine = [](const cv::Mat& r_vec,
 		// 3. R und tvec in T kopieren
 		for (int i = 0; i < 3; i++) {
 			for (int j = 0; j < 3; j++) {
-				out(i, j) = R.at<double>(i, j);
+				out(i, j) = R_d.at<double>(i, j);
 			}
-			out(i, 3) = tvec.at<double>(i, 0);
+			out(i, 3) = t_d.at<double>(i, 0);
 		}
 	};
 
 
 GeometricCalibrationResult GeometricCalibration::calibrateStereo(
-	const GeometricCalibrationData_Stereo& data)
+	GeometricCalibrationData_Stereo& data)
 {
 	if (!data.validData()) throw std::invalid_argument("Dataholder is not valid for geometric Stereo Calibration");
+
+	std::cout << "StereoCalibration start " << std::endl;
+
 	m_impl->mask = data.mask;
 	m_impl->working_size = m_impl->mask.size();
 
+	cv::Mat mask_secondary = m_img_processing.createMask(*data.contrast_sec_cam, 0.4);
+
 	cv::Mat biasIntensityPrimary, biasIntensitySecondary,
-		biasIntensityPrimary8U, biasIntensitySecondary8U;
+		contrastIntensityPrimary, contrastIntensitySecondary,
+		amplitudePrimary, amplitudeSecondary,
+		IntensityPrimary8U, IntensitySecondary8U, homogenuosPoint;
 
 	biasIntensityPrimary = m_img_processing.mean(*data.biasIntensity);
 	biasIntensitySecondary = m_img_processing.mean(*data.biasIntensity_sec_cam);
-	cv::normalize(biasIntensityPrimary, biasIntensityPrimary8U, 0, 255.0, cv::NORM_MINMAX, CV_8U);
-	cv::normalize(biasIntensitySecondary, biasIntensitySecondary8U, 0, 255.0, cv::NORM_MINMAX, CV_8U);
+	contrastIntensityPrimary = m_img_processing.mean(*data.contrast);
+	contrastIntensitySecondary = m_img_processing.mean(*data.contrast_sec_cam);
+
+	cv::multiply(biasIntensityPrimary, contrastIntensityPrimary, amplitudePrimary);
+	cv::multiply(biasIntensitySecondary, contrastIntensitySecondary, amplitudeSecondary);
+
+	cv::normalize(biasIntensityPrimary, IntensityPrimary8U, 0, 255.0, cv::NORM_MINMAX, CV_8U);
+	cv::normalize(biasIntensitySecondary, IntensitySecondary8U, 0, 255.0, cv::NORM_MINMAX, CV_8U);
 
 	std::vector<cv::Vec2d> circleImgCoordPrimary, circleImgCoordSecondary,
-		circleImgCoordPrimary_undist, circleImgCoordSecondary_undist;
+		circleImgCoordPrimaryUndist, circleImgCoordSecondaryUndist;
+
 	std::vector<cv::Point2f> circleImgCoordPrimary_p, circleImgCoordSecondary_p;
+
+	std::vector<cv::Point2f> circleImgCoordPrimary_sensorcoord, circleImgCoordSecondary_sensor_coord;
+
 	circleImgCoordPrimary = m_img_processing.getCircleCoordinates(
-		biasIntensityPrimary8U,
+		IntensityPrimary8U,
 		m_impl->mask,
-		m_impl->working_size);
+		m_impl->m_config.pattern_size,
+		data.path + "/primary.png");
 	circleImgCoordSecondary = m_img_processing.getCircleCoordinates(
-		biasIntensitySecondary8U,
-		m_impl->mask,
-		m_impl->working_size);
+		IntensitySecondary8U,
+		mask_secondary,
+		m_impl->m_config.pattern_size,
+		data.path + "/secondary.png");
 
-	for (const auto& imgCoordinate : circleImgCoordPrimary) {
-		circleImgCoordPrimary_undist.push_back(m_img_processing.undistortImagePts(
-			imgCoordinate, data.camMat, data.distCoeffs
-		));
+	cv::TermCriteria criteria(cv::TermCriteria::EPS, 0, 1e-9);
+
+	// The image Points get undistorted
+	for (auto& vec : circleImgCoordPrimary) {
+
+		circleImgCoordPrimary_sensorcoord.push_back(
+			cv::Point2f(static_cast<float>(vec[0]),
+				static_cast<float>(vec[1])));
+		circleImgCoordPrimaryUndist.push_back(
+			m_img_processing.undistortImagePts(
+				vec, 
+				data.camMat, 
+				data.distCoeffs));
+	}
+	
+	for (auto& vec : circleImgCoordSecondary) {
+		circleImgCoordSecondary_sensor_coord.push_back(
+			cv::Point2f(static_cast<float>(vec[0]),
+				static_cast<float>(vec[1])));
+		circleImgCoordSecondaryUndist.push_back(
+			m_img_processing.undistortImagePts(
+				vec, 
+				data.camMat_secundaryCam, 
+				data.distCoeffs_secondaryCam));
 	}
 
-	for (const auto& imgCoordiante : circleImgCoordSecondary) {
-		circleImgCoordSecondary_undist.push_back(m_img_processing.undistortImagePts(
-			imgCoordiante, data.camMat_secundaryCam, data.distCoeffs_secondaryCam
-		));
+	// Normalize to CameraCoordinates (not Sensor)
+	for (auto& vec : circleImgCoordPrimaryUndist) {
+		vec = normalizePoints(vec, data.camMat);
 	}
-
-	CV_Assert(circleImgCoordPrimary_undist.size() == circleImgCoordSecondary_undist.size());
-
-	cv::Mat projectionMatrixPrim, projectionMatrixSeco;
-
-	for (std::size_t i = 0; i < circleImgCoordPrimary.size(); ++i) {
-		circleImgCoordPrimary_p.push_back(cv::Point2f(circleImgCoordPrimary_undist[i]));
-		circleImgCoordSecondary_p.push_back(cv::Point2f(circleImgCoordSecondary_undist[i]));
+	for (auto& vec : circleImgCoordSecondaryUndist) {
+		vec = normalizePoints(vec, data.camMat_secundaryCam);
 	}
+	// From cv::Vec2d -> cv::Point2d (needed for all subsequent operation)
+	for (const auto& p : circleImgCoordPrimaryUndist)
+		circleImgCoordPrimary_p.emplace_back(
+			static_cast<float>(p[0]),
+			static_cast<float>(p[1])
+		);
+	for (const auto& p : circleImgCoordSecondaryUndist)
+		circleImgCoordSecondary_p.emplace_back(
+			static_cast<float>(p[0]),
+			static_cast<float>(p[1])
+		);
+	
+	// Projektion Matrixes between the two cameras. 
+	cv::Mat P1 = cv::Mat::eye(3, 4, CV_64F);
+	cv::Mat P2 = cv::Mat::zeros(3, 4, CV_64F);
+	data.cam2cam_rotMat.copyTo(P2(cv::Rect(0, 0, 3, 3)));
+	data.cam2cam_tvec.copyTo(P2(cv::Rect(3, 0, 1, 3)));
 
-	cv::stereoRectify(
-		data.camMat,
-		data.distCoeffs,
-		data.camMat_secundaryCam,
-		data.distCoeffs_secondaryCam,
-		m_impl->working_size,
-		data.cam2cam_rotMat,
-		data.cam2cam_tvec,
-		cv::Mat(),
-		cv::Mat(),
-		projectionMatrixPrim,
-		projectionMatrixSeco,
-		cv::Mat()
-	);
-
-	cv::Mat homogeneousPoints;
-
+	// Triangulate the Points from both cameras
 	cv::triangulatePoints(
-		projectionMatrixPrim,
-		projectionMatrixSeco,
+		P1,
+		P2,
 		circleImgCoordPrimary_p,
 		circleImgCoordSecondary_p,
-		homogeneousPoints
+		homogenuosPoint
 	);
-
+	
 	std::vector<cv::Point3d> pts3D;
 
 	// Back to 3d
-	for (int i = 0; i < homogeneousPoints.cols; ++i) {
-		double x = homogeneousPoints.at<double>(0, i);
-		double y = homogeneousPoints.at<double>(1, i);
-		double z = homogeneousPoints.at<double>(2, i);
-		double w = homogeneousPoints.at<double>(3, i);
+	homogenuosPoint.convertTo(homogenuosPoint, CV_64F);
+
+
+	for (int i = 0; i < homogenuosPoint.cols; ++i) {
+		double x = homogenuosPoint.at<double>(0, i);
+		double y = homogenuosPoint.at<double>(1, i);
+		double z = homogenuosPoint.at<double>(2, i);
+		double w = homogenuosPoint.at<double>(3, i);
 
 		pts3D.emplace_back(x / w, y / w, z / w);
 	}
 
-	// Object Points - Created in z = 0
+	savePointsToCSV(data.path + "/triangulatedPts.csv", pts3D);
+
+	double errNorm1 = 0.0;
+	double errNorm2 = 0.0;
+
+
+	// Be Carefull ------- Not sure if one undistort Step is missing !!!!!!!
+	// (only for the validation off the triangulation)
+
+	// Here we check if a projection back onto the sensor is "good eough"
+	// We have the triantulated point in Camera1 coordiantes. 
+	// When x/z, y/z, z/z -> back into normalized Camera Coordiantes 
+	// x1_hat is in normalized Camera1Coordinates. and undistorted normalized Camera Coordinates
+	// From the real meassurment are calcualted above in circieImgCoordPrimary_p. subtrakt and get error
+	for (size_t i = 0; i < pts3D.size(); ++i)
+	{
+		cv::Mat X1 = (cv::Mat_<double>(3, 1) <<
+			pts3D[i].x,
+			pts3D[i].y,
+			pts3D[i].z
+			);
+
+		// Cam1 normalized reprojection
+		cv::Point2d x1_hat(
+			X1.at<double>(0) / X1.at<double>(2),
+			X1.at<double>(1) / X1.at<double>(2)
+		);
+
+		// Transform into cam2
+		cv::Mat X2 = data.cam2cam_rotMat * X1 + data.cam2cam_tvec;
+
+		cv::Point2d x2_hat(
+			X2.at<double>(0) / X2.at<double>(2),
+			X2.at<double>(1) / X2.at<double>(2)
+		);
+		
+		cv::Point2d x1_meas(circleImgCoordPrimary_p[i].x, circleImgCoordPrimary_p[i].y);
+		cv::Point2d x2_meas(circleImgCoordSecondary_p[i].x, circleImgCoordSecondary_p[i].y);
+
+		errNorm1 += cv::norm(x1_hat - x1_meas);
+		errNorm2 += cv::norm(x2_hat - x2_meas);
+	}
+
+	errNorm1 /= pts3D.size();
+	errNorm2 /= pts3D.size();
+
+	std::cout << "Normalized reproj error cam1: " << errNorm1 << "\n";
+	std::cout << "Normalized reproj error cam2: " << errNorm2 << "\n";
+
+	std::vector<cv::Point3f> pts3Dfloat;
+	for (const auto& point : pts3D) {
+		pts3Dfloat.push_back(cv::Vec3f(point.x, point.y, point.z));
+	}
+
+	// Here we onyl do a reprojection the sensor coordiante system.
+	// It is meassure if the triangulated world points land get, back projected
+	// on the normalized & undistorted points on the camera sensor.
+	std::vector<cv::Point2f> reproj1;
+
+	cv::projectPoints(
+		pts3Dfloat,
+		cv::Vec3d(0, 0, 0),                // Kamera 1 = Welt
+		cv::Vec3d(0, 0, 0),
+		data.camMat,
+		data.distCoeffs,
+		reproj1
+	);
+
+	cv::Mat rvec12;
+	cv::Rodrigues(data.cam2cam_rotMat, rvec12);
+
+	std::vector<cv::Point2f> reproj2;
+
+	cv::projectPoints(
+		pts3Dfloat,
+		rvec12,
+		data.cam2cam_tvec,
+		data.camMat_secundaryCam,
+		data.distCoeffs_secondaryCam,
+		reproj2
+	);
+
+	double sum = 0.0, sumSq = 0.0;
+	double maxErr = 0.0;
+	size_t maxIdx = 0;
+
+	for (size_t i = 0; i < pts3D.size(); ++i)
+	{
+		double e = cv::norm(reproj1[i] - circleImgCoordPrimary_sensorcoord[i]);
+		sum += e;
+		sumSq += e * e;
+
+		if (e > maxErr) {
+			maxErr = e;
+			maxIdx = i;
+		}
+	}
+
+	std::cout << "mean err cam1: " << sum / pts3D.size() << "\n";
+	std::cout << "rms err cam1: " << std::sqrt(sumSq / pts3D.size()) << "\n";
+	std::cout << "max err cam1: " << maxErr << " at index " << maxIdx << "\n";
+
+	// At this point it would be nice to validate the found points. Also calcualte the standard deviation. 
+	// if point are more Error than standard deviation cut them.
+	// Not implmented. 
+	
 	std::vector<cv::Vec3d> patternObjectPoints =
 		m_img_processing.createCalibPatternObjectPoints(
 			m_impl->m_config.pattern_size,
@@ -151,7 +295,8 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 	CV_Assert(patternObjectPoints.size() == pts3D.size());
 
 	std::vector<Eigen::Vector3d> triangulated_pts, pattern_pts;
-	std::vector<Eigen::Vector2i> correspondence;
+	open3d::pipelines::registration::CorrespondenceSet correspondence;
+	correspondence.reserve(patternObjectPoints.size());
 
 	for (std::size_t i = 0; i < patternObjectPoints.size(); ++i) {
 		triangulated_pts.push_back(Eigen::Vector3d(pts3D[i].x, pts3D[i].y, pts3D[i].z));
@@ -159,33 +304,45 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 			patternObjectPoints[i].val[0],
 			patternObjectPoints[i].val[1],
 			patternObjectPoints[i].val[2]));
-		correspondence.push_back(Eigen::Vector2i(i, i));
+		correspondence.emplace_back(
+			static_cast<int>(i),
+			static_cast<int>(i));
 	}
 
 	open3d::geometry::PointCloud triangulated(triangulated_pts);
 	open3d::geometry::PointCloud pattern(pattern_pts);
 
+	calculateDistanceToPlane(triangulated, 10, false);
+
+	// Finds transformation from pattern to Triangulated Points (in Rectified System!!!)
+	// cam -> mir
 	open3d::pipelines::registration::TransformationEstimationPointToPoint poseEstimation(false);
 
+	// Calculates x_triang = transfrom * x_pattern
 	Eigen::Matrix4d transform = poseEstimation.ComputeTransformation(
 		pattern,
 		triangulated,
 		correspondence);
 
-	cv::Mat cam2mir_Rot(3, 3, CV_64F), mir2cam_Rot(3, 3, CV_64F), mir2cam_rvec(3, 3, CV_64F);
-	cv::Mat cam2mir_trans(3, 1, CV_64F), mir2cam_tvec(3, 1, CV_64F);
+	std::cout << "Transformation Mirr2cam: \n" << 
+		transform << std::endl;
+
+	cv::Mat cam2mir_Rot(3, 3, CV_64F), mir2cam_Rot(3, 3, CV_64F), mir2cam_rvec, cam2mir_rvec;
+	cv::Mat cam2mir_tvec(3, 1, CV_64F), mir2cam_tvec(3, 1, CV_64F);
 
 	for (int i = 0; i < 3; ++i)
 		for (int j = 0; j < 3; ++j)
 			cam2mir_Rot.at<double>(i, j) = transform(i, j);
 
-	cam2mir_trans.at<double>(0, 0) = transform(0, 3);
-	cam2mir_trans.at<double>(1, 0) = transform(1, 3);
-	cam2mir_trans.at<double>(2, 0) = transform(2, 3);
+	cam2mir_tvec.at<double>(0, 0) = transform(0, 3);
+	cam2mir_tvec.at<double>(1, 0) = transform(1, 3);
+	cam2mir_tvec.at<double>(2, 0) = transform(2, 3);
+
 
 	mir2cam_Rot = cam2mir_Rot.t();
-	mir2cam_tvec = -cam2mir_Rot * cam2mir_trans;
+	mir2cam_tvec = -mir2cam_Rot * cam2mir_tvec;
 	cv::Rodrigues(mir2cam_Rot, mir2cam_rvec);
+	cv::Rodrigues(cam2mir_Rot, cam2mir_rvec);
 	
 	std::pair<std::vector<cv::Vec2d>, std::vector<cv::Vec3d>> calibPoints =
 		m_img_processing.do_calibration_Points(
@@ -194,7 +351,9 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 			m_impl->m_config.wavelength_phase,
 			1,
 			1,
-			m_impl->m_config.displayPixelPitch);
+			m_impl->m_config.displayPixelPitch,
+			false,
+			false);
 
 	// Virtual Display Points 
 	std::vector<cv::Point3d> objectPointsDisp;
@@ -207,6 +366,9 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 
 	cv::Mat virt2cam_rvec, virt2cam_tvec;
 
+	// virt2cam_rvec: rotation of display frame expressed in camera frame
+	// virt2cam_tvec: position of display origin expressed in camera frame
+	// x_cam = virt2cam_rvec(as matrix)*x_disp + virt2cam_tvec
 	bool solvePnP = cv::solvePnP(
 		objectPointsDisp,
 		imagePointsDisp,
@@ -222,20 +384,117 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 		return{};
 	}
 	GeometricCalibrationResult result{};
-	cv::Rodrigues(cam2mir_Rot, result.cam2mir_rvec);
-	result.cam2mir_tvec = cam2mir_trans;
+	
+	cv::Mat pattern_rot;
+	cv::Rodrigues(virt2cam_rvec, pattern_rot); // How is pattern orientated from camera
+
+	cv::Mat virt2cam_tvec_n = -pattern_rot.t() * virt2cam_tvec; // Walk from virt to cam
+	cv::Mat virt2cam_rvec_n;
+	cv::Rodrigues(pattern_rot.t(), virt2cam_rvec_n);
+
+	result.cam2mir_rvec = cam2mir_rvec;
+	result.cam2mir_tvec = cam2mir_tvec;
+
+	//std::cout << "Virt2cam Rvec: \n" << virt2cam_rvec << std::endl;
+	//std::cout << "Virt2cam Tvec: \n" << virt2cam_tvec << std::endl;
 
 	backToWorld(
 		result.disp2cam_rvec,
 		result.disp2cam_tvec,
 		virt2cam_rvec,
 		virt2cam_tvec,
-		result.cam2mir_rvec,
-		result.cam2mir_tvec,
 		mir2cam_rvec,
-		mir2cam_tvec);
+		mir2cam_tvec,
+		result.cam2mir_rvec,
+		result.cam2mir_tvec);
+
+	//std::cout << "Cam2mir rvec: \n" << cam2mir_rvec << std::endl;
+	//std::cout << "Cam2mir tvec \n " << cam2mir_tvec << std::endl;
 
 	return result;
+}
+
+void GeometricCalibration::calculateDistanceToPlane(
+	const open3d::geometry::PointCloud& points,
+	const double inliers_distance,
+	bool visualize)
+{
+	Eigen::Vector4d surfacePara = fitPlane(points, inliers_distance);
+
+	std::vector<double> distances;
+	distances.reserve(points.points_.size());
+
+	Eigen::Vector3d n(surfacePara(0), surfacePara(1), surfacePara(2));
+
+	double n_norm = n.norm();
+
+	for (const auto& p : points.points_) {
+		double dist = std::abs(surfacePara(0) * p.x() + surfacePara(1) * p.y()
+			+ surfacePara(2) * p.z() + surfacePara(3)) / n_norm;
+		distances.push_back(dist);
+	}
+
+	double sum = 0.0;
+	double max_dist = 0.0;
+
+	for (double dist : distances) {
+		sum += dist;
+		max_dist = std::max(max_dist, dist);
+	}
+
+	double mean_dist = sum / distances.size();
+
+	std::cout << "Mean distance to plane: " << mean_dist << "\n";
+	std::cout << "Max distance to plane: " << max_dist << "\n";
+
+	if (visualize) {
+		Eigen::Vector3d p0 = -surfacePara(3) * n / n.squaredNorm();
+		// zwei orthogonale Richtungen erzeugen
+		Eigen::Vector3d v1 = n.unitOrthogonal();
+		Eigen::Vector3d v2 = n.cross(v1);
+
+		double size = 400.0;
+
+		std::vector<Eigen::Vector3d> vertices = {
+			p0 + size * v1 + size * v2,
+			p0 + size * v1 - size * v2,
+			p0 - size * v1 - size * v2,
+			p0 - size * v1 + size * v2
+		};
+
+		// Mesh erstellen
+		auto mesh = std::make_shared<open3d::geometry::TriangleMesh>();
+
+		mesh->vertices_ = vertices;
+		mesh->triangles_ = {
+			Eigen::Vector3i(0,1,2),
+			Eigen::Vector3i(0,2,3)
+		};
+
+		mesh->ComputeVertexNormals();
+		mesh->PaintUniformColor(Eigen::Vector3d(0.8, 0.2, 0.2)); // rot
+
+		auto coord = open3d::geometry::TriangleMesh::CreateCoordinateFrame(500.0);
+
+		open3d::visualization::DrawGeometries({std::make_shared<open3d::geometry::PointCloud>(points), mesh, coord });
+	}
+}
+
+
+
+cv::Vec2d GeometricCalibration::normalizePoints(
+	const cv::Vec2d& p,
+	const cv::Mat& cam_Mat)
+{
+	double fx = cam_Mat.at<double>(0, 0);
+	double fy = cam_Mat.at<double>(1, 1);
+	double cx = cam_Mat.at<double>(0, 2);
+	double cy = cam_Mat.at<double>(1, 2);
+
+	return cv::Point2d(
+		(p[0] - cx) / fx,
+		(p[1] - cy) / fy
+	);
 }
 
 GeometricCalibrationResult GeometricCalibration::calibrateMono(
@@ -389,47 +648,68 @@ GeometricCalibrationResult GeometricCalibration::calibrateMono(
 	return result;
 }
 
+Eigen::Vector4d GeometricCalibration::fitPlane(
+	const open3d::geometry::PointCloud& pts,
+	double distance_threshold)
+{
+	int ransac_n = 200;
+	int num_iterations = 100;
+
+	std::tuple< Eigen::Vector4d, std::vector<size_t>> result
+		= pts.SegmentPlane(distance_threshold, ransac_n, num_iterations);
+	
+	Eigen::Vector4d surface_para = std::get<0>(result);
+	std::vector<std::size_t> inliers = std::get<1>(result);
+
+	std::cout << inliers.size() << " are treated as inliers for surface calculation"
+		<< std::endl;
+
+	return surface_para;
+}
+
 void GeometricCalibration::backToWorld(
 		cv::Mat& rvec_w,
 		cv::Mat& tvec_w,
-		const cv::Mat& vdisp2cam_rvec,  // Vitual dispaly -> cam
-		const cv::Mat& vdisp2cam_tvec,  // vitual dipslay -> cam 
-		const cv::Mat& cam2mirror_rvec, // cam -> mirr
-		const cv::Mat& cam2mirror_tvec,
-		const cv::Mat& mir2cam_rvec,
-		const cv::Mat& mir2cam_tvec) // Mirror -> cam
+		const cv::Mat& vdisp2cam_rvec,  // Rotation_vdisp->cam
+		const cv::Mat& vdisp2cam_tvec,  // Translation_vdisp->cam
+		const cv::Mat& cam2mirror_rvec, // Rotatoin_camera->mirror
+		const cv::Mat& cam2mirror_tvec, // translation_camera->mirror
+		const cv::Mat& mir2cam_rvec, // Rotation mirror->cam
+		const cv::Mat& mir2cam_tvec) // Translation mirror->cam
 {
-	cv::Matx44d virtualdisp2cam, observer;
+	cv::Matx44d virtualdisp2cam = cv::Matx44d::eye(), observer = cv::Matx44d::eye();;
 
 	// Create Transform from VirtualDispaly to Camera
 	createaffine(vdisp2cam_rvec, vdisp2cam_tvec, virtualdisp2cam);
 
+	//observer = virtualdisp2cam;
 	observer = virtualdisp2cam;
-
 	// The Affine transformation from Camera to Mirror
 	cv::Matx44d affine_cam_to_mirr;
 	createaffine(cam2mirror_rvec, cam2mirror_tvec, affine_cam_to_mirr);
 
 	// Transformation VirtualDispCoord -> CameraCoord -> MirrorCoord
-	observer = virtualdisp2cam * affine_cam_to_mirr;
-
+	//observer = virtualdisp2cam * affine_cam_to_mirr;
+	observer = affine_cam_to_mirr * virtualdisp2cam;
 	// In the mirror coordiante System apply the mirroring
-	cv::Mat M = cv::Mat::eye(4, 4, CV_64F);
 
-	M.at<double>(2, 2) = -1.0;
-
-	cv::Matx44d householder(M);
+	cv::Matx44d householder = cv::Matx44d::eye();
+	householder(2, 2) = -1.0;
 
 	// Transformation: VirtualdispalyCoord -> CameraCoord -> MirrorCoord -> Apply MirrorMatrix 
 	// oberserver is no left handed !!!! 
-	observer = virtualdisp2cam * affine_cam_to_mirr * householder;
+	//observer = virtualdisp2cam * affine_cam_to_mirr * householder;
+
+	observer = householder * affine_cam_to_mirr * virtualdisp2cam;
 
 	cv::Matx44d affine_mirror2cam;
 
-	createaffine(mir2cam_rvec, cam2mirror_tvec, affine_mirror2cam);
+	createaffine(mir2cam_rvec, mir2cam_tvec, affine_mirror2cam);
 
 	// The Transformation to the real coordiante System
-	observer = virtualdisp2cam * affine_cam_to_mirr * householder * affine_mirror2cam;
+	//observer = virtualdisp2cam * affine_cam_to_mirr * householder * affine_mirror2cam;
+
+	observer = affine_mirror2cam * householder * affine_cam_to_mirr * virtualdisp2cam;
 
 	cv::Vec3d x_axis(observer(0, 0), observer(1, 0), observer(2, 0));
 	x_axis /= cv::norm(x_axis);
@@ -545,6 +825,8 @@ cv::Mat GeometricCalibration::test_calibration(
 {
 	if (!data.validData()) throw std::invalid_argument("Invalid Data in GemoetricCalibrationTestData");
 	
+	std::cout << "Start Geometric Calibration Test \n";
+
 	m_impl->mask = m_img_processing.createMask(
 		*data.contrast,
 		0.3);
@@ -565,13 +847,18 @@ cv::Mat GeometricCalibration::test_calibration(
 			m_impl->m_config.pattern_size,
 			3);
 		
+
 	coordiante_mirror *= m_impl->m_config.point_dist;
+
+	//std::cout << "Calibration Test: cam2mir_rvec" << data.cam2mir_rvec << std::endl;
 
 	cv::Mat coordiante_mirror_rot =
 		m_img_processing.rotateCoordinatedGrid(
 			coordiante_mirror,
 			data.cam2mir_rvec,
 			Rotation::rodrigeuz);
+
+	//std::cout << "Calibration Test: cam2mir_tvec" << data.cam2mir_tvec << std::endl;
 
 	cv::Mat coordiante_mirror_shift =
 		m_img_processing.shiftCoordinateGrid(
@@ -600,7 +887,8 @@ cv::Mat GeometricCalibration::test_calibration(
 	cv::Mat unwrap_world_rot =
 		m_img_processing.rotateCoordinatedGrid(
 			unwrap_world,
-			cv::Vec3d(cam2disp_rvec),
+			data.disp2cam_rvec, 
+			//cv::Vec3d(cam2disp_rvec),
 			Rotation::rodrigeuz
 		);
 
@@ -608,6 +896,7 @@ cv::Mat GeometricCalibration::test_calibration(
 		m_img_processing.shiftCoordinateGrid(
 			unwrap_world_rot,
 			data.disp2cam_tvec
+			//cam2disp_tvec
 		);
 
 	cv::Mat reflected_rays = unwrap_world_rot_shift - hitpints_mirror[0];

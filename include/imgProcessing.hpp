@@ -209,7 +209,8 @@ public:
 	std::vector<cv::Vec2d> getCircleCoordinates(
 		const cv::Mat& img,
 		const cv::Mat& mask,
-		const cv::Size sz
+		const cv::Size sz,
+		const std::string& path = std::string()
 	) const;
 
 	// Creates a vector of Object Coordinates R^3 for Pose solving
@@ -499,7 +500,9 @@ public:
 		const double wavelength,
 		const int gridX,
 		const int gridY,
-		const double pixel_pitch_mm
+		const double pixel_pitch_mm,
+		bool flipunwrap_x_coordinates = false,
+		bool flipunwrap_y_coordiantes = false
 	);
 
 

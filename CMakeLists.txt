@@ -98,6 +98,36 @@ find_package(OpenCV REQUIRED) # Normal OpenCV find
 set(Open3D_DIR "C:/Users/grein/Documents/libraries/open3d-devel-windows-amd64-0.19.0/CMake")
 find_package(Open3D REQUIRED)
 
+message(STATUS "Open3D_FOUND='${Open3D_FOUND}'")
+message(STATUS "Open3D_VERSION='${Open3D_VERSION}'")
+message(STATUS "Open3D_DIR='${Open3D_DIR}'")
+
+get_target_property(Open3D_IMPORTED_CONFIGS Open3D::Open3D IMPORTED_CONFIGURATIONS)
+message(STATUS "Open3D IMPORTED_CONFIGURATIONS='${Open3D_IMPORTED_CONFIGS}'")
+
+get_target_property(Open3D_LOCATION_RELEASE Open3D::Open3D IMPORTED_LOCATION_RELEASE)
+get_target_property(Open3D_LOCATION_DEBUG   Open3D::Open3D IMPORTED_LOCATION_DEBUG)
+get_target_property(Open3D_LOCATION         Open3D::Open3D IMPORTED_LOCATION)
+
+message(STATUS "Open3D IMPORTED_LOCATION_RELEASE='${Open3D_LOCATION_RELEASE}'")
+message(STATUS "Open3D IMPORTED_LOCATION_DEBUG='${Open3D_LOCATION_DEBUG}'")
+message(STATUS "Open3D IMPORTED_LOCATION='${Open3D_LOCATION}'")
+
+get_target_property(Open3D_LINK_LIBS Open3D::Open3D INTERFACE_LINK_LIBRARIES)
+message(STATUS "Open3D INTERFACE_LINK_LIBRARIES='${Open3D_LINK_LIBS}'")
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/Users/grein/Documents/libraries/open3d-devel-windows-amd64-0.19.0/bin/Open3D.dll"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/Users/grein/Documents/libraries/open3d-devel-windows-amd64-0.19.0/bin/tbb12.dll"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+)
+
 
 find_package(Boost CONFIG REQUIRED)
 
