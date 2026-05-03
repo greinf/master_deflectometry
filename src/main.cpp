@@ -13,6 +13,7 @@
 #include "CameraSimulation.hpp"
 #include "CameraCalibration.hpp"
 #include "GeometricCalibration.hpp"
+#include "PSF.hpp"
 
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
     {
@@ -48,7 +49,7 @@ int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-28_GeometricCalibration_100Shift" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/TESTPSF" };
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie"
         "/data/2026-04-25_CameraStereoCalibration/Stereo_Calib.xml" };
@@ -62,15 +63,8 @@ int main()
     std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
     std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
 
-    meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
-
-    cv::Mat cam2camRot = meassure.get(FrameRole::CalibCamToCam)[0];
-    cv::Mat cam2cam_tvec = meassure.get(FrameRole::CalibCamToCam)[1];
-
-    //std::vector<cv::Mat> img = meassure.getFrames(FrameRole::Debug, 1);
-
     std::vector<cv::Mat> sin_pattern = pat.generate_phaseShift<UniformRowsCols>(
-        Shift_mode::user_defined,
+        Shift_mode::four_phase_shift,
         10.0,
         127.5,
         127.5,
@@ -80,7 +74,7 @@ int main()
     );
 
     GrayCodeConfig config{};
-    config.creation.inverse = true;
+    config.creation.inverse = false;
     config.creation.pixel_x = 1920;
     config.creation.pixel_y = 1080;
     config.creation.resolution_x = 500;
@@ -99,42 +93,53 @@ int main()
         sim_inputFrames.push_back(img);
     }
 
-    std::size_t n_pics = grayCodesz + sinPatternsz;
+    CameraSimulation simulation(processing);
 
-    int n_pics_per_val = 4;
+    CameraSimulationConfig Sim_config;
+    Sim_config.camera.camera_mat = camMatrix[1];
+    Sim_config.camera.dist_coeffs = distCoeffs[1];
+    Sim_config.mirror.contains_mirror = true;
+    Sim_config.mirror.mirror_sz = cv::Size(400, 400);
+    Sim_config.scene.disp_shift_z = 0.0;
+    Sim_config.scene.disp_shift_x = -1920 / 2.0 * 0.2745;
+    Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745;
+    Sim_config.disp.scaling = 1.0;
+    Sim_config.disp.bias = 0;
+    Sim_config.scene.disp_tilt_x = 0;
+    Sim_config.scene.disp_tilt_y = 0;
+    Sim_config.scene.luminance = false;
+    Sim_config.disp.gamma = 1.0;
+    Sim_config.scene.mirror_shift_x = -200.0;
+    Sim_config.scene.mirror_shift_y = -200.0;
+    Sim_config.scene.mirror_shift_z = 2500.0;
+    Sim_config.scene.mirror_tilt_x = 0.00;
+    Sim_config.scene.mirror_tilt_y = 0.00;
+    Sim_config.data.begin = sim_inputFrames.begin()._Ptr;
+    Sim_config.data.end = sim_inputFrames.end()._Ptr;
+    Sim_config.camera.apertureSmoothing = false;
+    Sim_config.camera.f_number = 16.0;  // The phase has a wavelength of 108pix/2pi -> goal circl of confusion ~ 50pix ->  50mm/4 / 0.2745(pixepitch) = 45pix
+    Sim_config.camera.circle_of_confusion_n_disp = 0;
+    Sim_config.camera.quantization = false;
+    Sim_config.disp.quantization = false;
+    Sim_config.scene.disp_flip_vertical = true;
 
-    std::vector<cv::Mat> images = meassure.acquire_img(sim_inputFrames, FrameRole::Debug, n_pics_per_val);
-
-    auto it = images.begin();
-
-    std::vector<cv::Mat> meanimg;
-
-    for (std::size_t i = 0; i < n_pics; ++i) {
-        auto it_end = std::next(it, n_pics_per_val);
-        meanimg.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
-        it = it_end;
-    }
-
-    images = meanimg;
+    std::vector<cv::Mat> simulate =
+        simulation.simulate(Sim_config);
 
     auto& eval = config.getEvalParameter();
-    eval.start = images.begin();
-    eval.end = std::next(images.begin(), grayCodesz);
+    eval.start = simulate.begin();
+    eval.end = std::next(simulate.begin(), grayCodesz);
+
+    std::vector<cv::Mat> patternd(std::next(simulate.begin(), grayCodesz), simulate.end());
 
     GrayCodeDecoder dec(processing);
-
     dec.decoding(config);
-
-    std::vector<cv::Mat> patternd(std::next(images.begin(), grayCodesz), images.end());
 
     cv::Mat mask = config.results.mask;
 
-    cv::Mat nanMask = ~(mask == mask);
-    mask.setTo(0.0, nanMask);
-
     std::vector<cv::Mat> wrapped_ref{ config };
 
-    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 100, true, path);
+    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 4, false, path);
     std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
     std::vector<cv::Mat> baseIntensity = meassure.get(FrameRole::BaseIntensity);
 
@@ -144,83 +149,189 @@ int main()
     unwrapVector.push_back(wrapped[1]);
     unwrapVector.push_back(wrapped_ref[1]);
 
-    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, true, path, 108.0);
+    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, false, path, 108.0);
+
+    PSF_Config psf_config{ 108.0, 10, {1920, 1080} };
+
+    PSF_Data psf_data{};
+    psf_data.mask = &mask;
+    psf_data.unwrap = &unwrap;
+
+    PSF psf{ psf_config };
+
+    auto result = psf.computePSF(psf_data);
+
+    std::cout << "Happy \n";
+
+    //Pattern& pat = meassure.img_generation();
+    //ImageProcessing& processing = meassure.processing();
+
+    //meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
+    //std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
+    //std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
+
+    //meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
+
+    //cv::Mat cam2camRot = meassure.get(FrameRole::CalibCamToCam)[0];
+    //cv::Mat cam2cam_tvec = meassure.get(FrameRole::CalibCamToCam)[1];
+
+    ////std::vector<cv::Mat> img = meassure.getFrames(FrameRole::Debug, 1);
+
+    //std::vector<cv::Mat> sin_pattern = pat.generate_phaseShift<UniformRowsCols>(
+    //    Shift_mode::user_defined,
+    //    10.0,
+    //    127.5,
+    //    127.5,
+    //    1920,
+    //    1080,
+    //    {}
+    //);
+
+    //GrayCodeConfig config{};
+    //config.creation.inverse = true;
+    //config.creation.pixel_x = 1920;
+    //config.creation.pixel_y = 1080;
+    //config.creation.resolution_x = 500;
+    //config.creation.resolution_y = 500;
+    //config.creation.starBit = config.msb;
+
+    //std::vector<cv::Mat> grayCode = pat.generateGrayCodeImg(config);
+
+    //std::size_t grayCodesz{ grayCode.size() };
+
+    //std::size_t sinPatternsz{ sin_pattern.size() };
+
+    //std::vector<cv::Mat> sim_inputFrames{ grayCode };
+
+    //for (const auto& img : sin_pattern) {
+    //    sim_inputFrames.push_back(img);
+    //}
+
+    //std::size_t n_pics = grayCodesz + sinPatternsz;
+
+    //int n_pics_per_val = 4;
+
+    //std::vector<cv::Mat> images = meassure.acquire_img(sim_inputFrames, FrameRole::Debug, n_pics_per_val);
+
+    //auto it = images.begin();
+
+    //std::vector<cv::Mat> meanimg;
+
+    //for (std::size_t i = 0; i < n_pics; ++i) {
+    //    auto it_end = std::next(it, n_pics_per_val);
+    //    meanimg.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
+    //    it = it_end;
+    //}
+
+    //images = meanimg;
+
+    //auto& eval = config.getEvalParameter();
+    //eval.start = images.begin();
+    //eval.end = std::next(images.begin(), grayCodesz);
+
+    //GrayCodeDecoder dec(processing);
+
+    //dec.decoding(config);
+
+    //std::vector<cv::Mat> patternd(std::next(images.begin(), grayCodesz), images.end());
+
+    //cv::Mat mask = config.results.mask;
+
+    //cv::Mat nanMask = ~(mask == mask);
+    //mask.setTo(0.0, nanMask);
+
+    //std::vector<cv::Mat> wrapped_ref{ config };
+
+    //std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 100, true, path);
+    //std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
+    //std::vector<cv::Mat> baseIntensity = meassure.get(FrameRole::BaseIntensity);
+
+    //std::vector<cv::Mat> unwrapVector;
+    //unwrapVector.push_back(wrapped[0]);
+    //unwrapVector.push_back(wrapped_ref[0]);
+    //unwrapVector.push_back(wrapped[1]);
+    //unwrapVector.push_back(wrapped_ref[1]);
+
+    //std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, true, path, 108.0);
+    //std::vector<cv::Mat> contrast_secondary = meassure.get(FrameRole::Contrast);
+    //std::vector<cv::Mat> baseIntensity_secondary = meassure.get(FrameRole::BaseIntensity);
 
 
-    // Secondary Camera part. 
-    std::vector<cv::Mat> images_secondary = meassure.acquire_img(sin_pattern, FrameRole::Debug, n_pics_per_val);
 
-    it = images_secondary.begin();
+    //// Secondary Camera part. 
+    //std::vector<cv::Mat> images_secondary = meassure.acquire_img(sin_pattern, FrameRole::Debug, n_pics_per_val);
 
-    std::vector<cv::Mat> mean_secondary;
+    //it = images_secondary.begin();
 
-    for (std::size_t i = 0; i < sinPatternsz; ++i) {
-        auto it_end = std::next(it, n_pics_per_val);
-        mean_secondary.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
-        it = it_end;
-    }
+    //std::vector<cv::Mat> mean_secondary;
 
-    images_secondary = mean_secondary;
+    //for (std::size_t i = 0; i < sinPatternsz; ++i) {
+    //    auto it_end = std::next(it, n_pics_per_val);
+    //    mean_secondary.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
+    //    it = it_end;
+    //}
 
-    std::vector<cv::Mat> images_secondary_warpped = meassure.do_wrapped_phase(images_secondary, 1, 100, false, path + "/secondary");
-    std::vector<cv::Mat> contrast_secondary = meassure.get(FrameRole::Contrast);
-    std::vector<cv::Mat> baseIntensity_secondary = meassure.get(FrameRole::BaseIntensity);
+    //images_secondary = mean_secondary;
 
-    GeometricCalibrationConfig geoConfig{};
-    geoConfig.displayPixelPitch = 0.2745;
-    geoConfig.point_dist = 4;
-    geoConfig.wavelength_phase = 108.0;
-    geoConfig.pattern_size = cv::Size{ 20,20 };
+    //std::vector<cv::Mat> images_secondary_warpped = meassure.do_wrapped_phase(images_secondary, 1, 100, false, path + "/secondary");
+    //std::vector<cv::Mat> contrast_secondary = meassure.get(FrameRole::Contrast);
+    //std::vector<cv::Mat> baseIntensity_secondary = meassure.get(FrameRole::BaseIntensity);
 
-    GeometricCalibration geoCalib(geoConfig, processing);
+    //GeometricCalibrationConfig geoConfig{};
+    //geoConfig.displayPixelPitch = 0.2745;
+    //geoConfig.point_dist = 4;
+    //geoConfig.wavelength_phase = 108.0;
+    //geoConfig.pattern_size = cv::Size{ 20,20 };
 
-    GeometricCalibrationData_Stereo geodata;
-    geodata.camMat = camMatrix[1];
-    geodata.distCoeffs = distCoeffs[1];
-    geodata.unwrap = &unwrap;
-    geodata.contrast = &contrast;
-    geodata.biasIntensity = &baseIntensity;
-    geodata.mask = mask;
-    geodata.path = path;
+    //GeometricCalibration geoCalib(geoConfig, processing);
 
-    cv::Mat cam2cam_RotErr = cam2camRot.t();
-    cv::Mat cam2cam_tvecErr = -cam2cam_RotErr * cam2cam_tvec;
+    //GeometricCalibrationData_Stereo geodata;
+    //geodata.camMat = camMatrix[1];
+    //geodata.distCoeffs = distCoeffs[1];
+    //geodata.unwrap = &unwrap;
+    //geodata.contrast = &contrast;
+    //geodata.biasIntensity = &baseIntensity;
+    //geodata.mask = mask;
+    //geodata.path = path;
 
-    geodata.camMat_secundaryCam = camMatrix[0];
-    geodata.distCoeffs_secondaryCam = distCoeffs[0];
-    geodata.cam2cam_rotMat = cam2cam_RotErr;
-    geodata.cam2cam_tvec = cam2cam_tvecErr;
-    geodata.biasIntensity_sec_cam = &baseIntensity_secondary;
-    geodata.contrast_sec_cam = &contrast_secondary;
+    //cv::Mat cam2cam_RotErr = cam2camRot.t();
+    //cv::Mat cam2cam_tvecErr = -cam2cam_RotErr * cam2cam_tvec;
 
-    auto result = geoCalib.calibrateStereo(geodata);
+    //geodata.camMat_secundaryCam = camMatrix[0];
+    //geodata.distCoeffs_secondaryCam = distCoeffs[0];
+    //geodata.cam2cam_rotMat = cam2cam_RotErr;
+    //geodata.cam2cam_tvec = cam2cam_tvecErr;
+    //geodata.biasIntensity_sec_cam = &baseIntensity_secondary;
+    //geodata.contrast_sec_cam = &contrast_secondary;
 
-    // auto result = geoCalib.calibrateMono(geodata);
+    //auto result = geoCalib.calibrateStereo(geodata);
 
-    auto& store = meassure.image_store();
+    //// auto result = geoCalib.calibrateMono(geodata);
 
-    std::vector<cv::Mat> calib{ result.disp2cam_rvec.clone(), result.disp2cam_tvec.clone()};
+    //auto& store = meassure.image_store();
 
-    store.add(FrameRole::CalibDispToCam, calib);
+    //std::vector<cv::Mat> calib{ result.disp2cam_rvec.clone(), result.disp2cam_tvec.clone()};
 
-    store.saveRoleXML(FrameRole::CalibDispToCam, path);
+    //store.add(FrameRole::CalibDispToCam, calib);
 
-    GeometricCalibrationTestData geotestData{ camMatrix[1], distCoeffs[1] };
-    geotestData.unwrap = &unwrap;
-    geotestData.contrast = &contrast;
-    geotestData.biasIntensity = &baseIntensity;
-    geotestData.disp2cam_rvec = result.disp2cam_rvec;
-    geotestData.disp2cam_tvec = result.disp2cam_tvec;
-    geotestData.cam2mir_rvec = result.cam2mir_rvec;
-    geotestData.cam2mir_tvec = result.cam2mir_tvec;
+    //store.saveRoleXML(FrameRole::CalibDispToCam, path);
+
+    //GeometricCalibrationTestData geotestData{ camMatrix[1], distCoeffs[1] };
+    //geotestData.unwrap = &unwrap;
+    //geotestData.contrast = &contrast;
+    //geotestData.biasIntensity = &baseIntensity;
+    //geotestData.disp2cam_rvec = result.disp2cam_rvec;
+    //geotestData.disp2cam_tvec = result.disp2cam_tvec;
+    //geotestData.cam2mir_rvec = result.cam2mir_rvec;
+    //geotestData.cam2mir_tvec = result.cam2mir_tvec;
 
 
-    auto surfaces = geoCalib.test_calibration(geotestData);
+    //auto surfaces = geoCalib.test_calibration(geotestData);
 
-    store.add(FrameRole::SurfaceNormals, surfaces);
+    //store.add(FrameRole::SurfaceNormals, surfaces);
 
-    store.saveRoleXML(FrameRole::SurfaceNormals, path);
+    //store.saveRoleXML(FrameRole::SurfaceNormals, path);
 
-    std::cout << "Happy ? \n";
+    //std::cout << "Happy ? \n";
 
 }

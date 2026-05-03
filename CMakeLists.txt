@@ -72,7 +72,8 @@ add_executable (${PROJECT_NAME}
     "src/GrayCodeDecoder.cpp" 
     "src/CameraSimulation.cpp" 
     "src/CameraCalibration.cpp" 
-    "src/GeometricCalibration.cpp")
+    "src/GeometricCalibration.cpp" 
+    "src/PSF.cpp")
 
 
 #Debug 

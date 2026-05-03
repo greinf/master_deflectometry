@@ -231,7 +231,10 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 
 	std::vector<cv::Point3f> pts3Dfloat;
 	for (const auto& point : pts3D) {
-		pts3Dfloat.push_back(cv::Vec3f(point.x, point.y, point.z));
+		pts3Dfloat.push_back(cv::Vec3f(
+			static_cast<float>(point.x),
+			static_cast<float>(point.y), 
+			static_cast<float>(point.z)));
 	}
 
 	// Here we onyl do a reprojection the sensor coordiante system.
