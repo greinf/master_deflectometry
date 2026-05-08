@@ -302,6 +302,14 @@ public:
 		const cv::Mat&
 	);
 
+	struct FitSurface {
+		cv::Mat fittedSurface{};
+		cv::Vec2d origin{};
+		cv::Vec3d surfaceParameter{};
+	};
+
+
+
 	// Functions Fits Surface over the image
 	// Input: 1 Image of Type CV_64F, channels() == 1; Image to fit
 	// 2 Image of Type CV_8U, channels() == 1, Image for Masking

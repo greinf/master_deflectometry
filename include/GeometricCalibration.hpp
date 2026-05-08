@@ -29,7 +29,9 @@ struct GeometricCalibrationData {
 	cv::Mat camMat;
 	cv::Mat distCoeffs;
 
-	cv::Mat mask;
+	cv::Mat mask_ROI;
+
+	std::string path{};
 
 	std::vector<cv::Mat>* unwrap = nullptr;
 	std::vector<cv::Mat>* contrast = nullptr;
@@ -67,13 +69,15 @@ struct GeometricCalibrationData_Stereo : GeometricCalibrationData {
 	 cv::Mat camMat_secundaryCam;
 	 cv::Mat distCoeffs_secondaryCam;
 
+	 cv::Mat mask_ROI_secon;
+
 	 cv::Mat cam2cam_tvec;
 	 cv::Mat cam2cam_rotMat;
 
 	 std::vector<cv::Mat>* biasIntensity_sec_cam = nullptr;
 	 std::vector<cv::Mat>* contrast_sec_cam = nullptr;
+	 std::vector<cv::Mat>* unwrap_sec_cam = nullptr;
 
-	 std::string path{};
 
 	 bool validData() const {
 		 if (GeometricCalibrationData::validData() == false) return false;
@@ -90,20 +94,20 @@ struct GeometricCalibrationData_Stereo : GeometricCalibrationData {
 		 if (biasIntensity->size() != 2) return false;
 		 if (contrast_sec_cam->empty() == true) return false;
 		 if (contrast_sec_cam->size() != 2) return false;
+		 /*if (unwrap_sec_cam->empty() == true) return false;
+		 if (unwrap_sec_cam->size() != 2) return false;*/
 
 		 return true;
 	 }
 };
-
-
 
 struct GeometricCalibrationTestData : GeometricCalibrationData
 {
 	cv::Mat disp2cam_rvec{};
 	cv::Mat disp2cam_tvec{};
 
-	cv::Mat cam2mir_rvec{};
-	cv::Mat cam2mir_tvec{};
+	cv::Mat mir2cam_rvec{};
+	cv::Mat mir2cam_tvec{};
 
 	cv::Vec3d surfacePoint{};
 
@@ -143,6 +147,13 @@ namespace open3d {
 	}
 }
 
+struct StereoCalibrationPoints {
+	StereoCalibrationPoints() = delete;
+
+	std::vector<cv::Point2f> imagePoints_prim{};
+	std::vector<cv::Point2f> imagePoints_secon{};
+};
+
 class GeometricCalibration {
 public:
 	explicit GeometricCalibration(const GeometricCalibrationConfig& config, ImageProcessing& process);
@@ -160,13 +171,23 @@ public:
 	GeometricCalibration& operator=(GeometricCalibration&) = delete;
 	GeometricCalibration& operator=(GeometricCalibration&&) = delete;
 
-	void calculateDistanceToPlane(
+	std::vector<std::size_t> calculateDistanceToPlane(
 		const open3d::geometry::PointCloud& points,
 		const double inliers_distance,
 		bool visualize = true
 	);
 
 
+	// Gives back for both the Primary Camera and Secondary Camera 
+	// Dipslay Points (in dispaly Coordinates) that were found in both images
+	StereoCalibrationPoints getCommonImagePointsfromStereoUnwrap(
+		const std::vector<cv::Mat>& unwrap_prim,
+		const std::vector<cv::Mat>& unwrap_secon,
+		const cv::Mat& contrastMask_prim,
+		const cv::Mat& contrastMask_secon,
+		const double& wavelength
+	);
+	
 private:
 	struct Impl;
 	std::unique_ptr<Impl> m_impl = nullptr;
@@ -204,7 +225,7 @@ private:
 	);
 
 	void savePointsToCSV(const std::string& filename,
-		const std::vector<cv::Point3d>& pts)
+		const std::vector<cv::Point3f>& pts)
 	{
 		std::ofstream file(filename);
 		if (!file.is_open()) {

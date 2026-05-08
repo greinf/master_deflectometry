@@ -280,6 +280,7 @@ void ImageStore::loadCalibrationMatrix(const std::string& path) {
     if (fs.isOpened()) {
         std::vector<cv::Mat> distCoeffs(2);
         std::vector<cv::Mat> camMatrix(2);
+        
         {
             cv::FileNode distortion(fs["distortion_coefficients"]);
             if (distortion.empty()) {
@@ -306,6 +307,7 @@ void ImageStore::loadCalibrationMatrix(const std::string& path) {
                 if (mat.empty()) continue;
                 storage_[FrameRole::DistortionCoeff].push_back(mat);
             }
+            
         }
     }
     else std::cout << "Coudl not open the Storage file ";
@@ -319,7 +321,7 @@ void ImageStore::loadCalibCamToCam(const std::string& path) {
     if (!fs.isOpened())
         throw std::runtime_error("Could not open XML file: " + path);
 
-    cv::Mat rotationMat, translationMat;
+    cv::Mat rotationMat, translationMat, essential;
 
     cv::FileNode rotMat(fs["R"]);
     if (rotMat.empty()) {
@@ -335,8 +337,21 @@ void ImageStore::loadCalibCamToCam(const std::string& path) {
     }
     else trans_vec >> translationMat;
 
-    storage_[FrameRole::CalibCamToCam].push_back(rotationMat);
-    storage_[FrameRole::CalibCamToCam].push_back(translationMat);
+    cv::FileNode essentialMat(fs["E"]);
+    if (essentialMat.empty()) {
+        std::cout << "No Essential Mal in file available \n";
+    }
+    else essentialMat >> essential;
+
+    if (!rotationMat.empty()) storage_[FrameRole::CalibCamToCam].push_back(rotationMat);
+    else std::cout << "Loading Rot Extrinsic Failed \n";
+
+    if (!translationMat.empty()) storage_[FrameRole::CalibCamToCam].push_back(translationMat);
+    else std::cout << "Loading Translation Extrinsic Failed  \n";
+
+    if (!essential.empty()) storage_[FrameRole::EssentialMatrix].push_back(essential);
+    else std::cout << "Loading Essential-Matrix Failed \n";
+    
 }
 
 

@@ -1,4 +1,3 @@
-﻿
 #define VERSION "1"
 #include <cstddef>
 #include <iostream>
@@ -14,7 +13,6 @@
 #include "CameraSimulation.hpp"
 #include "CameraCalibration.hpp"
 #include "GeometricCalibration.hpp"
-
 
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
     {
@@ -44,14 +42,12 @@ auto shownormalized = [](const cv::Mat& d) {
     cv::normalize(d, img, 0, 255, cv::NORM_MINMAX, CV_8U);
     cv::imshow("norm", img);
     cv::waitKey(0);
-    cv::destroyWindow("norm");
     };
 
-void saveRotationMatrix(const cv::Mat& rotMat, const cv::Mat& tvec, const std::string& path) {
+void saveRotationMatrix(const cv::Mat& rotMat, const std::string& path) {
     // Use .xml, .yml, or .json extension in the path
     cv::FileStorage fs(path, cv::FileStorage::WRITE);
     fs << "rotation_matrix" << rotMat;
-    fs << "tvec" << tvec;
     fs.release();
 }
 
@@ -59,10 +55,10 @@ int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-05-08_GeometricCalibrationMono_50Slave" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-05-07_GeometricCalibrationStereo_50" };
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie"
-        "/data/2026-05-08_StereoCameraCalibration/Stereo_Calib.xml" };
+        "/data/2026-05-04_CameraStereoCalibration_k2_fix/Stereo_Calib.xml" };
 
     Deflectometry meassure{};
 
@@ -78,7 +74,7 @@ int main()
     cv::Mat cam2camRot = meassure.get(FrameRole::CalibCamToCam)[0];
     cv::Mat cam2cam_tvec = meassure.get(FrameRole::CalibCamToCam)[1];
 
-    // std::vector<cv::Mat> img = meassure.getFrames(FrameRole::Debug, 1);
+    //std::vector<cv::Mat> img = meassure.getFrames(FrameRole::Debug, 1);
 
     std::vector<cv::Mat> sin_pattern = pat.generate_phaseShift<UniformRowsCols>(
         Shift_mode::user_defined,
@@ -91,11 +87,11 @@ int main()
     );
 
     GrayCodeConfig config{};
-    config.creation.inverse = true;
+    config.creation.inverse = false;
     config.creation.pixel_x = 1920;
     config.creation.pixel_y = 1080;
-    config.creation.resolution_x = 1000;
-    config.creation.resolution_y = 1000;
+    config.creation.resolution_x = 500;
+    config.creation.resolution_y = 500;
     config.creation.starBit = config.msb;
 
     std::vector<cv::Mat> grayCode = pat.generateGrayCodeImg(config);
@@ -112,7 +108,7 @@ int main()
 
     std::size_t n_pics_prim{ primary_Cam.size() };
 
-    int n_pics_per_val = 1;
+    int n_pics_per_val = 3;
 
     std::vector<cv::Mat> images = meassure.acquire_img(primary_Cam, FrameRole::Debug, n_pics_per_val);
 
@@ -149,45 +145,58 @@ int main()
     std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
     std::vector<cv::Mat> baseIntensity = meassure.get(FrameRole::BaseIntensity);
 
-    cv::Mat mask_contrast = processing.createMask(contrast, 0.93, true);
-
-    // shownormalized(mask_contrast);
-
     std::vector<cv::Mat> unwrapVector;
     unwrapVector.push_back(wrapped[0]);
     unwrapVector.push_back(wrapped_ref[0]);
     unwrapVector.push_back(wrapped[1]);
     unwrapVector.push_back(wrapped_ref[1]);
 
-    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask_contrast, UnwrapMode::reference_Graycode, true, path, 108.0);
+    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask, UnwrapMode::reference_Graycode, true, path, 108.0);
 
-    //// Secondary Camera part
-    //// Append the Full white and Full Black image at the end. 
-    //std::vector<cv::Mat> secondary_cam{ sin_pattern };
-    ////secondary_cam.push_back(*std::prev(grayCode.end(), 2));
-    ////secondary_cam.push_back(*std::prev(grayCode.end(), 1));
+    // Secondary Camera part
+    // Append the Full white and Full Black image at the end. 
 
-    //std::vector<cv::Mat> images_secondary = meassure.acquire_img(secondary_cam, FrameRole::Debug, n_pics_per_val);
+    std::vector<cv::Mat> images_secondary = meassure.acquire_img(primary_Cam, FrameRole::Debug, n_pics_per_val);
 
-    //std::size_t seondary_size{ images_secondary.size() };
+    std::vector<cv::Mat> meanimg;
 
-    //it = images_secondary.begin();
+    for (std::size_t i = 0; i < n_pics_prim; ++i) {
+        auto it_end = std::next(it, n_pics_per_val);
+        meanimg.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
+        it = it_end;
+    }
 
-    //std::vector<cv::Mat> mean_secondary;
+    images_secondary = meanimg;
 
-    //for (std::size_t i = 0; i < seondary_size; ++i) {
-    //    auto it_end = std::next(it, n_pics_per_val);
-    //    mean_secondary.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
-    //    it = it_end;
-    //}
 
-    //images_secondary = mean_secondary;
+    auto& eval_sec = config.getEvalParameter();
+    eval_sec.start = images.begin();
+    eval_sec.end = std::next(images_secondary.begin(), grayCodesz);
 
-    //std::vector<cv::Mat> images_secondary_warpped = meassure.do_wrapped_phase(images_secondary, 1, 50, true, path +"/secondary");
-    //std::vector<cv::Mat> contrast_secondary = meassure.get(FrameRole::Contrast);
-    //std::vector<cv::Mat> baseIntensity_secondary = meassure.get(FrameRole::BaseIntensity);
+    GrayCodeDecoder dec_sec(processing);
 
-    std::cout << "geometric Setup Start \n";
+    dec_sec.decoding(config);
+
+    std::vector<cv::Mat> pattern_sec(std::next(images_secondary.begin(), grayCodesz), images_secondary.end());
+
+    // Mask defining the ROI
+    cv::Mat mask_secon = config.results.mask;
+    cv::Mat nanMask_sec = ~(mask_secon == mask_secon);
+    mask_secon.setTo(0.0, nanMask_sec);
+
+    std::vector<cv::Mat> wrapped_ref_sec{ config };
+
+    std::vector<cv::Mat> wrapped_sec = meassure.do_wrapped_phase(pattern_sec, 1, 4, true, path + "/secondary");
+    std::vector<cv::Mat> contrast_sec = meassure.get(FrameRole::Contrast);
+    std::vector<cv::Mat> baseIntensity_sec = meassure.get(FrameRole::BaseIntensity);
+
+    std::vector<cv::Mat> unwrapVector_sec;
+    unwrapVector_sec.push_back(wrapped_sec[0]);
+    unwrapVector_sec.push_back(wrapped_ref_sec[0]);
+    unwrapVector_sec.push_back(wrapped_sec[1]);
+    unwrapVector_sec.push_back(wrapped_ref_sec[1]);
+
+    std::vector<cv::Mat> unwrap_sec = meassure.do_unwrapped_phase(unwrapVector_sec, mask_secon, UnwrapMode::reference_Graycode, true, path + "/secondary", 108.0);
 
     GeometricCalibrationConfig geoConfig{};
     geoConfig.displayPixelPitch = 0.2745;
@@ -197,9 +206,9 @@ int main()
 
     GeometricCalibration geoCalib(geoConfig, processing);
 
-    GeometricCalibrationData geodata;
-    geodata.camMat = camMatrix[1];
-    geodata.distCoeffs = distCoeffs[1];
+    GeometricCalibrationData_Stereo geodata;
+    geodata.camMat = camMatrix[0];
+    geodata.distCoeffs = distCoeffs[0];
     geodata.unwrap = &unwrap;
     geodata.contrast = &contrast;
     geodata.biasIntensity = &baseIntensity;
@@ -208,17 +217,17 @@ int main()
 
     /*cv::Mat cam2cam_RotErr = cam2camRot.t();
     cv::Mat cam2cam_tvecErr = -cam2cam_RotErr * cam2cam_tvec;*/
-
-   /* geodata.camMat_secundaryCam = camMatrix[1];
+    geodata.mask_ROI_secon = mask_secon;
+    geodata.camMat_secundaryCam = camMatrix[1];
     geodata.distCoeffs_secondaryCam = distCoeffs[1];
     geodata.cam2cam_rotMat = cam2camRot;
     geodata.cam2cam_tvec = cam2cam_tvec;
-    geodata.biasIntensity_sec_cam = &baseIntensity_secondary;
-    geodata.contrast_sec_cam = &contrast_secondary;*/
+    geodata.biasIntensity_sec_cam = &baseIntensity_sec;
+    geodata.contrast_sec_cam = &contrast_sec;
 
-    auto result = geoCalib.calibrateMono(geodata);
+    //auto result = geoCalib.calibrateMono(geodata);
 
-    //auto result = geoCalib.calibrateStereo(geodata);
+    auto result = geoCalib.calibrateStereo(geodata);
 
     auto& store = meassure.image_store();
 
@@ -231,20 +240,20 @@ int main()
     cv::Mat Rotcam2mir;
     cv::Rodrigues(result.cam2mir_rvec, Rotcam2mir);
 
-    saveRotationMatrix(Rotcam2mir, result.cam2mir_tvec,  path + "/cam2mirRot.xml");
+    saveRotationMatrix(Rotcam2mir, path + "/cam2mirRot.xml");
 
     cv::Mat mir2cam_tvec = -Rotcam2mir.t() * result.cam2mir_tvec;
     cv::Mat mir2cam_rvec;
     cv::Rodrigues(Rotcam2mir.t(), mir2cam_rvec);
 
-    GeometricCalibrationTestData geotestData{ camMatrix[1], distCoeffs[1] };
+    GeometricCalibrationTestData geotestData{ camMatrix[0], distCoeffs[0] };
     geotestData.unwrap = &unwrap;
     geotestData.contrast = &contrast;
     geotestData.biasIntensity = &baseIntensity;
     geotestData.disp2cam_rvec = result.disp2cam_rvec;
     geotestData.disp2cam_tvec = result.disp2cam_tvec;
-    geotestData.mir2cam_rvec = mir2cam_rvec;
-    geotestData.mir2cam_tvec = mir2cam_tvec;
+    geotestData.mir2cam_rvec = mir2cam_tvec;
+    geotestData.mir2cam_tvec = mir2cam_rvec;
 
     auto surfaces = geoCalib.test_calibration(geotestData);
 

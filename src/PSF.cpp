@@ -77,54 +77,55 @@ PSF_Result PSF::computePSF(const PSF_Data& data)
 	unwrapx *= m_config.m_bins;
 	unwrapy *= m_config.m_bins;
 
-	cv::parallel_for_(cv::Range(0, sz.height),
-		[&](const cv::Range& range) {
-			for (int row = range.start; row < range.end; ++row) {
-				const double* x_ptr = unwrapx.ptr<double>(row);
-				const double* y_ptr = unwrapy.ptr<double>(row);
-				const uchar* mask_ptr = data.mask->ptr<uchar>(row);
-				for (int col = 0; col < sz.width; ++col) {
-					if (mask_ptr[col] == 0 ||
-						std::isnan(x_ptr[col]) ||
-						std::isnan(y_ptr[col])) continue;
-					cv::Point2i coordinates(
-						static_cast<int>(x_ptr[col]),
-						static_cast<int>(y_ptr[col]));
+	/*cv::parallel_for_(cv::Range(0, sz.height),
+		[&](const cv::Range& range) {*/
 
-					if (coordinates.x < 0 ||
-						(coordinates.x + m_config.m_bins) > m_config.m_sz.width)
-					{
-						std::cout << "X out of Range: \nx:" << coordinates.x << "\n" <<
-							"y:" << coordinates.y << std::endl;
-						continue;
-					}
-					if (coordinates.y < 0 ||
-						(coordinates.y + m_config.m_bins) > m_config.m_sz.height)
-					{
-						std::cout << "Y out of Range: \nx:" << coordinates.x << "\n" <<
-							"y:" << coordinates.y << std::endl;
-						continue;
-					}
-					max_x = std::max(static_cast<int>(coordinates.x), max_x);
-					min_x = std::min(static_cast<int>(coordinates.x), min_x);
+	for (int row = 0; row < sz.height; ++row) {
+		const double* x_ptr = unwrapx.ptr<double>(row);
+		const double* y_ptr = unwrapy.ptr<double>(row);
+		const uchar* mask_ptr = data.mask->ptr<uchar>(row);
+		for (int col = 0; col < sz.width; ++col) {
+			if (mask_ptr[col] == 0 ||
+				std::isnan(x_ptr[col]) ||
+				std::isnan(y_ptr[col])) continue;
+			cv::Point2i coordinates(
+				static_cast<int>(x_ptr[col]),
+				static_cast<int>(y_ptr[col]));
 
-					max_y = std::max(static_cast<int>(coordinates.y), max_y);
-					min_y = std::min(static_cast<int>(coordinates.y), min_y);
-
-					if (m_config.m_bins == 1) {
-						histo.ptr<std::uint16_t>(coordinates.y)[coordinates.x] += 1;
-					}
-					else {
-						cv::Mat roi =
-							histo(cv::Rect(
-								coordinates.x,
-								coordinates.y,
-								m_config.m_bins,
-								m_config.m_bins));
-						roi += 1;
-					}
-				}
+			if (coordinates.x < 0 ||
+				(coordinates.x + m_config.m_bins) > m_config.m_sz.width)
+			{
+				std::cout << "X out of Range: \nx:" << coordinates.x << "\n" <<
+					"y:" << coordinates.y << std::endl;
+				continue;
 			}
-		});
+			if (coordinates.y < 0 ||
+				(coordinates.y + m_config.m_bins) > m_config.m_sz.height)
+			{
+				std::cout << "Y out of Range: \nx:" << coordinates.x << "\n" <<
+					"y:" << coordinates.y << std::endl;
+				continue;
+			}
+			max_x = std::max(static_cast<int>(coordinates.x), max_x);
+			min_x = std::min(static_cast<int>(coordinates.x), min_x);
+
+			max_y = std::max(static_cast<int>(coordinates.y), max_y);
+			min_y = std::min(static_cast<int>(coordinates.y), min_y);
+
+			if (m_config.m_bins == 1) {
+				histo.ptr<std::uint16_t>(coordinates.y)[coordinates.x] += 1;
+			}
+			else {
+				cv::Mat roi =
+					histo(cv::Rect(
+						coordinates.x,
+						coordinates.y,
+						m_config.m_bins,
+						m_config.m_bins));
+				roi += 1;
+			}
+		}
+	}
+		
 	return result;
 }

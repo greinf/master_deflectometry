@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.2...3.12 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.22 FATAL_ERROR)
 project(open_camera_cpp LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -73,7 +73,7 @@ add_executable (${PROJECT_NAME}
     "src/CameraSimulation.cpp" 
     "src/CameraCalibration.cpp" 
     "src/GeometricCalibration.cpp" 
-    "src/PSF.cpp")
+    "src/PSF.cpp" )
 
 
 #Debug 
@@ -91,11 +91,9 @@ message(STATUS "DEBUG: CMAKE_PREFIX_PATH='${CMAKE_PREFIX_PATH}'")
 
 #endif ()
 
-set(Boost_NO_BOOST_CMAKE ON)
-
 find_package (Threads REQUIRED)
 find_package(Ceres CONFIG REQUIRED)
-find_package(OpenCV REQUIRED) # Normal OpenCV find
+find_package(OpenCV CONFIG REQUIRED)
 set(Open3D_DIR "C:/Users/grein/Documents/libraries/open3d-devel-windows-amd64-0.19.0/CMake")
 find_package(Open3D REQUIRED)
 

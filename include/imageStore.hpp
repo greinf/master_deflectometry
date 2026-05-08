@@ -49,6 +49,9 @@ enum class FrameRole {
     GrayCode_Result,   // The Result of the GrayCode evaluation - should be 2 images. 
     CameraSimulation,  // Resulting Images of the Camera Calibration
     SurfaceNormals,    // A pictre of Surface Normals used for validating the Geometric Calibration
+    EssentialMatrix,   // Essential Matrix used fin SteroCameraSetups 
+    PSF,               // A picture of how many CameraPixels did hit one dispaly Pixel
+    PSFgt,
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -132,7 +135,7 @@ private:
         "ModellBias_Active", "ModellBias_Passive",
         "CalibDisp_Cam", "ReferenceCheckerBoard", "CalibDispToCam",
         "CalibCamToCam", "UnwrapError", "GrayCode", "GrayCode_Result", "CameraSimulation", 
-        "SurfaceNormals"
+        "SurfaceNormals" , "EssentialMatrix" , "PSF" , "PSF-GT"
     } };
     
 };

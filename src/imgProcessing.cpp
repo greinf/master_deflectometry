@@ -25,8 +25,12 @@
 
 auto normalizeAndDisplay = [](const cv::Mat& img) -> void {
     cv::Mat norm;
+
     cv::normalize(img, norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+    cv::namedWindow("Normalized", cv::WINDOW_FREERATIO);
     cv::imshow("Normalized", norm);
+
     cv::waitKey(0);
     cv::destroyWindow("Normalized");
     };
@@ -748,7 +752,7 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
 
     p.filterByArea = true;
     p.minArea = 5;
-    p.maxArea = 130;
+    p.maxArea = 220;
 
     p.minDistBetweenBlobs = 1;
 
@@ -3205,6 +3209,7 @@ cv::Mat ImageProcessing::createMask(
 
     sum_contrast.setTo(0.0, nanMask);
 
+
     // minMaxloc data for sum_contrast
     cv::Mat mask_8u;
     cv::normalize(sum_contrast, mask_8u, 0, 255, cv::NORM_MINMAX, CV_8U);
@@ -3213,15 +3218,27 @@ cv::Mat ImageProcessing::createMask(
     // Threshold
 
     cv::threshold(mask_8u, maskbin, threshold * data.maxval, 255, cv::THRESH_BINARY);
+
+    mask_8u.setTo(0, maskbin == 0);
+
+    cv::Mat maskOtsu;
+
+    cv::threshold(mask_8u, maskOtsu, 0, 255, cv::THRESH_OTSU | cv::THRESH_BINARY);
     //normalizeAndDisplay(maskbin);
     // Create Structuring Element for opening&closing
+    cv::Mat maskROI;
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
-    cv::morphologyEx(maskbin, maskbin, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 2);
-    cv::morphologyEx(maskbin, maskbin, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 2);
+    cv::morphologyEx(maskbin, maskROI, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 5);
+    cv::morphologyEx(maskbin, maskROI, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 5);
+
+    maskbin.setTo(0, maskROI == 0);
 
     // Shrink the allowed values since we have a reference Point that is in the middle of the image.
-    if(dilate) cv::morphologyEx(maskbin, maskbin, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 50);
-   
+    if (dilate) {
+        cv::morphologyEx(maskROI, maskROI, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 40);
+        maskbin.setTo(0, maskROI == 0);
+    }
+
     //ormalizeAndDisplay(maskbin);
 
     return maskbin;

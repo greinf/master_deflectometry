@@ -67,8 +67,7 @@ int main()
 
     std::vector<cv::Mat> cam1, cam2;
 
-    // Cam2 is primary 
-    for (std::size_t i = 0; i < 12; ++i) {
+    for (std::size_t i = 0; i < 13; ++i) {
         std::vector<cv::Mat> calib_frames1 = meassure.getFrames(FrameRole::Debug, 1);
         std::vector<cv::Mat> calib_frames2 = meassure.getFrames(FrameRole::Debug, 1);
         cam1.push_back(calib_frames1[0]);

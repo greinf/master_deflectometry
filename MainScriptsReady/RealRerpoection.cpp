@@ -47,8 +47,7 @@ int main()
 
     std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-13_Grauwertkalbirierung_Data_Real/2026-04-13_dark_room" };
 
-    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie"
-        "/data/2026-04-13_CameraCalibration/Mono_Calib.xml" };
+    std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-25_CameraStereoCalibration/Stereo_Calib.xml" };
 
     Deflectometry meassure{};
 
@@ -58,14 +57,14 @@ int main()
     // Method used for calibration 
     _defl_::GrayCal::Method method = _defl_::GrayCal::Method::PassiveLut;
 
-    meassure.setupCalibration(method, path_gray_calibration);
+    //meassure.setupCalibration(method, path_gray_calibration);
 
     meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
     std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
     std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
 
     GrayCodeConfig config{};
-    config.creation.inverse = false;
+    config.creation.inverse = true;
     config.creation.pixel_x = 1920;
     config.creation.pixel_y = 1080;
     config.creation.resolution_x = 500;

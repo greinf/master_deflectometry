@@ -37,8 +37,6 @@ public:
 			throw std::invalid_argument("PSF_Data is invalid \n");
 	}
 
-
-	// 
 	PSF_Result computePSF(const PSF_Data& data);
 
 private:
