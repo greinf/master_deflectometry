@@ -11,14 +11,17 @@
 
 std::vector<cv::Mat> GrayCodeDecoder::decoding(GrayCodeConfig& config)
 {
+
+	config.clearResult();
+
 	auto eval_params = config.getEvalParameter();
 	CV_Assert(eval_params.start != eval_params.end);
 
 	// Wrong Picture size !!!
-	std::all_of(eval_params.start, eval_params.end,
+	if(!std::all_of(eval_params.start, eval_params.end,
 		[&](const cv::Mat& img) -> bool {
 			return eval_params.start->size() == img.size();
-		});
+		})) throw std::invalid_argument("GrayCodePictures have different Size \n");
 
 	const cv::Size input_size = eval_params.start->size();
 

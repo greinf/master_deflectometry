@@ -57,6 +57,10 @@ public:
 
 	int getBitdepth(int k) { return static_cast<int>(std::ceil(std::log2(k))); }
 	
+	void clearResult()
+	{
+		results = Results();
+	}
 
 	operator std::vector<cv::Mat>() {
 		std::vector<cv::Mat> out(2);

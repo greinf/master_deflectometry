@@ -274,9 +274,6 @@ std::vector<cv::Vec2d> ImageProcessing::findExtrema(
     return findExtrema(corners, mean_img, sz);
 }
 
-
-
-
 // This was put on ice but can be resumed at later time. 
 // 
 // Here we try with a quaratik
@@ -335,7 +332,7 @@ std::vector<cv::Vec2d> ImageProcessing::findExtrema(
         return {};
 
     }
-    
+    return{};
 }
 
 // --- Build Jacobian to linearis the Problem
@@ -2756,12 +2753,33 @@ std::vector<cv::Mat> ImageProcessing::do_wrapped_Phase(const std::vector<cv::Mat
 
                     for (int x = 0; x < size.width; ++x) {
 
+                        const double eps = 1e-12;
+
                         double a = s1p[x];
                         double b = s2p[x];
                         double c = s3p[x];
 
+                        if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c) || std::abs(c) < eps) {
+                            wp[x] = std::numeric_limits<double>::quiet_NaN();
+                            mp[x] = std::numeric_limits<double>::quiet_NaN();
+                            cp[x] = std::numeric_limits<double>::quiet_NaN();
+                            continue;
+                        }
+
+                        double mag2 = a * a + b * b;
+
+                        if (mag2 < 0.0 && mag2 > -eps) {
+                            mag2 = 0.0;
+                        }
+                        else if (mag2 < 0.0) {
+                            wp[x] = std::numeric_limits<double>::quiet_NaN();
+                            mp[x] = std::numeric_limits<double>::quiet_NaN();
+                            cp[x] = std::numeric_limits<double>::quiet_NaN();
+                            continue;
+                        }
+
                         wp[x] = std::atan2(-a, b);
-                        mp[x] = std::sqrt(a * a + b * b);
+                        mp[x] = std::sqrt(mag2);
                         cp[x] = (2.0 * mp[x]) / c;
                     }
                 }
@@ -3141,8 +3159,6 @@ std::vector<cv::Mat> ImageProcessing::refineUnwrap(
 }
 
 
-
-
 std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
     const std::vector<cv::Mat>& wrapped,
     const cv::Mat& mask)
@@ -3190,11 +3206,91 @@ std::vector<cv::Mat> ImageProcessing::manual_phaseUnwrap(
     return unwrapped_phase;
 }
 
+cv::Mat ImageProcessing::createAdaptiveMask(
+    const std::vector<cv::Mat>& vec,
+    const int erode,
+    const double thresh_scale) const 
+{
+    if (vec.size() != 2 ||
+        vec[0].size() != vec[1].size() || 
+        erode < 0) throw std::invalid_argument("Input Images are not valid \n");
+
+    if (thresh_scale <= 0 || thresh_scale > 2.0) throw std::invalid_argument("Thresh scale out of bounds \n");
+
+    const cv::Size working_sz = vec[0].size();
+
+    cv::Mat img1, img2, sum, sum8U, sum8U_temp,
+        tresh, output = cv::Mat::zeros(working_sz, CV_8U);
+
+    vec[0].convertTo(img1, CV_64F);
+    vec[1].convertTo(img2, CV_64F);
+
+    sum = (img1 + img2) / 2.0;
+
+    cv::normalize(sum, sum8U, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+    int threshold = (working_sz.height > working_sz.width) ? 
+        (working_sz.height / 2) : (working_sz.width / 2);
+
+    if (!(threshold % 1)) --threshold;
+
+    cv::adaptiveThreshold(
+        sum8U,
+        sum8U_temp,
+        255, 
+        cv::ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv::THRESH_BINARY,
+        threshold,
+        0.0);
+
+    std::vector<std::vector<cv::Point>> contours;
+
+    cv::findContours(sum8U_temp, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    if (contours.empty()) throw std::runtime_error("No Contours detected \n");
+
+    double area = std::numeric_limits<double>::min();
+    std::size_t roi{ 0 };
+
+    for (std::size_t i = 0; i < contours.size(); ++i)
+    {
+        double a = cv::contourArea(contours[i]);
+        if (a > area) {
+            area = a;
+            roi = i;
+        }
+    }
+    cv::Rect box = cv::boundingRect(contours[roi]);
+
+    if (erode > 0) {
+        const int border = erode / 2;
+        box.x += border;
+        box.y += border;
+
+        box.width -= erode;
+        box.height -= erode;
+    }
+
+    cv::Mat roiExtracted = sum8U(box);
+
+    cv::Mat temp = cv::Mat(roiExtracted.size(), CV_8U);
+
+    double thresh_val = 
+        cv::threshold(roiExtracted, temp, 0.0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+    // We do not take the OtsuTresh value direclty but lower the boundary just a bit
+    thresh_val *= thresh_scale;
+
+    cv::threshold(roiExtracted, tresh, thresh_val, 255.0, CV_8U);
+
+    tresh.copyTo(output(box));
+
+    return output;
+}
 
 cv::Mat ImageProcessing::createMask(
     const std::vector<cv::Mat>& vec,
     double threshold,
-    bool dilate) 
+    bool erode) const
 {
     cv::Mat maskbin, sum_contrast_n;
     CV_Assert(vec.size() == 2);
@@ -3234,7 +3330,7 @@ cv::Mat ImageProcessing::createMask(
     maskbin.setTo(0, maskROI == 0);
 
     // Shrink the allowed values since we have a reference Point that is in the middle of the image.
-    if (dilate) {
+    if (erode) {
         cv::morphologyEx(maskROI, maskROI, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 40);
         maskbin.setTo(0, maskROI == 0);
     }

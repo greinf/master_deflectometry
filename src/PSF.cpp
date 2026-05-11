@@ -58,8 +58,8 @@ PSF_Result PSF::computePSF(const PSF_Data& data)
 		unwrapy = (*data.unwrap)[1].clone();
 		
 	//cv::Mat nanMask = cv::Mat(unwrapx == unwrapx) & (unwrapy == unwrapy);
-	unwrapx = cv::max(unwrapx, 0.0);
-	unwrapy = cv::max(unwrapy, 0.0);
+	unwrapx.setTo(std::numeric_limits<double>::quiet_NaN(), unwrapx < 0.0);
+	unwrapy.setTo(std::numeric_limits<double>::quiet_NaN(), unwrapy < 0.0);
 	
 	unwrapx *= (m_config.m_wavelength / CV_2PI); 
 	unwrapy *= (m_config.m_wavelength / CV_2PI);

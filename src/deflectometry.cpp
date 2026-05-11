@@ -1209,8 +1209,6 @@ std::vector<cv::Mat> Deflectometry::do_wrapped_phase(
 	return std::vector<cv::Mat>(wrapped_phase_out.begin(), std::next(wrapped_phase_out.begin(), 2));
 }
 
-
-
 void Deflectometry::setupPattern(
 	ImageStore& img_store,
 	int pixelX,
@@ -1244,7 +1242,6 @@ std::vector<cv::Mat> Deflectometry::acquire_img(
 		else img8 = img;
 		img8U.push_back(img8);
 	}
-
 
 	if (!init(1)) {
 		std::cerr << "Init Method failed. Stop GrayValueCalibration\n";

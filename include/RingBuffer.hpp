@@ -68,7 +68,7 @@ private:
 		const std::size_t buffer_size,
 		const std::size_t payload_per_buf
 	);
-
+	
 	RawData m_out{};
 };
 
@@ -111,6 +111,8 @@ inline bool RingBuffer::extractData(
 		return false;
 	}
 
+	std::scoped_lock lock(m_raw[index].mtx);
+
 	//std::cout << "Extract Data " << '\n' <<
 	//	"Index " << index << '\n';
 
@@ -118,7 +120,6 @@ inline bool RingBuffer::extractData(
 	if (pFrame->GetBufferSize(bufferSize) != VmbErrorSuccess || bufferSize == 0)
 		throw std::runtime_error("GetBufferSize failed");
 
-	std::lock_guard lock(m_raw[index].mtx);
 	// slot capacity should match bufferSize (PayloadSize) OR be >= imageSize
 	if (static_cast<std::size_t>(bufferSize) != m_raw[index].bytes)
 		throw std::runtime_error("Slot size mismatch");

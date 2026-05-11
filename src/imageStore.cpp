@@ -25,7 +25,6 @@ void ImageStore::add(
     }
 }
 
-
 void ImageStore::add(FrameRole role, const std::array<std::pair<double, double>, 256>& LUT) {
     CV_Assert(role == FrameRole::GrayLUT);
     std::scoped_lock lock(mtx_);

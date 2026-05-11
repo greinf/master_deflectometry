@@ -334,7 +334,17 @@ public:
 	cv::Mat createMask(
 		const std::vector<cv::Mat>& vec,
 		double threshold,
-		bool dilate = false);
+		bool dilate = false) const;
+
+	// Calculates Mask from (best case) two contrast Pictures.
+	// Input[0]: const std::vector<cv::Mat>& vec -> size() == 2;vec[0].size() == vec[1].size()
+	// vec[0].type() == vec[1].type(), 
+	// Input[1]: const int dilate -> if dilate > 0 the mask is 
+	cv::Mat createAdaptiveMask(
+		const std::vector<cv::Mat>& vec,
+		const int erode = 0,
+		const double thresh_scale = 1.0
+	) const;
 
 	cv::Mat ImageProcessing::undistortImage(const cv::Mat& img,
 		const cv::Mat& K,

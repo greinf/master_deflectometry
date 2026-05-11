@@ -561,8 +561,8 @@ bool VimbaBackend::adjustSettings()
         // --- find Features can be used to search in the feature tree for string snippets ---
         //findFeatures(cam, key);
 
-        double exposure_time{ 160000.0 };
-        double frame_rate{ 5.0 };
+        double exposure_time{ 100000.0 };
+        double frame_rate{ 7.0 };
 
         bool forceFree = forceFreerunTimedExposure(cam);
         bool frameRate = setFrameRate(cam, frame_rate);
@@ -662,7 +662,7 @@ bool VimbaBackend::allocateBuffer(
     m_stopping.clear();
     m_running.clear();
     m_frame_ptr.clear();
-
+    m_ringBufferPtr.clear();
 
     for (std::size_t i = 0; i < m_availableIds.size(); ++i) {
 
@@ -797,7 +797,7 @@ void VimbaBackend::close(std::size_t i)
 {
     for(std::size_t i = 0; i < m_availableIds.size(); ++i)
     {
-        
+        m_stopping[i].store(true, std::memory_order_release);
         if (m_running[i] == false) continue;
 
         auto cam = findCameraByID(m_availableIds[i]);
@@ -812,10 +812,11 @@ void VimbaBackend::close(std::size_t i)
             }
         }
 
-        m_stopping[i] = true;
-
         if (cam->EndCapture() != VmbErrorSuccess)
             std::cout << "EndCapture failed \n";
+
+        if (cam->FlushQueue() != VmbErrorSuccess)
+            std::cout << "FlushQueue failed \n";
 
         for (auto& frames : m_frame_ptr.at(i)) {
             if (frames && frames->UnregisterObserver() != VmbErrorSuccess)
@@ -824,9 +825,6 @@ void VimbaBackend::close(std::size_t i)
 
         //std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-        if (cam->FlushQueue() != VmbErrorSuccess)
-            std::cout << "FlushQueue failed \n";
-        
         if (cam->RevokeAllFrames() != VmbErrorSuccess)
             std::cout << "RevokeAllFrames failed \n";
 
@@ -840,6 +838,10 @@ void VimbaBackend::close(std::size_t i)
         
     }
     m_frame_ptr.clear();
+    m_ringBufferPtr.clear();
+    m_running.clear();
+    m_stopping.clear();
+    m_availableIds.clear();   
 }
 
 void VimbaBackend::logging()

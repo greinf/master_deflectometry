@@ -72,7 +72,7 @@ int main()
 
     // !!!!!!!!!! Triangulation Part !!!!!! 
 
-    /*img_store.loadCalibrationMatrix(camMatrix_path);
+    img_store.loadCalibrationMatrix(camMatrix_path);
     img_store.loadCalibCamToCam(camMatrix_path);
 
     std::vector<cv::Mat> intrinsic_calib = img_store.get(FrameRole::CalibrationMatrix);
@@ -101,7 +101,7 @@ int main()
 
     cv::Point3f trinagulated_pt = triangulate.calculate(prim, secon);
 
-    triangulate.savePoint(path + "/triangulated.csv", prim, secon, trinagulated_pt);*/
+    triangulate.savePoint(path + "/triangulated.csv", prim, secon, trinagulated_pt);
 
     GrayCodeConfig config{};
     config.creation.inverse = true;
