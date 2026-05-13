@@ -695,9 +695,6 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     
     cv::Mat gray;
     img.copyTo(gray);
-    
-    cv::medianBlur(gray, gray, 5);
-    cv::GaussianBlur(gray, gray, { 5,5 }, 0);
 
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -730,26 +727,25 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     // 3) Preprocess inside ROI: increase local contrast a bit (optional but helps)
     // CLAHE is often good for uneven illumination
     {
-        cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(15, 15));
+        cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(10.0, cv::Size(15, 15));
         clahe->apply(up, up);
     }
 
     //normalizeAndDisplay(up);
+    cv::Mat up_blur;
+    cv::medianBlur(up, up_blur, 7);
 
-    cv::GaussianBlur(up, up, cv::Size(5, 5), 0);
+    up = up_blur;
 
-    cv::Mat bin = up;
-    //cv::threshold(up, bin, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-
-    //normalizeAndDisplay(bin);
+    
 
     cv::SimpleBlobDetector::Params p;
     p.filterByColor = true;
     p.blobColor = 0;                 // dunkle Punkte
 
     p.filterByArea = true;
-    p.minArea = 5;
-    p.maxArea = 220;
+    p.minArea = 500;
+    p.maxArea = 1100;
 
     p.minDistBetweenBlobs = 1;
 
@@ -763,28 +759,27 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
     p.maxThreshold = 255;
     p.thresholdStep = 5;
 
-
     auto detector = cv::SimpleBlobDetector::create(p);
 
     std::vector<cv::KeyPoint> keypoints;
-    detector->detect(bin, keypoints);
+    detector->detect(up, keypoints);
 
     cv::Mat dbg;
-    cv::drawKeypoints(bin, keypoints, dbg, cv::Scalar(0, 0, 255),
+    cv::drawKeypoints(up, keypoints, dbg, cv::Scalar(0, 0, 255),
         cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
 
     
-    // normalizeAndDisplay(dbg);
+    normalizeAndDisplay(dbg);
     std::cout << "Detected blobs: " << keypoints.size() << std::endl;
 
     // Try to seperate this two. 
     bool ok = cv::findCirclesGrid(
-        bin, pattern_size, centers,
+        up, pattern_size, centers,
         cv::CALIB_CB_SYMMETRIC_GRID,
         detector
     );
 
-    cv::Mat imagePointsstart = bin.clone();
+    cv::Mat imagePointsstart = up.clone();
     cv::drawChessboardCorners(imagePointsstart, pattern_size, centers, ok);
 
     if (!path.empty()) {
@@ -803,13 +798,132 @@ std::vector<cv::Vec2d> ImageProcessing::getCircleCoordinates(
         centersUp.push_back(p0);
     }
 
-    std::vector<cv::Vec2d> doubleval;
+    std::vector<cv::Vec2d> doubleval, double_val_ref;
     for (auto& vec : centersUp) {
         doubleval.push_back(cv::Vec2d(vec));
     }
 
+    /*double_val_ref = refineCircleCentersByMoments(
+        img,
+        doubleval,
+        30
+    );*/
+
+
     return doubleval;
 }
+
+
+std::vector<cv::Vec2d> ImageProcessing::refineCircleCentersByMoments(
+    const cv::Mat& img8u,
+    const std::vector<cv::Vec2d>& initialCenters,
+    int roiRadius,
+    bool darkCircles,
+    bool visualize) const 
+{
+    CV_Assert(!img8u.empty());
+    CV_Assert(img8u.type() == CV_8U);
+
+    std::vector<cv::Vec2d> refined;
+    refined.reserve(initialCenters.size());
+
+    for (const auto& c : initialCenters)
+    {
+        const double cx0 = c[0];
+        const double cy0 = c[1];
+
+        int x0 = std::max(0, static_cast<int>(std::floor(cx0)) - roiRadius);
+        int y0 = std::max(0, static_cast<int>(std::floor(cy0)) - roiRadius);
+        int x1 = std::min(img8u.cols - 1, static_cast<int>(std::floor(cx0)) + roiRadius);
+        int y1 = std::min(img8u.rows - 1, static_cast<int>(std::floor(cy0)) + roiRadius);
+
+        cv::Rect roi(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+        if (roi.width < 5 || roi.height < 5) {
+            refined.push_back(c);
+            continue;
+        }
+
+        cv::Mat patch = img8u(roi).clone();
+
+       
+        cv::Mat patchBlur;
+        cv::GaussianBlur(patch, patchBlur, cv::Size(3, 3), 0);
+
+        cv::Mat binary;
+        int threshType = darkCircles
+            ? (cv::THRESH_BINARY_INV | cv::THRESH_OTSU)
+            : (cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+        cv::threshold(patchBlur, binary, 0, 255, threshType);
+
+        // Nur die Komponente behalten, die dem initialen Zentrum am nächsten liegt.
+        cv::Mat labels, stats, centroids;
+        int nLabels = cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
+
+        cv::Point2d localInit(cx0 - roi.x, cy0 - roi.y);
+
+        int bestLabel = -1;
+        double bestDist2 = std::numeric_limits<double>::max();
+
+        for (int label = 1; label < nLabels; ++label) // 0 = Hintergrund
+        {
+            int area = stats.at<int>(label, cv::CC_STAT_AREA);
+
+            // Grobe Plausibilität. Je nach Kreisgröße anpassen.
+            if (area < 10)
+                continue;
+
+            cv::Point2d cc(
+                centroids.at<double>(label, 0),
+                centroids.at<double>(label, 1)
+            );
+
+            double dx = cc.x - localInit.x;
+            double dy = cc.y - localInit.y;
+            double dist2 = dx * dx + dy * dy;
+
+            if (dist2 < bestDist2) {
+                bestDist2 = dist2;
+                bestLabel = label;
+            }
+        }
+
+        if (bestLabel < 0) {
+            refined.push_back(c);
+            continue;
+        }
+
+        cv::Mat componentMask = (labels == bestLabel);
+
+        // Momentenschwerpunkt der lokalen Komponente
+        cv::Moments m = cv::moments(componentMask, true);
+
+        if (std::abs(m.m00) < 1e-12) {
+            refined.push_back(c);
+            continue;
+        }
+
+        double cx = m.m10 / m.m00 + roi.x;
+        double cy = m.m01 / m.m00 + roi.y;
+
+        refined.emplace_back(cx, cy);
+
+        if (visualize) {
+            cv::Mat vis;
+            cv::cvtColor(patch, vis, cv::COLOR_GRAY2BGR);
+
+            cv::circle(vis, localInit, 3, cv::Scalar(0, 0, 255), 1);
+            cv::circle(vis, cv::Point2d(cx - roi.x, cy - roi.y), 3, cv::Scalar(0, 255, 0), 1);
+
+            cv::imshow("refine patch: red initial, green refined", vis);
+            cv::waitKey(0);
+        }
+    }
+
+    return refined;
+}
+
+
 
 
 std::vector<cv::Vec3d> ImageProcessing::createCalibPatternObjectPoints(
@@ -3215,7 +3329,7 @@ cv::Mat ImageProcessing::createAdaptiveMask(
         vec[0].size() != vec[1].size() || 
         erode < 0) throw std::invalid_argument("Input Images are not valid \n");
 
-    if (thresh_scale <= 0 || thresh_scale > 2.0) throw std::invalid_argument("Thresh scale out of bounds \n");
+    if (thresh_scale <= 0 || thresh_scale > 5.0) throw std::invalid_argument("Thresh scale out of bounds \n");
 
     const cv::Size working_sz = vec[0].size();
 
@@ -3262,6 +3376,12 @@ cv::Mat ImageProcessing::createAdaptiveMask(
     }
     cv::Rect box = cv::boundingRect(contours[roi]);
 
+    cv::Rect box_thresh = box;
+    box_thresh.x += box.width / 4;
+    box_thresh.y += box.height / 4;
+    box_thresh.width -= box.width / 2;
+    box_thresh.height -= box.height / 2;
+
     if (erode > 0) {
         const int border = erode / 2;
         box.x += border;
@@ -3272,17 +3392,20 @@ cv::Mat ImageProcessing::createAdaptiveMask(
     }
 
     cv::Mat roiExtracted = sum8U(box);
+    cv::Mat roiOtsu = sum8U(box_thresh);
 
     cv::Mat temp = cv::Mat(roiExtracted.size(), CV_8U);
 
     double thresh_val = 
-        cv::threshold(roiExtracted, temp, 0.0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+        cv::threshold(roiOtsu, temp, 0.0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
     // We do not take the OtsuTresh value direclty but lower the boundary just a bit
     thresh_val *= thresh_scale;
 
     cv::threshold(roiExtracted, tresh, thresh_val, 255.0, CV_8U);
 
     tresh.copyTo(output(box));
+
+    normalizeAndDisplay(output);
 
     return output;
 }
@@ -3335,7 +3458,7 @@ cv::Mat ImageProcessing::createMask(
         maskbin.setTo(0, maskROI == 0);
     }
 
-    //ormalizeAndDisplay(maskbin);
+    normalizeAndDisplay(maskbin);
 
     return maskbin;
 }

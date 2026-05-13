@@ -29,6 +29,9 @@ struct GeometricCalibrationData {
 	cv::Mat camMat;
 	cv::Mat distCoeffs;
 
+	cv::Mat cam2camRot;
+	cv::Mat cam2camTvec;
+
 	cv::Mat mask_ROI;
 
 	std::string path{};
@@ -136,8 +139,11 @@ struct GeometricCalibrationResult {
 	cv::Mat disp2cam_rvec{};
 	cv::Mat disp2cam_tvec{};
 
-	cv::Mat cam2mir_rvec{};
-	cv::Mat cam2mir_tvec{};
+	cv::Mat mir2cam_rvec{};
+	cv::Mat mir2cam_tvec{};
+
+	cv::Mat virtDisp2cam_rvec{};
+	cv::Mat virtDisp2cam_tvec{};
 };
 
 class ImageProcessing;

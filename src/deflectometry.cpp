@@ -627,6 +627,9 @@ std::vector<cv::Mat> Deflectometry::do_unwrapped_phase(
 	const cv::Size& sz)
 {
 	CV_Assert(wrapped_Phase[0].size() == mask.size());
+
+	m_img_store->clear(FrameRole::UnwrappedPhase);
+
 	//CV_Assert(wrapped_Phase[0].type() == mask.type());
 	std::vector<cv::Mat> unwrappedPhase;
 	if (mode == UnwrapMode::manually) {

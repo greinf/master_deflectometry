@@ -48,9 +48,9 @@ public:
 	cv::Mat mask_contrast_secon;
 	cv::Size working_size;
 	Cam2Mirror cam2mirror{};
-	VirtDisp2Cam virDisp2cam{};
+	VirtDisp2Cam virtDisp2cam{};
 	Mirror2Cam mirror2cam{};
-	Cam2VirtDisp cam2disp{};
+	Cam2VirtDisp cam2Virtdisp{};
 
 };
 
@@ -208,18 +208,30 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 	// If not possible we need to check if Graycode must be applied also for the secon Camera. 
 	//m_impl->mask_ROI_secon = data.mask_ROI_secon;
 
+	cv::Mat amplx_prim, amplx_secon, amply_prim, amply_secon;
+
+	cv::multiply((*data.contrast)[0], (*data.biasIntensity)[0], amplx_prim);
+	cv::multiply((*data.contrast)[1], (*data.biasIntensity)[1], amply_prim);
+
+	cv::multiply((*data.contrast_sec_cam)[0], (*data.biasIntensity_sec_cam)[0], amplx_secon);
+	cv::multiply((*data.contrast_sec_cam)[1], (*data.biasIntensity_sec_cam)[1], amply_secon);
+
+	std::vector<cv::Mat> amplitude_prim{ amplx_prim, amply_prim };
+	std::vector<cv::Mat> amplitude_secon{ amplx_secon, amply_secon };
+
 	m_impl->working_size = m_impl->mask_ROI_prim.size();
 
 	m_impl->mask_ROI_secon = m_img_processing.createMask(*data.contrast_sec_cam, 0.5);
-	m_impl->mask_contrast_prim = m_img_processing.createMask(*data.contrast, 0.92);
-	m_impl->mask_contrast_secon = m_img_processing.createMask(*data.contrast_sec_cam, 0.92);
+	m_impl->mask_contrast_prim = m_img_processing.createAdaptiveMask(*data.contrast, 30, 1.0);
+	m_impl->mask_contrast_secon = m_img_processing.createAdaptiveMask(*data.contrast, 30, 1.0);
 
 	cv::Mat biasIntensityPrimary, biasIntensitySecondary,
 		amplitudePrimary, amplitudeSecondary,
 		IntensityPrimary8U, IntensitySecondary8U, homogenuosPoint;
 
-	biasIntensityPrimary = m_img_processing.mean(*data.biasIntensity);
-	biasIntensitySecondary = m_img_processing.mean(*data.biasIntensity_sec_cam);
+
+	biasIntensityPrimary = m_img_processing.mean(*data.biasIntensity);   // amplitude_prim
+	biasIntensitySecondary = m_img_processing.mean(*data.biasIntensity_sec_cam);  //amplitude_secon
 	
 	cv::normalize(biasIntensityPrimary, IntensityPrimary8U, 0, 255.0, cv::NORM_MINMAX, CV_8U);
 	cv::normalize(biasIntensitySecondary, IntensitySecondary8U, 0, 255.0, cv::NORM_MINMAX, CV_8U);
@@ -291,12 +303,6 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 		std::make_optional(reprojectionErr)
 	);
 	
-	// Projektion Matrixes between the two cameras. 
-	cv::Mat P1 = cv::Mat::eye(3, 4, CV_64F);
-	cv::Mat P2 = cv::Mat::zeros(3, 4, CV_64F);
-	data.cam2cam_rotMat.copyTo(P2(cv::Rect(0, 0, 3, 3)));
-	data.cam2cam_tvec.copyTo(P2(cv::Rect(3, 0, 1, 3)));
-
 	std::vector<cv::Vec3d> patternObjectPoints =
 		m_img_processing.createCalibPatternObjectPoints(
 			m_impl->m_config.pattern_size,
@@ -342,6 +348,9 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 		imagePointsDisp.push_back(cv::Point2d(calibPoints.first[i]));
 	}
 
+	m_impl->virtDisp2cam.rvec = (cv::Mat_<double>(3, 1) << 0.0, CV_PI, 0.0);
+	m_impl->virtDisp2cam.tvec = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 2500.0);
+
 	std::vector<int> inliers_d;
 
 	bool ok = cv::solvePnPRansac(
@@ -349,9 +358,9 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 		imagePointsDisp,
 		data.camMat,
 		data.distCoeffs,
-		m_impl->virDisp2cam.rvec,
-		m_impl->virDisp2cam.tvec,
-		false,                          // useExtrinsicGuess
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec,
+		true,                          // useExtrinsicGuess
 		2000,                           // iterationsCount
 		2.0,                            // reprojectionError [px]
 		0.99,                           // confidence
@@ -359,7 +368,10 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 		cv::SOLVEPNP_IPPE               // good for planar object points
 	);
 
-	if (!ok || inliers_d.size() < 4)
+	std::cout << inliers_d.size() << " Points are inliers for Resektion from Ransac from " << objectPointsDisp.size() <<
+		" availabel points" << std::endl;
+
+	if (!ok || inliers_d.size() < 10)
 	{
 		std::cout << "solvePnPRansac failed for virtual display pose\n";
 		return {};
@@ -382,8 +394,8 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 		imageInliers,
 		data.camMat,
 		data.distCoeffs,
-		m_impl->virDisp2cam.rvec,
-		m_impl->virDisp2cam.tvec,
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec,
 		true,
 		cv::SOLVEPNP_IPPE
 	);
@@ -399,11 +411,9 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 		imageInliers,
 		data.camMat,
 		data.distCoeffs,
-		m_impl->virDisp2cam.rvec,
-		m_impl->virDisp2cam.tvec
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec
 	);
-
-
 
 	open3d::geometry::PointCloud triangulated_mirr(triangulated_pts_eigen_mirr);
 	open3d::geometry::PointCloud pattern_mirr(pattern_pts_eigen_mirr);
@@ -420,9 +430,9 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 	// Finds transformation from pattern to Triangulated Points (in Rectified System!!!)
 	// cam -> mir
 	open3d::pipelines::registration::TransformationEstimationPointToPoint poseEstimation(false);
-	//open3d::pipelines::registration::RANSACConvergenceCriteria converg(1e7, 0.9999);
-	//open3d::pipelines::registration::CorrespondenceCheckerBasedOnEdgeLength checker(0.9);
-	//std::vector<std::reference_wrapper<const open3d::pipelines::registration::CorrespondenceChecker>> ref_checker{ checker };
+	// open3d::pipelines::registration::RANSACConvergenceCriteria converg(1e7, 0.9999);
+	// open3d::pipelines::registration::CorrespondenceCheckerBasedOnEdgeLength checker(0.8);
+	// std::vector<std::reference_wrapper<const open3d::pipelines::registration::CorrespondenceChecker>> ref_checker{ checker };
 
 
 	// Calculates x_triang = transfrom * x_pattern
@@ -431,14 +441,16 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 			pattern_mirr,
 			triangulated_mirr,
 			correspondence,
-			0.2,
+			0.5,
 			poseEstimation,
-			3
-			//ref_checker,
+			5
+			// ref_checker
 			//converg
 		);
 
 	const open3d::pipelines::registration::CorrespondenceSet& inliers = result_registration_mirr.correspondence_set_;
+
+	std::cout << inliers.size() << " Points are inliers in Registration \n";
 
 	Eigen::Matrix4d mir2cam_affine = poseEstimation.ComputeTransformation(
 		pattern_mirr,
@@ -467,7 +479,7 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 	cv::Rodrigues(mir2cam_Rot, mir2cam_rvec);
 	cv::Rodrigues(cam2mir_Rot, cam2mir_rvec);
 	
-	m_impl->cam2mirror.rvec = mir2cam_rvec;
+	m_impl->cam2mirror.rvec = cam2mir_rvec;
 	m_impl->cam2mirror.tvec = cam2mir_tvec;
 	m_impl->mirror2cam.rvec = mir2cam_rvec;
 	m_impl->mirror2cam.tvec = mir2cam_tvec;
@@ -475,20 +487,22 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 
 	GeometricCalibrationResult result{};
 
-	result.cam2mir_rvec = cam2mir_rvec;
-	result.cam2mir_tvec = cam2mir_tvec;
+	result.mir2cam_rvec = m_impl->mirror2cam.rvec;
+	result.mir2cam_tvec = m_impl->mirror2cam.tvec;
+	result.virtDisp2cam_rvec = m_impl->virtDisp2cam.rvec;
+	result.virtDisp2cam_tvec = m_impl->virtDisp2cam.tvec;
 
 	std::cout << "Reach this. \n";
 
 	backToWorld(
 		result.disp2cam_rvec,
 		result.disp2cam_tvec,
-		m_impl->virDisp2cam.rvec,
-		m_impl->virDisp2cam.tvec,
-		m_impl->cam2mirror.rvec,
-		m_impl->cam2mirror.tvec,
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec,
 		m_impl->mirror2cam.rvec,
-		m_impl->mirror2cam.tvec
+		m_impl->mirror2cam.tvec,
+		m_impl->cam2mirror.rvec,
+		m_impl->cam2mirror.tvec
 	);
 
 	std::cout << "Reachd end \n";
@@ -741,7 +755,7 @@ GeometricCalibrationResult GeometricCalibration::calibrateMono(
 		masking.push_back(img);
 	}
 
-	m_impl->mask_contrast_prim = m_img_processing.createMask(masking, 0.9, false);
+	m_impl->mask_contrast_prim = m_img_processing.createAdaptiveMask(masking, 20, 1);
 
 	// Virtual Display Pose Estimation 
 	// Through Unwrap Pictures. 
@@ -794,31 +808,37 @@ GeometricCalibrationResult GeometricCalibration::calibrateMono(
 		imagePointsDisp.push_back(cv::Point2d(calibPoints.first[i]));
 	}
 	 
-	std::vector<cv::Mat> mir2cam_allSolutions_rvec, mir2cam_allSolutions_tvec;
-	bool solvePnP = cv::solvePnPGeneric(
+	//std::vector<cv::Mat> mir2cam_allSolutions_rvec, mir2cam_allSolutions_tvec;
+	// mir2cam_allSolutions_rvec,
+	// mir2cam_allSolutions_tvec,
+
+	m_impl->mirror2cam.rvec = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 0.0);
+	m_impl->mirror2cam.tvec = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 1000);
+
+	bool solvePnP = cv::solvePnP(
 		object,
 		image,
 		data.camMat,
 		data.distCoeffs,
-		mir2cam_allSolutions_rvec,
-		mir2cam_allSolutions_tvec,
-		false,
+		m_impl->mirror2cam.rvec,
+		m_impl->mirror2cam.tvec,
+		true,
 		cv::SOLVEPNP_IPPE);
 
-	if (!solvePnP || mir2cam_allSolutions_rvec.empty()) {
-		std::cout << "SolvePnP failed for calculating the mirror pose\n";
-		return {};
-	}
+	//if (!solvePnP || mir2cam_allSolutions_rvec.empty()) {
+	//	std::cout << "SolvePnP failed for calculating the mirror pose\n";
+	//	return {};
+	//}
 
-	for (std::size_t i = 0; i < mir2cam_allSolutions_rvec.size(); ++i) {
-		// It is assumed that there is a Mirror Coordiante System with nearly no Rotation
-		// with respect to Cammera coordinate System
-		if (cv::norm(mir2cam_allSolutions_rvec[i]) < CV_PI) {
-			m_impl->mirror2cam.rvec = mir2cam_allSolutions_rvec[i].clone();
-			m_impl->mirror2cam.tvec = mir2cam_allSolutions_tvec[i].clone();
-			break;
-		}
-	}
+	//for (std::size_t i = 0; i < mir2cam_allSolutions_rvec.size(); ++i) {
+	//	// It is assumed that there is a Mirror Coordiante System with nearly no Rotation
+	//	// with respect to Cammera coordinate System
+	//	if (cv::norm(mir2cam_allSolutions_rvec[i]) < CV_PI) {
+	//		m_impl->mirror2cam.rvec = mir2cam_allSolutions_rvec[i].clone();
+	//		m_impl->mirror2cam.tvec = mir2cam_allSolutions_tvec[i].clone();
+	//		break;
+	//	}
+	//}
 	
 	cv::solvePnPRefineLM(
 		object,
@@ -832,14 +852,31 @@ GeometricCalibrationResult GeometricCalibration::calibrateMono(
 	cv::Mat mir2cam_R;
 	cv::Rodrigues(m_impl->mirror2cam.rvec, mir2cam_R);
 
+	//// If Slave Camera was used one must transform back to primary
+	//// This is just an extension for the normal method where we claculate via Master Camera !
+	//cv::Mat primary2secondaryRot = data.cam2camRot;
+	//cv::Mat primary2secondaryTvec = data.cam2camTvec;
+	//cv::Mat secondary2primaryRot = data.cam2camRot.t();
+	//cv::Mat secondary2primaryTvec = -secondary2primaryRot * primary2secondaryTvec;
+
+	//cv::Mat mirror2primcamR = secondary2primaryRot * mir2cam_R;
+
+	//cv::Mat t_obj2primary = secondary2primaryRot * m_impl->mirror2cam.tvec + secondary2primaryTvec;
+
+	//cv::Rodrigues(mirror2primcamR, m_impl->mirror2cam.rvec);
+	//m_impl->cam2mirror.tvec = t_obj2primary;
+
+	//mir2cam_R = mirror2primcamR;
+
 	cv::Mat cam2mir_R = mir2cam_R.t();
 	cv::Mat cam2mir_t = -cam2mir_R * m_impl->mirror2cam.tvec;
 
 	m_impl->cam2mirror.tvec = cam2mir_t;
 	cv::Rodrigues(cam2mir_R, m_impl->cam2mirror.rvec);
 
+	m_impl->virtDisp2cam.rvec = (cv::Mat_<double>(3, 1) << 0.0, CV_PI, 0.0);
+	m_impl->virtDisp2cam.tvec = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 2000);
 	 
-	cv::Mat rvec, tvec;
 	std::vector<int> inliers;
 	
 	bool ok = cv::solvePnPRansac(
@@ -847,9 +884,9 @@ GeometricCalibrationResult GeometricCalibration::calibrateMono(
 		imagePointsDisp,
 		data.camMat,
 		data.distCoeffs,
-		rvec,
-		tvec,
-		false,                          // useExtrinsicGuess
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec,
+		true,                          // useExtrinsicGuess
 		2000,                           // iterationsCount
 		2.0,                            // reprojectionError [px]
 		0.99,                           // confidence
@@ -880,8 +917,8 @@ GeometricCalibrationResult GeometricCalibration::calibrateMono(
 		imageInliers,
 		data.camMat,
 		data.distCoeffs,
-		m_impl->virDisp2cam.rvec,
-		m_impl->virDisp2cam.tvec,
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec,
 		true,                 
 		cv::SOLVEPNP_IPPE
 	);
@@ -897,24 +934,47 @@ GeometricCalibrationResult GeometricCalibration::calibrateMono(
 		imageInliers,
 		data.camMat,
 		data.distCoeffs,
-		m_impl->virDisp2cam.rvec,
-		m_impl->virDisp2cam.tvec
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec
 	);
 
 	GeometricCalibrationResult result{};
 
-	result.cam2mir_rvec = m_impl->cam2mirror.rvec;
-	result.cam2mir_tvec = m_impl->cam2mirror.tvec;
+	/*cv::Mat virtdisp2SlaveR;
+	cv::Rodrigues(m_impl->virDisp2cam.rvec, virtdisp2SlaveR);
+
+	cv::Mat virtdisp2MasterR = secondary2primaryRot * virtdisp2SlaveR;
+
+	cv::Mat virtdisp2Master_tvec = -virtdisp2MasterR * m_impl->virDisp2cam.tvec;*/
+
+
+	//// Another extension for the Slave Camera:
+	//cv::Mat secondary2primaryRot = data.cam2camRot.t();
+	//cv::Mat secondary2primaryTvec = -secondary2primaryRot * primary2secondaryTvec;
+
+	//cv::Mat mirror2primcamR = secondary2primaryRot * mir2cam_R;
+
+	//cv::Mat t_obj2primary = secondary2primaryRot * m_impl->mirror2cam.tvec + secondary2primaryTvec;
+
+	//cv::Rodrigues(mirror2primcamR, m_impl->mirror2cam.rvec);
+	//m_impl->cam2mirror.tvec = t_obj2primary;
+
+	//mir2cam_R = mirror2primcamR;
+
+	result.virtDisp2cam_rvec = m_impl->virtDisp2cam.rvec;
+	result.virtDisp2cam_tvec = m_impl->virtDisp2cam.tvec;
+	result.mir2cam_rvec = m_impl->mirror2cam.rvec;
+	result.mir2cam_tvec = m_impl->mirror2cam.tvec;
 
 	backToWorld(
 		result.disp2cam_rvec,
 		result.disp2cam_tvec,
-		m_impl->virDisp2cam.rvec,
-		m_impl->virDisp2cam.tvec,
-		m_impl->cam2mirror.rvec,
-		m_impl->cam2mirror.tvec,
+		m_impl->virtDisp2cam.rvec,
+		m_impl->virtDisp2cam.tvec,
 		m_impl->mirror2cam.rvec,
-		m_impl->mirror2cam.tvec
+		m_impl->mirror2cam.tvec,
+		m_impl->cam2mirror.rvec,
+		m_impl->cam2mirror.tvec
 	);
 
 	return result;
@@ -942,46 +1002,35 @@ Eigen::Vector4d GeometricCalibration::fitPlane(
 void GeometricCalibration::backToWorld(
 		cv::Mat& rvec_w,
 		cv::Mat& tvec_w,
-		const cv::Mat& vdisp2cam_rvec,  // Rotation_vdisp->cam
-		const cv::Mat& vdisp2cam_tvec,  // Translation_vdisp->cam
-		const cv::Mat& cam2mirror_rvec, // Rotatoin_camera->mirror
-		const cv::Mat& cam2mirror_tvec, // translation_camera->mirror
-		const cv::Mat& mir2cam_rvec, // Rotation mirror->cam
-		const cv::Mat& mir2cam_tvec) // Translation mirror->cam
+		const cv::Mat& virtdisp2cam_rvec,  
+		const cv::Mat& virtDisp2cam_tvec,  
+		const cv::Mat& mirror2cam_rvec, 
+		const cv::Mat& mirror2cam_tvec, 
+		const cv::Mat& cam2mirror_rvec,
+		const cv::Mat& cam2mirror_tvec) 
 {
-	cv::Matx44d virtualdisp2cam = cv::Matx44d::eye(), observer = cv::Matx44d::eye();;
+	cv::Matx44d virtDisp2cam = cv::Matx44d::eye(), observer = cv::Matx44d::eye();;
 
-	// Create Transform from VirtualDispaly to Camera
-	createaffine(vdisp2cam_rvec, vdisp2cam_tvec, virtualdisp2cam);
+	createaffine(virtdisp2cam_rvec, virtDisp2cam_tvec, virtDisp2cam);
 
-	//observer = virtualdisp2cam;
-	observer = virtualdisp2cam;
-	// The Affine transformation from Camera to Mirror
-	cv::Matx44d affine_cam_to_mirr;
-	createaffine(cam2mirror_rvec, cam2mirror_tvec, affine_cam_to_mirr);
+	observer = virtDisp2cam;
 
-	// Transformation VirtualDispCoord -> CameraCoord -> MirrorCoord
-	//observer = virtualdisp2cam * affine_cam_to_mirr;
-	observer = affine_cam_to_mirr * virtualdisp2cam;
-	// In the mirror coordiante System apply the mirroring
+	cv::Matx44d affine_cam2mirror;
+	createaffine(cam2mirror_rvec, cam2mirror_tvec, affine_cam2mirror);
 
+	observer = affine_cam2mirror * virtDisp2cam;
+	
 	cv::Matx44d householder = cv::Matx44d::eye();
 	householder(2, 2) = -1.0;
 
-	// Transformation: VirtualdispalyCoord -> CameraCoord -> MirrorCoord -> Apply MirrorMatrix 
-	// oberserver is no left handed !!!! 
-	//observer = virtualdisp2cam * affine_cam_to_mirr * householder;
-
-	observer = householder * affine_cam_to_mirr * virtualdisp2cam;
+	observer = householder * affine_cam2mirror * virtDisp2cam;
 
 	cv::Matx44d affine_mirror2cam;
+	createaffine(mirror2cam_rvec, mirror2cam_tvec, affine_mirror2cam);
 
-	createaffine(mir2cam_rvec, mir2cam_tvec, affine_mirror2cam);
+	observer = affine_mirror2cam * householder * affine_cam2mirror * virtDisp2cam;
 
-	// The Transformation to the real coordiante System
-	//observer = virtualdisp2cam * affine_cam_to_mirr * householder * affine_mirror2cam;
-
-	observer = affine_mirror2cam * householder * affine_cam_to_mirr * virtualdisp2cam;
+	std::cout << "Disp 2 Camera: \n" << observer << std::endl;
 
 	cv::Vec3d x_axis(observer(0, 0), observer(1, 0), observer(2, 0));
 	x_axis /= cv::norm(x_axis);
@@ -1005,7 +1054,6 @@ void GeometricCalibration::backToWorld(
 	tvec_w = (cv::Mat_<double>(3, 1) <<
 		observer(0, 3), observer(1, 3), observer(2, 3));
 }
-
 
 
 GeometricCalibration::GeometricCalibration(const GeometricCalibrationConfig& config, ImageProcessing& process)

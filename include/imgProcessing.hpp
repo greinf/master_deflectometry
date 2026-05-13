@@ -213,6 +213,13 @@ public:
 		const std::string& path = std::string()
 	) const;
 
+	std::vector<cv::Vec2d> refineCircleCentersByMoments(
+		const cv::Mat& img8u,
+		const std::vector<cv::Vec2d>& initialCenters,
+		int roiRadius = 12,
+		bool darkCircles = true,
+		bool visualize = false) const;
+
 	// Creates a vector of Object Coordinates R^3 for Pose solving
 	// 1. In - Size of the pattern calibration Pattern
 	// 2. In - The distance between to calibration Points on the pattern. 

@@ -12,9 +12,7 @@
 #include "imgProcessing.hpp"
 #include "CameraSimulation.hpp"
 #include "CameraCalibration.hpp"
-#include "PSF.hpp"
-#include "Triangulate.hpp"
-
+#include "GeometricCalibration.hpp"
 
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
     {
@@ -59,120 +57,99 @@ int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-05-09_Sterenwarte_Test" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-05-12_GeometricCalibrationStereo_50_AllMatrixBIG" };
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie"
         "/data/2026-05-08_StereoCameraCalibration/Stereo_Calib.xml" };
 
-    // 
-    std::string cross_path{ "C:/Users/grein/Desktop/Fadenkreuz.png" };
-
-    cv::Mat cross = cv::imread(cross_path, cv::IMREAD_GRAYSCALE);
-    cv::Mat cross_resize;
-    cv::resize(cross, cross_resize, { 1920, 1080 });
-    
     Deflectometry meassure{};
 
     Pattern& pat = meassure.img_generation();
     ImageProcessing& processing = meassure.processing();
-    ImageStore& img_store = meassure.image_store();
 
-    // meassure.getFrames(FrameRole::Debug, 1, cross_resize);
+    meassure.load(FrameRole::CalibrationMatrix, camMatrix_path);
+    std::vector<cv::Mat> camMatrix = meassure.get(FrameRole::CalibrationMatrix);
+    std::vector<cv::Mat> distCoeffs = meassure.get(FrameRole::DistortionCoeff);
+    meassure.load(FrameRole::CalibCamToCam, camMatrix_path);
 
-    // !!!!!!!!!! Triangulation Part !!!!!! 
-    img_store.loadCalibrationMatrix(camMatrix_path);
-    img_store.loadCalibCamToCam(camMatrix_path);
 
-    std::vector<cv::Mat> intrinsic_calib = img_store.get(FrameRole::CalibrationMatrix);
+    cv::Mat cam2camRot = meassure.get(FrameRole::CalibCamToCam)[0];
+    cv::Mat cam2cam_tvec = meassure.get(FrameRole::CalibCamToCam)[1];
 
-    std::vector<cv::Mat> extrinsic_Calib = img_store.get(FrameRole::CalibCamToCam);
-
-    std::vector<cv::Mat> distCoeffs = img_store.get(FrameRole::DistortionCoeff);
-    cv::Mat rot = extrinsic_Calib[0];
-    cv::Mat trans = extrinsic_Calib[1];
-
-    cv::Mat camMatPrim = intrinsic_calib[0];
-    cv::Mat camMatSecon = intrinsic_calib[1];
-    cv::Mat distCoeffsPrim = distCoeffs[0];
-    cv::Mat distCoeffsSecon = distCoeffs[1];
-
-    /*Triangulate triangulate{
-        camMatPrim,
-        distCoeffsPrim,
-        camMatSecon,
-        distCoeffsSecon,
-        rot,
-        trans };
-
-    cv::Point2f prim(1351, 877);
-    cv::Point2f secon(1080, 1136);
-
-    cv::Point3f trinagulated_pt = triangulate.calculate(prim, secon);
-
-    triangulate.savePoint(path + "/triangulated.csv", prim, secon, trinagulated_pt);*/
-
-    GrayCodeConfig config{};
-    config.creation.inverse = false;
-    config.creation.pixel_x = 1920;
-    config.creation.pixel_y = 1080;
-    config.creation.resolution_x = 1000;
-    config.creation.resolution_y = 1000;
-    config.creation.starBit = config.msb;
-
-    std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
-
-    std::size_t grayCodesz{ grayCode1.size() };
+    // std::vector<cv::Mat> img = meassure.getFrames(FrameRole::Debug, 1);
 
     std::vector<cv::Mat> sin_pattern = pat.generate_phaseShift<UniformRowsCols>(
-        Shift_mode::four_phase_shift,
-        10.0 * 8,
+        Shift_mode::user_defined,
+        10.0,
         127.5,
         127.5,
         1920,
         1080,
-        {});
+        {}
+    );
 
-    std::size_t pattern_size{ sin_pattern.size() };
+    GrayCodeConfig config{};
+    config.creation.inverse = true;
+    config.creation.pixel_x = 1920;
+    config.creation.pixel_y = 1080;
+    config.creation.resolution_x = 1920;
+    config.creation.resolution_y = 1080;
+    config.creation.starBit = config.msb;
 
-    std::vector<cv::Mat> pattern{ grayCode1 };
+    std::vector<cv::Mat> grayCode = pat.generateGrayCodeImg(config);
+
+    std::size_t grayCodesz{ grayCode.size() };
+
+    std::size_t sinPatternsz{ sin_pattern.size() };
+
+    std::vector<cv::Mat> primary_Cam{ grayCode };
 
     for (const auto& img : sin_pattern) {
-        pattern.push_back(img);
+        primary_Cam.push_back(img);
     }
 
-    std::size_t n_pics = grayCodesz + pattern_size;
+    std::size_t n_pics_prim{ primary_Cam.size() };
 
-    int n_pics_per_val = 1;
+    int n_pics_per_val = 3;
 
-    std::vector<cv::Mat> images_prim = meassure.acquire_img(pattern, FrameRole::Debug, n_pics_per_val);
+    std::vector<cv::Mat> images = meassure.acquire_img(primary_Cam, FrameRole::Debug, n_pics_per_val);
 
-    std::vector<cv::Mat> mean_img_prim;
+    auto it = images.begin();
 
-    std::vector<cv::Mat>::iterator it = images_prim.begin();
+    std::vector<cv::Mat> meanimg;
 
-    for (std::size_t i = 0; i < n_pics; ++i) {
+    for (std::size_t i = 0; i < n_pics_prim; ++i) {
         auto it_end = std::next(it, n_pics_per_val);
-        mean_img_prim.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
+        meanimg.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
         it = it_end;
     }
 
-    auto& eval = config.getEvalParameter();
-    eval.start = mean_img_prim.begin();
-    eval.end = std::next(mean_img_prim.begin(), grayCodesz);
+    images = meanimg;
 
-    std::vector<cv::Mat> patternd(std::next(mean_img_prim.begin(), grayCodesz), mean_img_prim.end());
+    auto& eval = config.getEvalParameter();
+    eval.start = images.begin();
+    eval.end = std::next(images.begin(), grayCodesz);
 
     GrayCodeDecoder dec(processing);
 
     dec.decoding(config);
 
+    std::vector<cv::Mat> patternd(std::next(images.begin(), grayCodesz), images.end());
+
+    // Mask defining the ROI
+    cv::Mat mask = config.results.mask;
+    cv::Mat nanMask = ~(mask == mask);
+    mask.setTo(0.0, nanMask);
+
     std::vector<cv::Mat> wrapped_ref{ config };
 
-    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 4, false, path);
-
+    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 50, true, path);
     std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
+    std::vector<cv::Mat> baseIntensity = meassure.get(FrameRole::BaseIntensity);
 
-    cv::Mat mask_prim = processing.createAdaptiveMask(contrast, 100, 0.6);
+    cv::Mat mask_contrast = processing.createAdaptiveMask(contrast, 30, 1.0);
+
+    // shownormalized(mask_contrast);
 
     std::vector<cv::Mat> unwrapVector;
     unwrapVector.push_back(wrapped[0]);
@@ -180,136 +157,103 @@ int main()
     unwrapVector.push_back(wrapped[1]);
     unwrapVector.push_back(wrapped_ref[1]);
 
-    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask_prim, UnwrapMode::reference_Graycode, false, path, 108.0 / 8.0);
+    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask_contrast, UnwrapMode::reference_Graycode, true, path, 108.0);
 
-    // Secondary Camera part. 
-    std::vector<cv::Mat> images_secondary = meassure.acquire_img(pattern, FrameRole::Debug, n_pics_per_val);
+    // --- Secondary Camera part ---
+    // Comment in when Stero Calibratoin I used !!!!
+    // Append the Full white and Full Black image at the end. 
+    std::vector<cv::Mat> secondary_cam{ sin_pattern };
+    //secondary_cam.push_back(*std::prev(grayCode.end(), 2));
+    //secondary_cam.push_back(*std::prev(grayCode.end(), 1));
+
+    std::vector<cv::Mat> images_secondary = meassure.acquire_img(secondary_cam, FrameRole::Debug, n_pics_per_val);
+
+    std::size_t seondary_size{ images_secondary.size() };
 
     it = images_secondary.begin();
 
     std::vector<cv::Mat> mean_secondary;
 
-    for (std::size_t i = 0; i < n_pics; ++i) {
+    for (std::size_t i = 0; i < sinPatternsz; ++i) {
         auto it_end = std::next(it, n_pics_per_val);
         mean_secondary.push_back(processing.mean(std::vector<cv::Mat>(it, it_end)));
         it = it_end;
     }
 
-    eval = config.getEvalParameter();
-    eval.start = mean_secondary.begin();
-    eval.end = std::next(mean_secondary.begin(), grayCodesz);
-
-    // Sinus Pattern
-    std::vector<cv::Mat> patternd_secon(std::next(mean_secondary.begin(), grayCodesz), mean_secondary.end());
-
-    dec.decoding(config);
-
-    std::vector<cv::Mat> wrapped_ref_secon{ config };
-
     images_secondary = mean_secondary;
 
-    std::vector<cv::Mat> images_secondary_wrapped = meassure.do_wrapped_phase(patternd_secon, 1, 4, false, path + "/secondary");
+    std::vector<cv::Mat> images_secondary_warpped = meassure.do_wrapped_phase(images_secondary, 1, 50, true, path +"/secondary");
     std::vector<cv::Mat> contrast_secondary = meassure.get(FrameRole::Contrast);
     std::vector<cv::Mat> baseIntensity_secondary = meassure.get(FrameRole::BaseIntensity);
+    // ---- Stop Second Camera ----
 
-    cv::Mat mask_secon = processing.createAdaptiveMask(contrast_secondary, 100, 0.6);
 
-    std::vector<cv::Mat> unwrap_vector_secon(4);
-    unwrap_vector_secon[0] = images_secondary_wrapped[0];
-    unwrap_vector_secon[1] = wrapped_ref_secon[0];
-    unwrap_vector_secon[2] = images_secondary_wrapped[1];
-    unwrap_vector_secon[3] = wrapped_ref_secon[1];
-    
-    std::vector<cv::Mat> unwrap_secondary = meassure.do_unwrapped_phase(unwrap_vector_secon, mask_secon, UnwrapMode::reference_Graycode, false, path + "/secondary", 108.0 / 8.0);
+    std::cout << "geometric Setup Start \n";
 
-    // PSF part
-    int bins = 10;
+    GeometricCalibrationConfig geoConfig{};
+    geoConfig.displayPixelPitch = 0.2745;
+    geoConfig.point_dist = 4;
+    geoConfig.wavelength_phase = 108.0;
+    geoConfig.pattern_size = cv::Size{ 20,20 };
 
-    std::vector<cv::Mat> psf_prim, psf_secon;
-   
-    do {
-        // PSF berechnen
-        PSF_Config psf_config{
-            108.0 / 8.0,
-            bins,
-            {1920, 1080}
-        };
+    GeometricCalibration geoCalib(geoConfig, processing);
 
-        PSF_Data psf_data{};
-        psf_data.mask = &mask_prim;
-        psf_data.unwrap = &unwrap;
+    GeometricCalibrationData_Stereo geodata;
+    geodata.camMat = camMatrix[0];
+    geodata.distCoeffs = distCoeffs[0];
+    geodata.unwrap = &unwrap;
+    geodata.contrast = &contrast;
+    geodata.biasIntensity = &baseIntensity;
+    geodata.cam2camRot = cam2camRot;
+    geodata.cam2camTvec = cam2cam_tvec;
+    geodata.mask_ROI = mask;
+    geodata.path = path;
 
-        PSF psf_eval(psf_config);
+    geodata.camMat_secundaryCam = camMatrix[1];
+    geodata.distCoeffs_secondaryCam = distCoeffs[1];
+    geodata.cam2cam_rotMat = cam2camRot;
+    geodata.cam2cam_tvec = cam2cam_tvec;
+    geodata.biasIntensity_sec_cam = &baseIntensity_secondary;
+    geodata.contrast_sec_cam = &contrast_secondary;
 
-        auto result = psf_eval.computePSF(psf_data);
+    // auto result = geoCalib.calibrateMono(geodata);
 
-        // anzeigen
-        shownormalized(result.histo);
+    auto result = geoCalib.calibrateStereo(geodata);
 
-        std::cout << "\nCurrent bin size: " << psf_config.m_bins << std::endl;
-        std::cout << "Enter new bin size (0 = keep current): ";
+    auto& store = meassure.image_store();
 
-        std::cin >> bins;
+    std::vector<cv::Mat> calib{ result.disp2cam_rvec.clone(), result.disp2cam_tvec.clone() };
 
-        psf_prim.push_back(result.histo);
+    store.add(FrameRole::CalibDispToCam, calib);
 
-    } while (bins != 0);
+    store.saveRoleXML(FrameRole::CalibDispToCam, path);
 
-    bins = 10;
-    do {
-        // PSF berechnen
-        PSF_Config psf_config{
-            108.0 / 8.0,
-            bins,
-            {1920, 1080}
-        };
+    cv::Mat mir2camRot, virtDisp2camRot, disp2camRot;
+    cv::Rodrigues(result.mir2cam_rvec, mir2camRot);
+    cv::Rodrigues(result.virtDisp2cam_rvec, virtDisp2camRot);
+    cv::Rodrigues(result.disp2cam_rvec, disp2camRot);
 
-        PSF_Data psf_data{};
-        psf_data.mask = &mask_secon;
-        psf_data.unwrap = &unwrap_secondary;
+    saveRotationMatrix(mir2camRot, result.mir2cam_tvec, path + "/mir2camRot.xml");
 
-        PSF psf_eval(psf_config);
+    saveRotationMatrix(virtDisp2camRot, result.virtDisp2cam_tvec, path + "/virtDisp2camRot.xml");
 
-        auto result = psf_eval.computePSF(psf_data);
+    saveRotationMatrix(disp2camRot, result.disp2cam_tvec, path + "/RealDisp2camRot.xml");
 
-        // anzeigen
-        shownormalized(result.histo);
+    GeometricCalibrationTestData geotestData{ camMatrix[0], distCoeffs[0] };
+    geotestData.unwrap = &unwrap;
+    geotestData.contrast = &contrast;
+    geotestData.biasIntensity = &baseIntensity;
+    geotestData.disp2cam_rvec = result.disp2cam_rvec;
+    geotestData.disp2cam_tvec = result.disp2cam_tvec;
+    geotestData.mir2cam_rvec = result.mir2cam_rvec;
+    geotestData.mir2cam_tvec = result.mir2cam_tvec;
 
-        std::cout << "\nCurrent bin size: " << psf_config.m_bins << std::endl;
-        std::cout << "Enter new bin size (0 = keep current): ";
+    auto surfaces = geoCalib.test_calibration(geotestData);
 
-        std::cin >> bins;
+    store.add(FrameRole::SurfaceNormals, surfaces);
 
-        psf_secon.push_back(result.histo);
+    store.saveRoleXML(FrameRole::SurfaceNormals, path);
 
-    } while (bins != 0);
+    std::cout << "Happy ? \n";
 
-    std::vector<cv::Mat> psf_images_prim;
-    for (auto& img : psf_prim) {
-        cv::Mat norm;
-        cv::normalize(img, norm, 0, 255.0, cv::NORM_MINMAX, CV_8U);
-        std::vector<cv::Mat> img = meassure.getFrames(FrameRole::PSF, 1, norm);
-        psf_images_prim.push_back(img[0]);
-    }
-    
-    std::vector<cv::Mat> psf_images_secon;
-    for (auto& img : psf_secon) {
-        cv::Mat norm;
-        cv::normalize(img, norm, 0, 255.0, cv::NORM_MINMAX, CV_8U);
-        std::vector<cv::Mat> img = meassure.getFrames(FrameRole::PSF, 1, norm);
-        psf_images_secon.push_back(img[0]);
-    }
-
-    img_store.add(FrameRole::PSFgt, psf_prim);
-    img_store.add(FrameRole::PSF, psf_images_prim);
-    img_store.saveRole(FrameRole::PSFgt, path);
-    img_store.saveRole(FrameRole::PSF, path);
-
-    img_store.clear(FrameRole::PSFgt);
-    img_store.clear(FrameRole::PSF);
-    img_store.add(FrameRole::PSFgt, psf_secon);
-    img_store.add(FrameRole::PSF, psf_images_secon);
-    img_store.saveRole(FrameRole::PSFgt, path + "/secondary");
-    img_store.saveRole(FrameRole::PSF, path + "/secondary");
-    
 }
