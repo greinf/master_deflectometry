@@ -15,6 +15,7 @@
 #include <optional>
 #include <GrayCalibration_Utils.hpp>
 #include "deflectometryUtils.hpp"
+#include "GrayCalibration.hpp"
 
 //Forward Decleration Enums + Class
 
@@ -508,7 +509,8 @@ public:
 	 cv::Mat applyCalibration(
 		 const cv::Mat& image,
 		 cv::Mat& mask,
-		 const _defl_::GrayCal::Method methode
+		 const _defl_::GrayCal::Method methode,
+		 const ModelApplyOptions& options = ModelApplyOptions{}
 	 );
 
 	 // calculates the element wise difference of a two images and return the result. 
@@ -534,7 +536,6 @@ public:
 		 return *m_img_store;
 	 }
 
-	 
 	 std::unique_ptr<ImageStore> m_img_store{ nullptr }; // Must be shared_ptr
 	 std::unique_ptr<Pattern> m_pattern{ nullptr }; // could be Unique
 	 std::unique_ptr<AcquisitionWorker> m_acquisition_worker{ nullptr };  // Must be shared

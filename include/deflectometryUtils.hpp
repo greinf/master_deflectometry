@@ -10,7 +10,9 @@ namespace _defl_ {
 			ActiveModel,
 			PassiveModel,
 			ActiveModel_Bias,
-			PassiveModel_Bias
+			PassiveModel_Bias,
+			LocLutActive,
+			LocLutPassive
 		};
 	};
 }

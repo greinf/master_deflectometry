@@ -10,8 +10,17 @@ struct CalibrationConfig {
     cv::Size boardSize{};
     float squareSize = 0.0f;
 
+    // Intrinsic initialization
+    bool useIntrinsicGuess = false;
+
+    // Principal point
     bool fixPrincipalPoint = false;
+    bool principalPointAtImageCenter = true;
+    cv::Point2d principalPointGuess{}; // only used if principalPointAtImageCenter == false
+
+    // Lens model
     bool zeroTangentDist = false;
+
     bool fixAspectRatio = false;
     float aspectRatio = 1.0f;
 
@@ -20,6 +29,10 @@ struct CalibrationConfig {
     bool fixK3 = false;
     bool fixK4 = false;
     bool fixK5 = false;
+    bool fixK6 = false;
+
+    // Stereo
+    bool fixIntrinsicsInStereo = true;
 
     bool writeExtrinsics = true;
     bool writePerViewErrors = true;
@@ -91,6 +104,10 @@ private:
     [[nodiscard]] static std::vector<cv::Point3f> createBoardObjectPoints(
         const cv::Size& boardSize,
         float squareSize);
+
+    cv::Mat createInitialCameraMatrix(
+        const cv::Size& imageSize,
+        const CalibrationConfig& config) const;
 
     [[nodiscard]] static double computeReprojectionErrors(
         const std::vector<std::vector<cv::Point3f>>& objectPoints,

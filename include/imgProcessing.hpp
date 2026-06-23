@@ -57,7 +57,8 @@ public:
 
 	cv::Mat createHomographyFromGrayCode(
 		const std::vector<cv::Mat>&,
-		const cv::Size& sz
+		const cv::Size& sz,
+		const bool mirror_x = false
 	);
 
 	std::vector<cv::Mat> createMappingfromHomography(

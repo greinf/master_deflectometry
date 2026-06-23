@@ -40,6 +40,8 @@ enum class FrameRole {
     Modell_Passive,    // Like Modell_Active
     ModellBias_Active, // Like Modell_Active
     ModellBias_Passive,// Like Modell_Active
+    LocalLutActive,    // LocalLutActive (Just the Images from the GrayValues)
+    LocalLutPassive,   // LocalLutPassive ""
     CalibDisp_Cam,     // Hold the rotation and translation between the main camera and the dispaly
     ReferenceChecker,  // Picture of the 4x4 Reference Checkerboard to create the referene point
     CalibDispToCam,    // the Calibration rvec[0] and tvec[1]
@@ -51,7 +53,8 @@ enum class FrameRole {
     SurfaceNormals,    // A pictre of Surface Normals used for validating the Geometric Calibration
     EssentialMatrix,   // Essential Matrix used fin SteroCameraSetups 
     PSF,               // A picture of how many CameraPixels did hit one dispaly Pixel
-    PSFgt,
+    PSFgt,             
+    mask,              // Mask Calculated from Amplitude 
     maxElements        // Place Holder for ammound of categories
 };
 
@@ -109,6 +112,8 @@ public:
     // |----...
     void loadRoleXML(FrameRole role, const std::string& filename);
 
+    void loadRolePNG(FrameRole role, const std::string& filename);
+
     void loadCalibCamToCam(const std::string& path);
 
     void loadCalibrationMatrix(const std::string& filename);
@@ -116,8 +121,6 @@ public:
     void saveLut(const std::string& path);
 
     void loadLut(const std::string& path);
-
-
 
 private:
     std::map<FrameRole, std::vector<cv::Mat>> storage_;
@@ -133,11 +136,11 @@ private:
         "ReprojectionY", "Debug", "All", "GridPattern", "DistortionCalib", "DistortErrX",
         "DistortErrY", "UndistortErrX", "UndistortErrY", "Modell_Active", "Modell_Passive",
         "ModellBias_Active", "ModellBias_Passive",
+        "LocalLutActive", "LocalLutPassive",
         "CalibDisp_Cam", "ReferenceCheckerBoard", "CalibDispToCam",
         "CalibCamToCam", "UnwrapError", "GrayCode", "GrayCode_Result", "CameraSimulation", 
-        "SurfaceNormals" , "EssentialMatrix" , "PSF" , "PSF-GT"
+        "SurfaceNormals" , "EssentialMatrix" , "PSF" , "PSF-GT", "mask"
     } };
-    
 };
 
 #endif

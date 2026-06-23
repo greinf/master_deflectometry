@@ -73,8 +73,8 @@ int main()
     config.creation.inverse = false;
     config.creation.pixel_x = 1920;
     config.creation.pixel_y = 1080;
-    config.creation.resolution_x = 500;
-    config.creation.resolution_y = 500;
+    config.creation.resolution_x = 1920;
+    config.creation.resolution_y = 1080;
     config.creation.starBit = config.msb;
 
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
@@ -94,7 +94,7 @@ int main()
     // Active Calibration
     cv::Mat mask_c = cv::Mat::ones(sin_pattern[0].size(), CV_8U);
 
-    int border = 50;
+    int border = 30;
 
     // oben
     mask_c(cv::Range(0, border), cv::Range::all()) = 0;
@@ -108,9 +108,9 @@ int main()
     // rechts
     mask_c(cv::Range::all(), cv::Range(mask_c.cols - border, mask_c.cols)) = 0;
 
-    /*for (auto& img : sin_pattern) {
+    for (auto& img : sin_pattern) {
         img = meassure.applyCalibration(img, mask_c, method);
-    }*/
+    }
 
     std::size_t pattern_size{ sin_pattern.size() };
 
@@ -126,7 +126,7 @@ int main()
     Sim_config.camera.camera_mat = camMatrix[0];
     Sim_config.camera.dist_coeffs = distCoeffs[0];
     Sim_config.scene.disp_shift_z = 4000.0;
-    Sim_config.scene.disp_shift_x = -1920 / 2.0 * 0.2745;
+    Sim_config.scene.disp_shift_x = -1920 / 1.5.0 * 0.2745;
     Sim_config.scene.disp_shift_y = -1080 / 2.0 * 0.2745;
     Sim_config.disp.scaling = 1.0;
     Sim_config.disp.bias = 0;
@@ -138,10 +138,10 @@ int main()
     Sim_config.data.begin = pattern.begin()._Ptr;
     Sim_config.data.end = pattern.end()._Ptr;
     Sim_config.camera.apertureSmoothing = false;
-    Sim_config.camera.f_number = 16.0;  // The phase has a wavelength of 108pix/2pi -> goal circl of confusion ~ 50pix ->  50mm/4 / 0.2745(pixepitch) = 45pix
+    Sim_config.camera.f_number = 16.0;  
     Sim_config.camera.circle_of_confusion_n_disp = 0;
-    Sim_config.camera.quantization = true;
-    Sim_config.disp.quantization = true;
+    Sim_config.camera.quantization = false;
+    Sim_config.disp.quantization = false;
 
     std::vector<cv::Mat> simulate =
         simulation.simulate(Sim_config);
@@ -217,16 +217,6 @@ int main()
    //for (auto& img : sin_pattern) {
    //    img = meassure.applyCalibration(img, mask_c, method);
    //}
-
-
-
-//cv::Mat mask = config.results.mask;
-
-//// Just make the mask a bit smaller 
-//cv::Mat kernel = cv::Mat::ones(5, 5, CV_8U);
-
-//cv::erode(mask, mask, kernel, { -1,-1 }, 50);
-
 
 }
 

@@ -13,12 +13,14 @@ namespace GrayCalibration_specifier {
 		struct LUT:_Base::specifier_Base {};
 		struct Model:_Base::specifier_Base {};
 		struct Model_Bias:_Base::specifier_Base {};
+		struct LocLUT:_Base::specifier_Base{};
 	}
 
 	namespace Passive {
 		struct LUT:_Base::specifier_Base {};
 		struct Model:_Base::specifier_Base {};
 		struct Model_Bias:_Base::specifier_Base {};
+		struct LocLUT:_Base::specifier_Base{};
 	}
 
 	struct NoCalib:_Base::specifier_Base {};

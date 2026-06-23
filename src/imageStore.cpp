@@ -355,6 +355,7 @@ void ImageStore::loadCalibCamToCam(const std::string& path) {
 
 
 
+
 void ImageStore::loadRoleXML(FrameRole role, const std::string& basePath)
 {
     if (role == FrameRole::GrayLUT) {
@@ -394,5 +395,78 @@ void ImageStore::loadRoleXML(FrameRole role, const std::string& basePath)
         fs["img_" + std::to_string(i)] >> img;
         storage_[role].push_back(img);
     }
+}
+
+void ImageStore::loadRolePNG(FrameRole role, const std::string& path)
+{
+    namespace fs = std::filesystem;
+
+    std::string dir =
+        path + "/" +
+        FrameRole_string.at(static_cast<size_t>(role));
+
+    if (!fs::exists(dir))
+        throw std::runtime_error("Directory does not exist: " + dir);
+
+    // Collect numbered png files
+    std::vector<std::pair<int, fs::path>> numberedFiles;
+
+    for (const auto& entry : fs::directory_iterator(dir)) {
+
+        if (!entry.is_regular_file())
+            continue;
+
+        const fs::path& p = entry.path();
+
+        if (p.extension() != ".png")
+            continue;
+
+        try {
+            // filename without extension
+            std::string stem = p.stem().string();
+
+            // convert e.g. "12" -> 12
+            int number = std::stoi(stem);
+
+            numberedFiles.emplace_back(number, p);
+        }
+        catch (...) {
+            // Ignore files that are not numbered
+        }
+    }
+
+    // Sort by number
+    std::sort(
+        numberedFiles.begin(),
+        numberedFiles.end(),
+        [](const auto& a, const auto& b) {
+            return a.first < b.first;
+        });
+
+    // Load images
+    std::vector<cv::Mat> loadedImages;
+
+    for (const auto& [number, file] : numberedFiles) {
+
+        cv::Mat img = cv::imread(
+            file.string(),
+            cv::IMREAD_GRAYSCALE);
+
+        if (img.empty()) {
+            std::cerr << "Failed to load: "
+                << file.string() << '\n';
+            continue;
+        }
+
+        loadedImages.push_back(img);
+    }
+
+    // Store images
+    storage_[role] = loadedImages;
+
+    std::cout << "Loaded "
+        << loadedImages.size()
+        << " images from "
+        << dir << '\n';
 }
 

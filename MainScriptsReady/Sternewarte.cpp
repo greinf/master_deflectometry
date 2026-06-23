@@ -59,7 +59,7 @@ int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-05-09_Sterenwarte_Test" };
+    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-05-16_SterenwarteTest" };
 
     std::string camMatrix_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie"
         "/data/2026-05-08_StereoCameraCalibration/Stereo_Calib.xml" };
@@ -77,7 +77,7 @@ int main()
     ImageProcessing& processing = meassure.processing();
     ImageStore& img_store = meassure.image_store();
 
-    // meassure.getFrames(FrameRole::Debug, 1, cross_resize);
+    //meassure.getFrames(FrameRole::Debug, 1, cross_resize);
 
     // !!!!!!!!!! Triangulation Part !!!!!! 
     img_store.loadCalibrationMatrix(camMatrix_path);
@@ -104,8 +104,8 @@ int main()
         rot,
         trans };
 
-    cv::Point2f prim(1351, 877);
-    cv::Point2f secon(1080, 1136);
+    cv::Point2f prim(1055, 943);
+    cv::Point2f secon(948, 1091);
 
     cv::Point3f trinagulated_pt = triangulate.calculate(prim, secon);
 
@@ -115,8 +115,8 @@ int main()
     config.creation.inverse = false;
     config.creation.pixel_x = 1920;
     config.creation.pixel_y = 1080;
-    config.creation.resolution_x = 1920;
-    config.creation.resolution_y = 1080;
+    config.creation.resolution_x = 20;
+    config.creation.resolution_y = 20;
     config.creation.starBit = config.msb;
 
     std::vector<cv::Mat> grayCode1 = pat.generateGrayCodeImg(config);
@@ -125,7 +125,7 @@ int main()
 
     std::vector<cv::Mat> sin_pattern = pat.generate_phaseShift<UniformRowsCols>(
         Shift_mode::four_phase_shift,
-        10.0 * 8,
+        10.0 * 5,
         127.5,
         127.5,
         1920,
@@ -142,9 +142,12 @@ int main()
 
     std::size_t n_pics = grayCodesz + pattern_size;
 
-    int n_pics_per_val = 1;
+    int n_pics_per_val = 3;
 
-    std::vector<cv::Mat> images_prim = meassure.acquire_img(pattern, FrameRole::Debug, n_pics_per_val);
+    std::vector<cv::Mat> images_prim = meassure.acquire_img(pattern, FrameRole::RawInput, n_pics_per_val);
+
+    // save Raw Primary Input
+    img_store.saveRole(FrameRole::RawInput, path + "/primary");
 
     std::vector<cv::Mat> mean_img_prim;
 
@@ -168,11 +171,22 @@ int main()
 
     std::vector<cv::Mat> wrapped_ref{ config };
 
-    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 4, true, path);
+    std::vector<cv::Mat> wrapped = meassure.do_wrapped_phase(patternd, 1, 4, true, path + "/primary");
 
     std::vector<cv::Mat> contrast = meassure.get(FrameRole::Contrast);
+    std::vector<cv::Mat> biasIntensity = meassure.get(FrameRole::BaseIntensity);
 
-    cv::Mat mask_prim = processing.createAdaptiveMask(contrast, 100, 0.6);
+    std::vector<cv::Mat> amplitude(2);
+
+    cv::multiply(contrast[0], biasIntensity[0], amplitude[0]);
+    cv::multiply(contrast[1], biasIntensity[1], amplitude[1]);
+
+    cv::Mat mask_prim = processing.createMask(amplitude, 0.5, true);
+
+    img_store.add(FrameRole::mask, mask_prim);
+    img_store.saveRole(FrameRole::mask, path + "/primary");
+
+    img_store.clear(FrameRole::mask);
 
     std::vector<cv::Mat> unwrapVector;
     unwrapVector.push_back(wrapped[0]);
@@ -180,10 +194,13 @@ int main()
     unwrapVector.push_back(wrapped[1]);
     unwrapVector.push_back(wrapped_ref[1]);
 
-    std::vector<cv::Mat> unwrap = meassure.do_unwrapped_phase(unwrapVector, mask_prim, UnwrapMode::reference_Graycode, true, path, 108.0 / 8.0);
+    std::vector<cv::Mat> unwrap =
+        meassure.do_unwrapped_phase(unwrapVector, mask_prim, UnwrapMode::reference_Graycode, true, path + "/primary", 108.0 / 5.0);
 
     // Secondary Camera part. 
-    std::vector<cv::Mat> images_secondary = meassure.acquire_img(pattern, FrameRole::Debug, n_pics_per_val);
+    std::vector<cv::Mat> images_secondary = meassure.acquire_img(pattern, FrameRole::RawInput, n_pics_per_val);
+
+    img_store.saveRole(FrameRole::RawInput, path + "/secondary");
 
     it = images_secondary.begin();
 
@@ -212,7 +229,13 @@ int main()
     std::vector<cv::Mat> contrast_secondary = meassure.get(FrameRole::Contrast);
     std::vector<cv::Mat> baseIntensity_secondary = meassure.get(FrameRole::BaseIntensity);
 
-    cv::Mat mask_secon = processing.createAdaptiveMask(contrast_secondary, 100, 0.6);
+    std::vector<cv::Mat> amplitude_secon(2);
+
+    cv::multiply(contrast_secondary[0], baseIntensity_secondary[0], amplitude_secon[0]);
+    cv::multiply(contrast_secondary[1], baseIntensity_secondary[1], amplitude_secon[1]);
+
+
+    cv::Mat mask_secon = processing.createMask(amplitude_secon, 0.5, true);
 
     std::vector<cv::Mat> unwrap_vector_secon(4);
     unwrap_vector_secon[0] = images_secondary_wrapped[0];
@@ -220,7 +243,8 @@ int main()
     unwrap_vector_secon[2] = images_secondary_wrapped[1];
     unwrap_vector_secon[3] = wrapped_ref_secon[1];
 
-    std::vector<cv::Mat> unwrap_secondary = meassure.do_unwrapped_phase(unwrap_vector_secon, mask_secon, UnwrapMode::reference_Graycode, true, path + "/secondary", 108.0 / 8.0);
+    std::vector<cv::Mat> unwrap_secondary =
+        meassure.do_unwrapped_phase(unwrap_vector_secon, mask_secon, UnwrapMode::reference_Graycode, true, path + "/secondary", 108.0 / 5.0);
 
     // PSF part
     int bins = 10;
@@ -230,7 +254,7 @@ int main()
     do {
         // PSF berechnen
         PSF_Config psf_config{
-            108.0 / 8.0,
+            108.0 / 5.0,
             bins,
             {1920, 1080}
         };
@@ -255,11 +279,18 @@ int main()
 
     } while (bins != 0);
 
+    img_store.clear(FrameRole::PSFgt);
+    //img_store.clear(FrameRole::PSF);
+    img_store.add(FrameRole::PSFgt, psf_prim);
+    //img_store.add(FrameRole::PSF, psf_images_prim);
+    img_store.saveRole(FrameRole::PSFgt, path + "primary");
+    //img_store.saveRole(FrameRole::PSF, path);
+
     bins = 10;
     do {
         // PSF berechnen
         PSF_Config psf_config{
-            108.0 / 8.0,
+            108.0 / 5.0,
             bins,
             {1920, 1080}
         };
@@ -284,36 +315,30 @@ int main()
 
     } while (bins != 0);
 
-    std::cout << "Primary Camera \n";
-    std::vector<cv::Mat> psf_images_prim;
-    for (auto& img : psf_prim) {
-        cv::Mat norm;
-        cv::normalize(img, norm, 0, 255.0, cv::NORM_MINMAX, CV_8U);
-        std::vector<cv::Mat> img = meassure.getFrames(FrameRole::PSF, 1, norm);
-        psf_images_prim.push_back(img[0]);
-    }
+    /* std::cout << "Primary Camera \n";
+     std::vector<cv::Mat> psf_images_prim;
+     for (auto& img : psf_prim) {
+         cv::Mat norm;
+         cv::normalize(img, norm, 0, 255.0, cv::NORM_MINMAX, CV_8U);
+         std::vector<cv::Mat> img = meassure.getFrames(FrameRole::PSF, 1, norm);
+         psf_images_prim.push_back(img[0]);
+     }*/
 
-    std::cout << "Secondary Camera \n";
-    std::vector<cv::Mat> psf_images_secon;
-    for (auto& img : psf_secon) {
-        cv::Mat norm;
-        cv::normalize(img, norm, 0, 255.0, cv::NORM_MINMAX, CV_8U);
-        std::vector<cv::Mat> img = meassure.getFrames(FrameRole::PSF, 1, norm);
-        psf_images_secon.push_back(img[0]);
-    }
 
-    img_store.clear(FrameRole::PSFgt);
-    img_store.clear(FrameRole::PSF);
-    img_store.add(FrameRole::PSFgt, psf_prim);
-    img_store.add(FrameRole::PSF, psf_images_prim);
-    img_store.saveRole(FrameRole::PSFgt, path);
-    img_store.saveRole(FrameRole::PSF, path);
+     /*std::cout << "Secondary Camera \n";
+     std::vector<cv::Mat> psf_images_secon;
+     for (auto& img : psf_secon) {
+         cv::Mat norm;
+         cv::normalize(img, norm, 0, 255.0, cv::NORM_MINMAX, CV_8U);
+         std::vector<cv::Mat> img = meassure.getFrames(FrameRole::PSF, 1, norm);
+         psf_images_secon.push_back(img[0]);
+     }*/
 
     img_store.clear(FrameRole::PSFgt);
-    img_store.clear(FrameRole::PSF);
+    //img_store.clear(FrameRole::PSF);
     img_store.add(FrameRole::PSFgt, psf_secon);
-    img_store.add(FrameRole::PSF, psf_images_secon);
+    //img_store.add(FrameRole::PSF, psf_images_secon);
     img_store.saveRole(FrameRole::PSFgt, path + "/secondary");
-    img_store.saveRole(FrameRole::PSF, path + "/secondary");
+    //img_store.saveRole(FrameRole::PSF, path + "/secondary");
 
 }

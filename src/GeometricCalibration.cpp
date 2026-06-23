@@ -222,8 +222,8 @@ GeometricCalibrationResult GeometricCalibration::calibrateStereo(
 	m_impl->working_size = m_impl->mask_ROI_prim.size();
 
 	m_impl->mask_ROI_secon = m_img_processing.createMask(*data.contrast_sec_cam, 0.5);
-	m_impl->mask_contrast_prim = m_img_processing.createAdaptiveMask(*data.contrast, 30, 1.0);
-	m_impl->mask_contrast_secon = m_img_processing.createAdaptiveMask(*data.contrast, 30, 1.0);
+	m_impl->mask_contrast_prim = m_img_processing.createAdaptiveMask(amplitude_prim, 30, 0.95);
+	m_impl->mask_contrast_secon = m_img_processing.createAdaptiveMask(amplitude_secon, 30, 0.95);
 
 	cv::Mat biasIntensityPrimary, biasIntensitySecondary,
 		amplitudePrimary, amplitudeSecondary,

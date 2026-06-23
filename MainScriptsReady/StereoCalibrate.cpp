@@ -44,10 +44,10 @@ int main()
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
 
-    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-11_Grauwertkalbirierung_Data_Simulated/2026-04-11_Sim_G2.2_nLumQuantDispApertureQantCam" };
+    //std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-11_Grauwertkalbirierung_Data_Simulated/2026-04-11_Sim_G2.2_nLumQuantDispApertureQantCam" };
 
     std::string camMatrix_save_path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie"
-        "/data/2026-04-23_CameraCalibration/Stereo_Calib.xml" };
+        "/data/2026-05-25_CameraCalibration_useGuessIntrinsic/Stereo_Calib.xml" };
 
     Deflectometry meassure{};
 
@@ -55,10 +55,17 @@ int main()
     ImageProcessing& processing = meassure.processing();
 
     CalibrationConfig CamCalibConfig;
-    CamCalibConfig.fixK2 = true;
-    CamCalibConfig.fixK3 = true;
+    CamCalibConfig.fixK2 = false;
+    CamCalibConfig.fixK3 = false;
     CamCalibConfig.fixK4 = true;
     CamCalibConfig.fixK5 = true;
+
+    CamCalibConfig.useIntrinsicGuess = true;
+    CamCalibConfig.fixPrincipalPoint = false;
+    CamCalibConfig.principalPointAtImageCenter = true;
+
+    CamCalibConfig.zeroTangentDist = true;
+
     CamCalibConfig.boardSize = { 8, 11 };
     CamCalibConfig.squareSize = 30.0;
     CamCalibConfig.outputFileName = camMatrix_save_path;
@@ -67,11 +74,14 @@ int main()
 
     std::vector<cv::Mat> cam1, cam2;
 
-    for (std::size_t i = 0; i < 13; ++i) {
+    for (std::size_t i = 0; i < 15; ++i) {
+        std::cout << "pimrary" << std::endl;
         std::vector<cv::Mat> calib_frames1 = meassure.getFrames(FrameRole::Debug, 1);
+        std::cout << "secondary " << std::endl;
         std::vector<cv::Mat> calib_frames2 = meassure.getFrames(FrameRole::Debug, 1);
         cam1.push_back(calib_frames1[0]);
         cam2.push_back(calib_frames2[0]);
+        std::cout << i << " /14" << std::endl;
     }
 
     std::vector<StereoImagePair> images;

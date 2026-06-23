@@ -796,6 +796,11 @@ bool Deflectometry::setupCalibration(
 		return m_calibration->setupCalibrationMethod(GrayCalibration_specifier::NoCalib{}, path);
 		// Did here some unecessary complicated tempalted shit 
 		//return setupCalibrationTypeDispatch<_defl_::GrayCal::Method::None>(path);
+	case(_defl_::GrayCal::Method::LocLutActive): 
+		return m_calibration->setupCalibrationMethod(GrayCalibration_specifier::Active::LocLUT{}, path);
+	case(_defl_::GrayCal::Method::LocLutPassive):
+		std::cout << "Only the Active loc LUT is loaded " << std::endl;
+		return m_calibration->setupCalibrationMethod(GrayCalibration_specifier::Active::LocLUT{}, path);	
 	case(_defl_::GrayCal::Method::ActiveLut):
 		[[fallthrough]];
 	case(_defl_::GrayCal::Method::PassiveLut):
@@ -820,29 +825,34 @@ bool Deflectometry::setupCalibration(
 cv::Mat Deflectometry::applyCalibration(
 	const cv::Mat& image,
 	cv::Mat& mask,
-	const _defl_::GrayCal::Method methode)
+	const _defl_::GrayCal::Method methode,
+	const ModelApplyOptions& options)
 {
 	CV_Assert(!image.empty());
 	CV_Assert(m_calibration != nullptr);
 
 	switch (methode) {
 	case(_defl_::GrayCal::Method::None): 
-		return m_calibration->applyCalibration(GrayCalibration_specifier::NoCalib{}, image, mask);
+		return m_calibration->applyCalibration(GrayCalibration_specifier::NoCalib{}, image, mask, options);
 	case(_defl_::GrayCal::Method::PassiveLut):
-		 return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::LUT{}, image, mask);
+		 return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::LUT{}, image, mask, options);
 		 //[[fallthrough]];
 	case(_defl_::GrayCal::Method::ActiveLut):
-		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::LUT{}, image, mask);
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::LUT{}, image, mask, options);
 	case(_defl_::GrayCal::Method::ActiveModel):
-		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::Model{}, image, mask);
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::Model{}, image, mask, options);
 	case(_defl_::GrayCal::Method::PassiveModel):
-		return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::Model{}, image, mask);
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::Model{}, image, mask, options);
 	case(_defl_::GrayCal::Method::ActiveModel_Bias):
-		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::Model_Bias{}, image, mask);
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::Model_Bias{}, image, mask, options);
 	case(_defl_::GrayCal::Method::PassiveModel_Bias):
-		return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::Model_Bias{}, image, mask);
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::Model_Bias{}, image, mask, options);
+	case(_defl_::GrayCal::Method::LocLutActive):
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Active::LocLUT{}, image, mask, options);
+	case(_defl_::GrayCal::Method::LocLutPassive):
+		return m_calibration->applyCalibration(GrayCalibration_specifier::Passive::LocLUT{}, image, mask, options);
 	}
-	return{};
+	throw std::runtime_error("Should never Reach this Point");
 }
 
 std::vector<cv::Mat> Deflectometry::generatePattern(
@@ -1451,14 +1461,18 @@ bool Deflectometry::do_grayvalue_calibration(
 
 	// If more than one pic per val we have to mean the pictures
 	std::vector<cv::Mat> mean_images;
+	mean_images.reserve(256);
+
 	if (n_pics_perValue > 1) {
 		std::vector<cv::Mat>::const_iterator start = gray_val.begin();
 		for (std::size_t i = 0; i < 256; ++i) {
 			std::vector<cv::Mat>::const_iterator end =
-				std::next(start, static_cast<std::size_t>(n_pics_perValue + 1));
+				std::next(start, static_cast<std::size_t>(n_pics_perValue));
 
 			mean_images.emplace_back(
 				process.mean(std::vector<cv::Mat>(start, end)));
+
+			start = end; 
 		}
 	}
 	else {
@@ -1531,7 +1545,22 @@ bool Deflectometry::do_grayvalue_calibrationTypeDispatch(
 			mask,
 			path
 		);
+	case(_defl_::GrayCal::Method::LocLutActive):
+		return m_calibration->doCalibration(
+			GrayCalibration_specifier::Active::LocLUT{},
+			gray_img,
+			mask,
+			path
+		);
+	case(_defl_::GrayCal::Method::LocLutPassive):
+		return m_calibration->doCalibration(
+			GrayCalibration_specifier::Passive::LocLUT{},
+			gray_img,
+			mask,
+			path
+		);
 	}
+
 	return false;
 }
 

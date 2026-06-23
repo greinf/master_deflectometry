@@ -1304,53 +1304,65 @@ cv::Mat ImageProcessing::remapCameraToScreen(
 
 cv::Mat ImageProcessing::createHomographyFromGrayCode(
     const std::vector<cv::Mat>& grayCode_img,
-    const cv::Size& sz)
+    const cv::Size& sz,
+    const bool mirrorX)
 {
     CV_Assert(grayCode_img.size() == 2);
-    CV_Assert((grayCode_img[0].type() == CV_32F) &&
-        (grayCode_img[1].type() == CV_32F));
-    CV_Assert(grayCode_img[0].channels() == 1 &&
-        grayCode_img[1].channels() == 1);
+    CV_Assert(grayCode_img[0].type() == CV_32F);
+    CV_Assert(grayCode_img[1].type() == CV_32F);
+    CV_Assert(grayCode_img[0].channels() == 1);
+    CV_Assert(grayCode_img[1].channels() == 1);
     CV_Assert(grayCode_img[0].size() == grayCode_img[1].size());
-    
+
     std::mutex mtx;
 
     const cv::Size img_size = grayCode_img[0].size();
 
-    std::vector<cv::Point2f> src_pts, dst_pts;
+    std::vector<cv::Point2f> src_pts;
+    std::vector<cv::Point2f> dst_pts;
 
     cv::parallel_for_(cv::Range(1, img_size.height),
         [&](const cv::Range& range) {
-            for (int row = range.start; row < range.end; ++row)
-                {
-                const float* x_ptr = 
-                    grayCode_img[0].ptr<float>(row);
-                const float* y_ptr = 
-                    grayCode_img[1].ptr<float>(row);
-                // Ptr to previous row 
-                const float* y_ptr_prev =
-                    grayCode_img[1].ptr<float>(row - 1);
-                for (int cols = 1; cols < img_size.width; ++cols) {
-                    // Check for nan values 
-                    if (std::isnan(x_ptr[cols - 1]) || std::isnan(y_ptr[cols - 1])) continue;
-                    if (std::isnan(x_ptr[cols]) || std::isnan(y_ptr[cols])) continue;
+            for (int row = range.start; row < range.end; ++row) {
 
-                    // This is done because we expect some Steps within the GrayCode results
-                    // The most accurate Values shoud be the values that are at the Edge of a step
-                    // Therefor this check is applied to only take values if they are near a rising edge. 
-                    // Src are the "normal" pixel coordinates. The dst holds the dispaly coordinates in camera space. 
-                    if (x_ptr[cols] > x_ptr[cols - 1] && y_ptr[cols] > y_ptr_prev[cols]) {
+                const float* x_ptr = grayCode_img[0].ptr<float>(row);
+                const float* y_ptr = grayCode_img[1].ptr<float>(row);
+                const float* y_ptr_prev = grayCode_img[1].ptr<float>(row - 1);
+
+                for (int col = 1; col < img_size.width; ++col) {
+
+                    if (!std::isfinite(x_ptr[col - 1]) ||
+                        !std::isfinite(y_ptr[col - 1]) ||
+                        !std::isfinite(x_ptr[col]) ||
+                        !std::isfinite(y_ptr[col]) ||
+                        !std::isfinite(y_ptr_prev[col]))
+                    {
+                        continue;
+                    }
+
+                    const bool xEdge =
+                        mirrorX
+                        ? (x_ptr[col] < x_ptr[col - 1])
+                        : (x_ptr[col] > x_ptr[col - 1]);
+
+                    
+                    if (xEdge) {
                         std::lock_guard<std::mutex> lock(mtx);
-                        dst_pts.push_back(
-                            cv::Point2f(static_cast<float>(cols), static_cast<float>(row)));
-                        src_pts.push_back(
-                            cv::Point2f(static_cast<float>(x_ptr[cols]), static_cast<float>(y_ptr[cols])));
-                    }  
+
+                        dst_pts.emplace_back(
+                            static_cast<float>(col),
+                            static_cast<float>(row));
+
+                        src_pts.emplace_back(
+                            x_ptr[col],
+                            y_ptr[col]);
+                    }
                 }
             }
         });
 
     CV_Assert(dst_pts.size() == src_pts.size());
+    CV_Assert(src_pts.size() >= 4);
 
     return cv::findHomography(src_pts, dst_pts, cv::RANSAC);
 }
@@ -3447,14 +3459,14 @@ cv::Mat ImageProcessing::createMask(
     // Create Structuring Element for opening&closing
     cv::Mat maskROI;
     cv::Mat strucutre = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(5, 5));
-    cv::morphologyEx(maskbin, maskROI, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 5);
-    cv::morphologyEx(maskbin, maskROI, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 5);
+    cv::morphologyEx(maskbin, maskROI, cv::MORPH_OPEN, strucutre, cv::Point2d(-1, -1), 2);
+    cv::morphologyEx(maskbin, maskROI, cv::MORPH_CLOSE, strucutre, cv::Point2d(-1, -1), 2);
 
     maskbin.setTo(0, maskROI == 0);
 
     // Shrink the allowed values since we have a reference Point that is in the middle of the image.
     if (erode) {
-        cv::morphologyEx(maskROI, maskROI, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 40);
+        cv::morphologyEx(maskROI, maskROI, cv::MORPH_ERODE, strucutre, cv::Point2d(-1, -1), 5);
         maskbin.setTo(0, maskROI == 0);
     }
 

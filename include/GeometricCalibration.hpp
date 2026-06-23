@@ -206,6 +206,16 @@ private:
 		const cv::Mat& mask
 	);
 
+	void printPoseCheck(const std::string& name, const cv::Mat& R, const cv::Mat& t)
+	{
+		std::cout << "\n--- " << name << " ---\n";
+		std::cout << "origin in master:\n" << t << "\n";
+		std::cout << "x_axis in master:\n" << R.col(0) << "\n";
+		std::cout << "y_axis in master:\n" << R.col(1) << "\n";
+		std::cout << "z_axis / normal in master:\n" << R.col(2) << "\n";
+		std::cout << "det(R) = " << cv::determinant(R) << "\n";
+	}
+
 	cv::Mat generateCoordinateImage(
 		const cv::Size& sz,
 		const int dimension = 2

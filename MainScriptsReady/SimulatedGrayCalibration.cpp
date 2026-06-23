@@ -126,9 +126,11 @@ int main()
 
     std::vector<cv::Mat> grayValues_mapped = processing.remapCameraToScreen(grayValues_simulated, maps);
 
-    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel);
+    //meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel);
 
-    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveLut);
+    // meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveLut);
+
+    meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::LocLutPassive);
 
     meassure.do_grayvalue_calibration(grayValues_simulated, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel);
 

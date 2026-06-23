@@ -13,6 +13,16 @@
 
 class ImageStore;
 
+struct ModelApplyOptions {
+    int gammaKernel = 1;
+    int iMaxKernel = 1;
+    int i0Kernel = 1;
+
+    bool gammaGlobal = false;
+    bool iMaxGlobal = false;
+    bool i0Global = false;
+};
+
 
 class GrayCalibration {
 private:
@@ -43,6 +53,13 @@ private:
 	// Sorts the Lut Array in the impl ptr. 
 	bool prepareLUT();
 
+    cv::Mat prepareParameterMap(
+        const cv::Mat& img,
+        const cv::Mat& mask,
+        const int kernel,
+        const bool global
+    );
+
 	cv::Mat applyLut(
 		const cv::Mat& img,
         const cv::Mat& mask
@@ -55,7 +72,8 @@ private:
 	cv::Mat applyModelFit(
 		const cv::Mat& img,
         const cv::Mat& mask,
-        const std::vector<cv::Mat>& calImages
+        const std::vector<cv::Mat>& calImages,
+        const ModelApplyOptions& options = {}
 	);
 
 	Gray_Calib_Result fitGammaBias_LM(
@@ -111,6 +129,11 @@ public:
 		const GrayCalibration_specifier::Active::Model_Bias,
 		const std::string& path);
 
+    bool setupCalibrationMethod(
+        const GrayCalibration_specifier::Active::LocLUT,
+        const std::string& path
+    );
+
     // Setup the data for Calibration Method (Passive-LUT) in Impl-ptr
     // Just calls the Active::LUT method
 	bool setupCalibrationMethod(
@@ -126,6 +149,11 @@ public:
 	bool setupCalibrationMethod(
 		const GrayCalibration_specifier::Passive::Model_Bias,
 		const std::string& path);
+
+    bool setupCalibrationMethod(
+        const GrayCalibration_specifier::Passive::LocLUT,
+        const std::string& path
+    );
 
     // Setup the data for Calibration Method (No Calib)
     bool setupCalibrationMethod(
@@ -147,49 +175,71 @@ public:
     cv::Mat applyCalibration(
         const GrayCalibration_specifier::Active::LUT,
         const cv::Mat& image,
-        cv::Mat& mask
+        cv::Mat& mask,
+        const ModelApplyOptions& options
+    );
+
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Active::LocLUT,
+        const cv::Mat& image,
+        cv::Mat& mask,
+        const ModelApplyOptions& options
     );
 
     // Applies Active-Model Calibration
     cv::Mat applyCalibration(
         const GrayCalibration_specifier::Active::Model,
         const cv::Mat& img,
-        cv::Mat& mask
+        cv::Mat& mask,
+        const ModelApplyOptions& options
     );
 
     // Applies Active-Model-Bias Calibration
     cv::Mat applyCalibration(
         const GrayCalibration_specifier::Active::Model_Bias,
         const cv::Mat& img,
-        cv::Mat& mask
+        cv::Mat& mask,
+        const ModelApplyOptions& options
     );
 
     // Applies Passive-Lut Calibratoin
     cv::Mat applyCalibration(
         const GrayCalibration_specifier::Passive::LUT,
         const cv::Mat& img,
-        cv::Mat& mask
+        cv::Mat& mask,
+        const ModelApplyOptions& options
+    );
+
+    // Applies Passive-Lut Calibratoin
+    cv::Mat applyCalibration(
+        const GrayCalibration_specifier::Passive::LocLUT,
+        const cv::Mat& img,
+        cv::Mat& mask,
+        const ModelApplyOptions& options
     );
 
     // Applies Passive-Model Calibration
     cv::Mat applyCalibration(
         const GrayCalibration_specifier::Passive::Model,
         const cv::Mat& img,
-        cv::Mat& mask
+        cv::Mat& mask,
+        const ModelApplyOptions& options
     );
 
     // Applies Passive-Model-Bias
     cv::Mat applyCalibration(
         const GrayCalibration_specifier::Passive::Model_Bias,
         const cv::Mat& img,
-        cv::Mat& mask
+        cv::Mat& mask,
+        const ModelApplyOptions& options
     );
 
     // Applies No Calibration -> directly return the input. 
     static cv::Mat applyCalibration(
         const GrayCalibration_specifier::NoCalib,
         const cv::Mat& img,
-        const cv::Mat& mask)
+        const cv::Mat& mask,
+        const ModelApplyOptions& options)
     {
         return img;
     }
@@ -263,6 +313,32 @@ public:
            m_img_store.saveLut(path);
 
            return true;
+        }
+
+        if constexpr (std::is_same<T, GrayCalibration_specifier::Active::LocLUT>::value)
+        {
+            m_img_store.clear(FrameRole::LocalLutActive);
+
+            for (const auto& img : images) {
+                cv::Mat img8U;
+                img.convertTo(img8U, CV_8U);
+                // img8U.setTo(0, ~mask);
+                m_img_store.add(FrameRole::LocalLutActive, img8U);
+            }
+            m_img_store.saveRole(FrameRole::LocalLutActive, path);
+        }
+
+        if constexpr (std::is_same<T, GrayCalibration_specifier::Passive::LocLUT>::value) {
+            m_img_store.clear(FrameRole::LocalLutPassive);
+            std::cout << "Not implemented at this Time \n";
+            throw std::runtime_error("Method not implemented \n");
+            for (const auto& img : images) {
+                cv::Mat img8U;
+                img.convertTo(img8U, CV_8U);
+                img8U.setTo(0, ~mask);
+                m_img_store.add(FrameRole::LocalLutPassive, img8U);
+            }
+            m_img_store.saveRole(FrameRole::LocalLutPassive, path);
         }
 
         // All model Based Calibration Methods are created here.

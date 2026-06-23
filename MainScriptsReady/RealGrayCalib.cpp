@@ -43,14 +43,17 @@ int main()
 {
     //Supress open CV Information -only warnings are logged. 
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
-    std::string path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-16_ReprojektionSimulated/QuantDispCamGamma2.2Lum_ActiveModelBiasNoAper" };
-
-    std::string path_gray_calibration{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-04-16_Grauwertkalbirierung_Data_Real/2026-04-16_dark_room" };
+    
+    std::string path_gray_calibration{ 
+        "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/"
+        "2026-05-17_Grauwertkalbirierung_Data_Real/CameraGamma1.0" };
 
     Deflectometry meassure{};
 
     Pattern& pat = meassure.img_generation();
     ImageProcessing& processing = meassure.processing();
+
+    meassure.getFrames(FrameRole::Debug, 1);
 
     GrayCodeConfig config{};
     config.creation.inverse = false;
@@ -111,7 +114,7 @@ int main()
     // Active Calibration
     cv::Mat mask_active = cv::Mat::ones(grayValues_mapped[0].size(), CV_8U);
 
-    int border = 50;
+    int border = 20;
 
     // oben
     mask_active(cv::Range(0, border), cv::Range::all()) = 0;
@@ -123,31 +126,75 @@ int main()
     mask_active(cv::Range::all(), cv::Range(0, border)) = 0;
 
     // rechts
+    mask_active(cv::Range::all(), cv::Range(mask_active.cols - border, mask_active.cols)) = 0;
+
 
     cv::Mat mask_passive = config.results.mask;
-
-    mask_active(cv::Range::all(), cv::Range(mask_active.cols - border, mask_active.cols)) = 0;
 
     // Just make the mask a bit smaller 
     cv::Mat kernel = cv::Mat::ones(5, 5, CV_8U);
 
-    cv::erode(mask_passive, mask_passive, kernel, { -1,-1 }, 50);
+    cv::erode(mask_passive, mask_passive, kernel, { -1,-1 }, 20);
 
-    cv::Mat mask_Lut;
+    /*cv::Mat mask_Lut;
 
-    cv::erode(mask_passive, mask_Lut, kernel, { -1,-1 }, 50);
+    cv::erode(mask_passive, mask_Lut, kernel, { -1,-1 }, 50);*/
 
-    meassure.do_grayvalue_calibration(grayValues_mapped, mask_active, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel);
+    meassure.do_grayvalue_calibration(
+        grayValues_mapped, 
+        mask_active, 
+        1, 
+        1, 
+        true, 
+        path_gray_calibration, 
+        _defl_::GrayCal::Method::ActiveModel);
+
+    meassure.do_grayvalue_calibration(
+        grayValues_mapped, 
+        mask_active, 
+        1, 
+        1, 
+        true, 
+        path_gray_calibration, 
+        _defl_::GrayCal::Method::LocLutActive);
 
     //meassure.do_grayvalue_calibration(grayValues_mapped, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveLut);
 
-    meassure.do_grayvalue_calibration(grayValues, mask_passive, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel);
+    meassure.do_grayvalue_calibration(
+        grayValues, 
+        mask_passive, 
+        1, 
+        1, 
+        true,
+        path_gray_calibration, 
+        _defl_::GrayCal::Method::PassiveModel);
 
-    meassure.do_grayvalue_calibration(grayValues, mask_Lut, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveLut);
+    /*meassure.do_grayvalue_calibration(
+        grayValues, 
+        mask_Lut, 
+        1, 
+        1, 
+        true, 
+        path_gray_calibration, 
+        _defl_::GrayCal::Method::PassiveLut);*/
 
-    meassure.do_grayvalue_calibration(grayValues_mapped, mask_active, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::ActiveModel_Bias);
+    meassure.do_grayvalue_calibration(
+        grayValues_mapped, 
+        mask_active, 
+        1, 
+        1, 
+        true, 
+        path_gray_calibration, 
+        _defl_::GrayCal::Method::ActiveModel_Bias);
 
-    meassure.do_grayvalue_calibration(grayValues, mask_passive, 1, 1, true, path_gray_calibration, _defl_::GrayCal::Method::PassiveModel_Bias);
+    meassure.do_grayvalue_calibration(
+        grayValues, 
+        mask_passive, 
+        1,
+        1, 
+        true, 
+        path_gray_calibration, 
+        _defl_::GrayCal::Method::PassiveModel_Bias);
 
 
 }

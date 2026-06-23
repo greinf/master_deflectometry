@@ -73,7 +73,7 @@ add_executable (${PROJECT_NAME}
     "src/CameraSimulation.cpp" 
     "src/CameraCalibration.cpp" 
     "src/GeometricCalibration.cpp" 
-    "src/PSF.cpp" )
+    "src/PSF.cpp"  "MainScriptsReady/Raycaster.cpp")
 
 
 #Debug 
@@ -147,6 +147,7 @@ target_include_directories(${PROJECT_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/include/config
+	${CMAKE_CURRENT_SOURCE_DIR}/include/RayTracer
         ${CMAKE_CURRENT_SOURCE_DIR}/include/runtime
 	${VIMBAX_INCLUDE_DIR} 
 )

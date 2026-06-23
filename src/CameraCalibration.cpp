@@ -14,17 +14,51 @@ bool CalibrationConfig::isValid() const {
     return true;
 }
 
+cv::Mat CameraCalibration::createInitialCameraMatrix(
+    const cv::Size& imageSize,
+    const CalibrationConfig& config) const
+{
+    CV_Assert(imageSize.width > 0 && imageSize.height > 0);
+
+    cv::Mat K = cv::Mat::eye(3, 3, CV_64F);
+
+    // Grober Startwert: deine Kameras liegen ungefähr bei 14800 px.
+    // Falls du es allgemeiner willst: max(width,height)*6 oder ähnliches.
+    const double fGuess = 14800.0;
+
+    K.at<double>(0, 0) = fGuess;
+    K.at<double>(1, 1) = config.fixAspectRatio
+        ? fGuess / static_cast<double>(config.aspectRatio)
+        : fGuess;
+
+    if (config.principalPointAtImageCenter) {
+        K.at<double>(0, 2) = static_cast<double>(imageSize.width) / 2.0;
+        K.at<double>(1, 2) = static_cast<double>(imageSize.height) / 2.0;
+    }
+    else {
+        K.at<double>(0, 2) = config.principalPointGuess.x;
+        K.at<double>(1, 2) = config.principalPointGuess.y;
+    }
+
+    return K;
+}
+
+
 int CalibrationConfig::makeCalibrationFlags() const {
     int flags = 0;
+
+    if (useIntrinsicGuess)  flags |= cv::CALIB_USE_INTRINSIC_GUESS;
 
     if (fixPrincipalPoint) flags |= cv::CALIB_FIX_PRINCIPAL_POINT;
     if (zeroTangentDist)   flags |= cv::CALIB_ZERO_TANGENT_DIST;
     if (fixAspectRatio)    flags |= cv::CALIB_FIX_ASPECT_RATIO;
-    if (fixK1)             flags |= cv::CALIB_FIX_K1;
-    if (fixK2)             flags |= cv::CALIB_FIX_K2;
-    if (fixK3)             flags |= cv::CALIB_FIX_K3;
-    if (fixK4)             flags |= cv::CALIB_FIX_K4;
-    if (fixK5)             flags |= cv::CALIB_FIX_K5;
+
+    if (fixK1) flags |= cv::CALIB_FIX_K1;
+    if (fixK2) flags |= cv::CALIB_FIX_K2;
+    if (fixK3) flags |= cv::CALIB_FIX_K3;
+    if (fixK4) flags |= cv::CALIB_FIX_K4;
+    if (fixK5) flags |= cv::CALIB_FIX_K5;
+    if (fixK6) flags |= cv::CALIB_FIX_K6;
 
     return flags;
 }
@@ -195,11 +229,10 @@ MonoCalibrationResult CameraCalibration::calibrateMono(
     std::vector<std::vector<cv::Point3f>> objectPoints(imagePoints.size(), boardPoints);
 
     result.imageSize = imageSize;
-    result.cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
 
-    if (config.fixAspectRatio) {
-        result.cameraMatrix.at<double>(0, 0) = config.aspectRatio;
-    }
+    result.cameraMatrix = createInitialCameraMatrix(imageSize, config);
+
+    result.distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
 
     result.distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
 
@@ -317,13 +350,8 @@ StereoCalibrationResult CameraCalibration::calibrateStereo(
     result.left.imageSize = imageSize;
     result.right.imageSize = imageSize;
 
-    result.left.cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
-    result.right.cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
-
-    if (config.fixAspectRatio) {
-        result.left.cameraMatrix.at<double>(0, 0) = config.aspectRatio;
-        result.right.cameraMatrix.at<double>(0, 0) = config.aspectRatio;
-    }
+    result.left.cameraMatrix = createInitialCameraMatrix(imageSize, config);
+    result.right.cameraMatrix = createInitialCameraMatrix(imageSize, config);
 
     result.left.distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
     result.right.distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
