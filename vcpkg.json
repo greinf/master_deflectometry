@@ -6,6 +6,9 @@
       "name": "opencv4",
       "features": [ "contrib", "dnn", "jpeg", "png", "tiff" ],
       "default-features": true
-    }
+    },
+    
+    "ceres",
+    "boost-dynamic-bitset"
   ]
 }

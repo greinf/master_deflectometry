@@ -4,7 +4,7 @@
 enum class Shift_mode {
 	four_phase_shift,
 	user_defined,
-	max_value
+	GrayValues,
 };
 
 enum class DisplayMode {
@@ -13,10 +13,32 @@ enum class DisplayMode {
 	max_value
 };
 
+enum class UnwrapMode {
+	manually,
+	reference_Phase,
+	reference_Graycode,
+	opencv,
+	max_value
+};
 
 enum class AcquisitionMode {
 	UserInput,
 	Automatic,
+};
+
+enum class ReferenceMode {
+	cross,
+	checkerboard
+};
+
+enum class Warping {
+	homography,
+	raycasting
+};
+
+enum class Rotation {
+	eulerxy,
+	rodrigeuz
 };
 
 #endif // !1

@@ -3,6 +3,9 @@ build/
 out/
 bin/
 lib/
+data/
+test/
+vcpkg_installed/
 
 #Word
 *.docx
@@ -40,6 +43,11 @@ CMakePresets.json
 *.obj
 *.pch
 *.ilk
+*.csv
+*.jpg
+*.png
+*.xml
+*.pdf
 
 # Vcpkg build outputs (if local)
 vcpkg_installed/
