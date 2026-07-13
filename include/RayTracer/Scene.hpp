@@ -19,21 +19,22 @@ public:
 		, m_mesh{std::move(mesh)}
 		, m_light{std::move(light)} { }
 
-	void addLight(const std::unique_ptr<Light>&& light) 
+	void addLight(std::unique_ptr<Light>&& light) 
 	{
 		if (light == nullptr) throw std::invalid_argument("PTR was nullptr");
 		m_light.push_back(std::move(light));
 	}
 
-	void addObject(const std::unique_ptr<TriangularMesh>&& mesh)
+	void addObject(std::unique_ptr<TriangularMesh>&& mesh)
 	{
 		if (mesh == nullptr) throw std::invalid_argument("PTR was nullptr");
 		m_mesh.push_back(std::move(mesh));
 	}
 
-	void addCamera(const std::unique_ptr<Camera>&& cam)
+	void addCamera(std::unique_ptr<Camera>&& cam)
 	{
 		if (cam == nullptr) throw std::invalid_argument("PTR was nullptr");
+		m_cam.push_back(std::move(cam));
 	}
 	
 	void raytraceScene(std::vector<Eigen::MatrixXd>& out_img) {
@@ -46,6 +47,11 @@ public:
 
 		m_results.reserve(m_cam.size());
 		
+		// For all available Objects calculate the surface normals 
+		/*for (auto& obj : m_mesh) {
+			if (obj->m_surface_normals == nullptr) obj->calc_surface_normals();
+		}*/
+
 		// Work for every Camera seperatly
 		// For each loop and for each camera the world coordiante System must be the camera system
 		for (const auto& cam : m_cam) {
@@ -71,8 +77,8 @@ public:
 			}
 		}
 	}
-
-	static double castRay(
+	// Cast Rays into the Scene. Ray and origin point are provided
+	double castRay(
 		const Eigen::Vector3d& origin,
 		const Eigen::Vector3d& dir,
 		const std::vector<std::unique_ptr<TriangularMesh>>& meshes,
@@ -139,6 +145,7 @@ public:
 		}
 
 		return trace(
+			closestMesh->m_info,
 			closestMesh->m_vertices[closestIndex0],
 			closestMesh->m_vertices[closestIndex1],
 			closestMesh->m_vertices[closestIndex2],
@@ -148,7 +155,7 @@ public:
 			closestV);
 	}
 
-	double m_background{};
+	
 
 private:
 	std::vector<std::unique_ptr<Camera>> m_cam{};
@@ -156,37 +163,20 @@ private:
 	std::vector<std::unique_ptr<Light>> m_light{};
 
 	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results;
+	double m_background{};
+
 
 	void transform_all(const Eigen::Matrix4d& cam_transform) {
 		for (const auto& obj : m_mesh) {
-			if (!obj->m_transform.isIdentity() ||
-				!cam_transform.isIdentity()) {
-				for (std::size_t i = 0; static_cast<std::size_t>(obj->m_n_vertices); ++i) {
-					Eigen::Vector4d homogenous;
-					homogenous.head<3>() = obj->m_vertices.get()[i].pos;
-					homogenous.w() = 1.0;
-					obj->m_vertices.get()[i].pos = 
-						(cam_transform * obj->m_transform * homogenous).head<3>(0);
-				}
-				obj->m_transform = Eigen::Matrix4d::Identity();
-			}
+			obj->applyTransform(cam_transform);
 		}
-		for (const auto& obj : m_light) {
-			if (!obj->m_transform.isIdentity() || 
-				!cam_transform.isIdentity()) {
-				for (std::size_t i = 0; static_cast<std::size_t>(obj->m_n_vertices); ++i) {
-					Eigen::Vector4d homogenous;
-					homogenous.head<3>() = obj->m_vertices.get()[i].pos;
-					homogenous.w() = 1.0;
-					obj->m_vertices.get()[i].pos = 
-						(cam_transform * obj->m_transform * homogenous).head<3>(0);
-				}
-				obj->m_transform = Eigen::Matrix4d::Identity();
-			}
+		for (const auto& obj : m_light){
+			obj->applyTransform(cam_transform);
 		}
 	}
 
-	static double trace(
+	double trace(
+		const ObjectInfo& info,
 		const Vertice& v0,
 		const Vertice& v1,
 		const Vertice& v2,
@@ -195,29 +185,53 @@ private:
 		const double& v,
 		const double& t)
 	{
-		
-
-		const double w{ 1 - u - v };
-		const double refractive_index{
-			w * v0.refractive_index +
-			u * v1.refractive_index +
-			v * v2.refractive_index
+		Eigen::Vector3d origin{
+			TriangularMesh::get_Coords_from_Barycentric(
+				v0.pos,
+				v1.pos,
+				v2.pos,
+				u,
+				v) 
 		};
+		
+		Eigen::Vector3d reflected = reflect_ray(
+			dir,
+			(v1.pos - v0.pos).cross(v2.pos - v0.pos));
+
+		// At this point a scaling could be implemented 
+		if (info.specular) {
+			return
+				// BRDF() * castRay()  ..... this would be interesting
+				castRay(
+					origin,
+					reflected,
+					m_mesh,
+					m_light,
+					m_background
+				);
+		}
+
+		// Here the same 
+		if (info.diffuse) {
+			
+		}
 
 
-
-
-
+		return true;
 	}
 	//bool optimizer();
+
+	static Eigen::Vector3d reflect_ray(
+		const Eigen::Vector3d& dir,
+		const Eigen::Vector3d& surf_norm) 
+	{
+		Eigen::Vector3d dir_n = dir.normalized();
+		Eigen::Vector3d surf_n = surf_norm.normalized();
+
+		return dir_n - 2 * dir_n.dot(surf_n) * surf_n;
+	}
+
 };
 
 
-
-
-
-
-
-
-
-#endif "SCENE_HPP"
+#endif // "SCENE_HPP"
