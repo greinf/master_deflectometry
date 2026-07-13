@@ -1,29 +1,34 @@
 #ifndef CAMERA_HPP
 #define CAMERA_HPP
 #include "CameraMatrix.hpp"
+#include "Object.hpp"
 
+#include <Eigen/dense>
 #include <memory>
 
-class Camera {
+class Camera: public Object {
 public:
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
 		Sensor& sensor_coords = CameraMatrix::generateSensorCoords())
-		: m_cameraMatrix{std::move(camMat)}
+		: Object()
+		, m_cameraMatrix{std::move(camMat)}
 		, m_sensorCoords{std::make_unique<Sensor>(std::move(sensor_coords))}
 	{}
 
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
 		std::unique_ptr<Sensor>&& sensor_coords)
-		: m_cameraMatrix{ std::move(camMat) }
+		: Object()
+		, m_cameraMatrix{ std::move(camMat) }
 		, m_sensorCoords{ std::move(sensor_coords) }
 	{}
 
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
 		const cv::Mat_<cv::Vec2d>& sensor)
-		: m_cameraMatrix{ std::move(camMat) }
+		: Object()
+		, m_cameraMatrix{ std::move(camMat) }
 	{
 		m_sensorCoords = std::make_unique<Sensor>();
 		m_sensorCoords->resize(
@@ -52,7 +57,7 @@ public:
 	}
 
 	const Eigen::Matrix4d& getTransform() const {
-		return m_cameraMatrix->m_transform;
+		return m_transform;
 	}
 
 	std::unique_ptr<Sensor> m_sensorCoords{ nullptr };
@@ -63,4 +68,4 @@ private:
 
 
 
-#endif "CAMERA_HPP"
+#endif // "CAMERA_HPP"

@@ -73,7 +73,7 @@ add_executable (${PROJECT_NAME}
     "src/CameraSimulation.cpp" 
     "src/CameraCalibration.cpp" 
     "src/GeometricCalibration.cpp" 
-    "src/PSF.cpp"  "MainScriptsReady/Raycaster.cpp")
+    "src/PSF.cpp")
 
 
 #Debug 

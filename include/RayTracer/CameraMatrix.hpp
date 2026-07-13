@@ -1,7 +1,7 @@
 #ifndef CAMERAMATRIX_HPP
 #define CAMERAMATRIX_HPP
 
-#include "Object.hpp"
+#include <Eigen/dense>
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 
@@ -9,14 +9,13 @@
 using Rays = Eigen::Matrix<Eigen::Vector3d, Eigen::Dynamic, Eigen::Dynamic>;
 using Sensor = Eigen::Matrix<Eigen::Vector2d, Eigen::Dynamic, Eigen::Dynamic>;
 
-class CameraMatrix: public Object {
+class CameraMatrix {
 public:
 	CameraMatrix() = default;
 	CameraMatrix(
 		const Eigen::Matrix3d& camMat,
 		const Eigen::VectorXd& distCoeffs)
-		: Object()
-		, m_camMat{camMat}
+		: m_camMat{camMat}
 		, m_camMat_inv{camMat.inverse()}
 		, m_distCoeffs{distCoeffs}
 	{
@@ -27,8 +26,7 @@ public:
 		const Eigen::Matrix3d& camMat,
 		const Eigen::VectorXd& distCoeffs,
 		const Eigen::Matrix4d& pos)
-		: Object(pos)
-		, m_camMat{ camMat }
+		: m_camMat{ camMat }
 		, m_camMat_inv{camMat.inverse()}
 		, m_distCoeffs{ distCoeffs }
 	{
@@ -39,7 +37,6 @@ public:
 		const cv::Mat& camMat,
 		const cv::Mat& distCoeffs,
 		const Eigen::Matrix4d& pos = Eigen::Matrix4d::Identity())
-		: Object(pos)
 	{
 		if (camMat.size() != cv::Size(3, 3)) 
 			throw std::invalid_argument("CameraMatrix wrong size");

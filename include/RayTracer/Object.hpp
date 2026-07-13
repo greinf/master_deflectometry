@@ -1,5 +1,5 @@
 #ifndef RAYTRACER_OBJECT_BASE_HPP
-#define RAYTRACER_OJBECT_BASE_HPP	
+#define RAYTRACER_OBJECT_BASE_HPP	
 #include <Eigen/dense>
 #include <memory>
 #include <vector>
@@ -25,17 +25,6 @@ public:
 
 	Eigen::Matrix4d m_transform = Eigen::Matrix4d::Identity();
 };
-
-// Utilities 
-struct Vertice {
-	Eigen::Vector3d pos{};
-	double refractive_index{};
-
-	bool specular{ false };
-
-};
-
-
 
 
 

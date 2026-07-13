@@ -11,11 +11,9 @@
 #include "screen.hpp"
 #include "imgProcessing.hpp"
 #include "CameraSimulation.hpp"
-// #include "Mesh.hpp"
 #include <open3d/Open3D.h>
 #include "imageStore.hpp"
-#include "Camera.hpp"
-#include "Scene.hpp"
+#include "RayTracer/Scene.hpp"
 
 
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
@@ -61,7 +59,44 @@ int main()
     std::vector<cv::Mat> camMat{ img_store.get(FrameRole::CalibrationMatrix) };
     std::vector<cv::Mat> distCoeffs{ img_store.get(FrameRole::DistortionCoeff) };
 
+    /*std::unique_ptr<PolygonMesh> mesh{ std::move(PolygonMesh::ParabolicalMirror(
+            1600.0,
+            200.0,
+            5)) };
+    
+    std::unique_ptr<TriangularMesh> mirror{ mesh->convert2Triangular() };*/
+
+    auto disp_mesh{ std::move(PolygonMesh::Display()) };
+
+    auto disp_mesh_tri{ disp_mesh->convert2Triangular() };
+
+    auto open3dmesh = static_cast<open3d::geometry::TriangleMesh>(*disp_mesh_tri);
+
+    open3dmesh.PaintUniformColor({ 0.7, 0.7, 0.7 });
+
+    auto open3dmesh_ptr = std::make_shared<open3d::geometry::TriangleMesh>(
+        std::move(open3dmesh)
+    );
+
+    std::vector<std::shared_ptr<const open3d::geometry::Geometry>> geometries{};
+    geometries.push_back(open3dmesh_ptr);
+
+    open3d::visualization::DrawGeometries(
+        geometries,
+        "Mesh visualization",
+        1280,
+        720
+    );
+
+    Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
+    transform(0, 0) = -1.0;
+    transform.block<3, 1>(0, 3) = Eigen::Vector3d(0.0, 0.0, 3000);
+
+    //mirror->addTransform(transform);
+
     Scene raycasting{};
+
+    //raycasting.addObject(std::move(mirror));
 
     std::unique_ptr<Camera> cam_ptr = 
         std::make_unique<Camera>(std::make_unique<OpenCvMatrix>(camMat[0], distCoeffs[0]));
@@ -74,6 +109,8 @@ int main()
 
     return 0;
     std::cout << "dodod \n";
+
+
     //// std::unique_ptr<PolygonMesh> mesh{std::make_unique<PolygonMesh>(PolygonMesh::Pa)
     //std::unique_ptr<PolygonMesh> mesh{ std::move(PolygonMesh::ParabolicalMirror(
     //    1600.0,
