@@ -4,8 +4,13 @@
 #include "Mesh.hpp"
 #include "Light.hpp"
 #include "Camera.hpp"
+#include "BRDF.hpp"
 #include <vector>
 #include <memory>
+#include <algorithm>
+#include <functional>
+#include <variant>
+
 
 class Scene {
 public:
@@ -18,6 +23,8 @@ public:
 		: m_cam{std::move(cam)}
 		, m_mesh{std::move(mesh)}
 		, m_light{std::move(light)} { }
+
+
 
 	void addLight(std::unique_ptr<Light>&& light) 
 	{
@@ -37,7 +44,9 @@ public:
 		m_cam.push_back(std::move(cam));
 	}
 	
-	void raytraceScene(std::vector<Eigen::MatrixXd>& out_img) {
+	void raytraceScene(
+		std::vector<Eigen::MatrixXd>& out_img)
+	{
 		if (m_cam.empty()) {
 			throw std::runtime_error("No Camera in the scene");
 			return;
@@ -47,10 +56,9 @@ public:
 
 		m_results.reserve(m_cam.size());
 		
-		// For all available Objects calculate the surface normals 
-		/*for (auto& obj : m_mesh) {
+		for (auto& obj : m_mesh) {
 			if (obj->m_surface_normals == nullptr) obj->calc_surface_normals();
-		}*/
+		}
 
 		// Work for every Camera seperatly
 		// For each loop and for each camera the world coordiante System must be the camera system
@@ -68,6 +76,7 @@ public:
 				rays.cols());
 
 			for (Eigen::Index i = 0; i < rays.size(); ++i) {
+				// Here threads could be created 
 				result->data()[i] = castRay(
 					Eigen::Vector3d::Zero(),
 					rays.data()[i],
@@ -87,17 +96,31 @@ public:
 	{
 		double closestT = std::numeric_limits<double>::infinity();
 
+		std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>> everyMesh{};
+		// It would be possible to implement accelerating structures here.
+		for (const auto& mesh : meshes) {
+			everyMesh.push_back(
+				std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(mesh.get(), *mesh));
+		}
+		for (const auto& light_mesh : lights) {
+			const auto& mesh_opt{ light_mesh->getMesh() };
+			// This is optional since at some Point Spot light might be implemented which should not be tested 
+			if (!mesh_opt.has_value()) continue;
+			const auto& mesh{ mesh_opt.value() };
+			everyMesh.push_back(
+				std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(light_mesh.get(), mesh));
+		}
+
 		double closestU{};
 		double closestV{};
 
-		std::size_t closestIndex0{};
-		std::size_t closestIndex1{};
-		std::size_t closestIndex2{};
-
-		const TriangularMesh* closestMesh = nullptr;
-
-		for (const auto& meshPtr : meshes) {
-			const TriangularMesh& mesh = *meshPtr;
+		std::size_t closestIndex[3];
+		std::size_t surfaceIndex{};
+		
+		SceneObjPtr closestObj{};
+		
+		for (const auto& meshRef : everyMesh) {
+			const TriangularMesh& mesh = meshRef.second.get();
 
 			for (std::size_t i = 0;
 				i < static_cast<std::size_t>(mesh.m_n_surfaces);
@@ -132,30 +155,30 @@ public:
 				closestU = u;
 				closestV = v;
 
-				closestIndex0 = index0;
-				closestIndex1 = index1;
-				closestIndex2 = index2;
+				closestIndex[0] = index0;
+				closestIndex[1] = index1;
+				closestIndex[2] = index2;
 
-				closestMesh = &mesh;
+				closestObj = &meshRef.second.get();
+
+				surfaceIndex = i;
 			}
 		}
 
-		if (closestMesh == nullptr) {
+		if (std::holds_alternative<Light*>(closestObj) || 
+			std::holds_alternative<Mesh*>(closestObj)){
 			return background;
 		}
 
 		return trace(
-			closestMesh->m_info,
-			closestMesh->m_vertices[closestIndex0],
-			closestMesh->m_vertices[closestIndex1],
-			closestMesh->m_vertices[closestIndex2],
+			closestObj,
+			closestIndex,
+			surfaceIndex,
 			dir,
-			closestT,
 			closestU,
-			closestV);
+			closestV,
+			closestT);
 	}
-
-	
 
 private:
 	std::vector<std::unique_ptr<Camera>> m_cam{};
@@ -164,7 +187,11 @@ private:
 
 	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results;
 	double m_background{};
+	using SceneObjPtr = std::variant<std::monostate, const Light*, const TriangularMesh*>;
 
+	template<typename... Ts> struct Overload : Ts...{
+		using Ts::operator()...; 
+	};
 
 	void transform_all(const Eigen::Matrix4d& cam_transform) {
 		for (const auto& obj : m_mesh) {
@@ -176,33 +203,70 @@ private:
 	}
 
 	double trace(
-		const ObjectInfo& info,
-		const Vertice& v0,
-		const Vertice& v1,
-		const Vertice& v2,
-		const Eigen::Vector3d dir,
+		const SceneObjPtr& obj_ptr,
+		const std::size_t* vertice_index,
+		const std::size_t& surface_index,
+		const Eigen::Vector3d& dir,
 		const double& u,
 		const double& v,
 		const double& t)
 	{
-		Eigen::Vector3d origin{
-			TriangularMesh::get_Coords_from_Barycentric(
-				v0.pos,
-				v1.pos,
-				v2.pos,
-				u,
-				v) 
-		};
+		const Light* light_ptr{ nullptr };
+		const TriangularMesh* mesh{ nullptr };
 		
+		{
+			auto f1 = [](const std::monostate&) -> const TriangularMesh* {
+				return nullptr;
+				};
+			auto f2 = [&](const Light* const& light) -> const TriangularMesh* {
+				light_ptr = light;
+				return &light->getMesh().value();
+			};
+			auto f3 = [](const TriangularMesh* const& mesh) -> const TriangularMesh* {
+				return mesh;
+				};
+			mesh = std::visit(
+				Overload<decltype(f1), decltype(f2), decltype(f3)>{f1, f2, f3},
+				obj_ptr);
+		}
+		// This propably can be deleted
+		if (mesh == nullptr) {
+			std::cout << "This path should never be reached \n";
+			return m_background;
+		}
+		
+		const Eigen::Vector3d origin{t * dir};
+		
+		if (mesh->m_info.emitter) {
+			/* Not implemented at this time */
+			std::cout << "Not implemented ";
+		}
+
 		Eigen::Vector3d reflected = reflect_ray(
 			dir,
-			(v1.pos - v0.pos).cross(v2.pos - v0.pos));
+			(mesh->m_vertices[vertice_index[1]].pos - mesh->m_vertices[vertice_index[0]].pos).cross(
+				mesh->m_vertices[vertice_index[2]].pos - mesh->m_vertices[vertice_index[0]].pos));
 
-		// At this point a scaling could be implemented 
-		if (info.specular) {
-			return
-				// BRDF() * castRay()  ..... this would be interesting
-				castRay(
+		const std::complex<double> refractive{
+			TriangularMesh::get_Barycentric_Interpolated_refractive_index(
+				mesh->m_vertices[vertice_index[0]],
+				mesh->m_vertices[vertice_index[1]],
+				mesh->m_vertices[vertice_index[2]],
+				u,
+				v)
+		};
+		
+		// it might be necessary to inverto one vector 
+		double cos_theta{ mesh->m_surface_normals[surface_index].dot(dir)};
+
+		// Only validity check!! should be later removed 
+		if (cos_theta < 0.0) {
+			std::cout << "cos Theta is negative \n";
+		}
+
+		if (mesh->m_info.specular) {
+			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta, t) };
+			return scaling_BRDF * castRay(
 					origin,
 					reflected,
 					m_mesh,
@@ -211,13 +275,16 @@ private:
 				);
 		}
 
+		if (mesh->m_info.emitter) {
+
+		}
+
 		// Here the same 
-		if (info.diffuse) {
+		if (mesh->m_info.diffuse) {
 			
 		}
 
-
-		return true;
+		
 	}
 	//bool optimizer();
 
@@ -230,7 +297,6 @@ private:
 
 		return dir_n - 2 * dir_n.dot(surf_n) * surf_n;
 	}
-
 };
 
 

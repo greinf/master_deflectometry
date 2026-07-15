@@ -7,7 +7,14 @@
 
 
 class Integrator {
-	static double sampleLights(
+	explicit Integrator(
+
+	)
+
+
+
+
+	double sampleLights(
 		const std::size_t n_points_perLight,
 		const AreaLight* src,
 		const std::vector<TriangularMesh*> object,

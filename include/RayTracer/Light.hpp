@@ -6,6 +6,7 @@
 #include <vector>
 #include "Mesh.hpp"
 #include "Random.hpp"
+#include <optional>
 
 
 struct Light_Sample {
@@ -40,6 +41,10 @@ public:
 
 	virtual void addTransform(const Eigen::Matrix4d& trans) noexcept = 0;
 
+	virtual const std::optional<const TriangularMesh&> getMesh() const noexcept = 0;
+
+	virtual const std::optional<const double&> get_local_Intensity_scale(const double& u, const double& v) const noexcept = 0;
+
 	Eigen::Matrix4d getTransform()
 	{
 		if (m_info.m_transform == nullptr) {
@@ -49,11 +54,7 @@ public:
 		return *m_info.m_transform;
 	}
 
-	/*virtual void assign_rad_charaktersitic(
-		double(*func)(const double& angle))
-	{
-		m_info.radiation = func;
-	} */
+	
 
 	Light_Info m_info{};
 };	
@@ -87,10 +88,9 @@ public:
 //	}
 //
 //private:
-//	
 //};
 
-class AreaLight : public Light {
+class AreaLight : public Light{
 public:
 	explicit AreaLight(
 		std::unique_ptr<TriangularMesh>&& mesh)
@@ -113,11 +113,18 @@ public:
 		m_mesh->m_transform = trans;
 	}
 
+	const std::optional<const double&> get_local_Intensity_scale() {
+
+	}
+
+	const std::optional<const TriangularMesh&> getMesh() const noexcept override 
+	{
+		return std::optional<const TriangularMesh&>(*m_mesh);
+	}
+
 	Light_Info m_info{};
 	std::unique_ptr<TriangularMesh> m_mesh{ nullptr };
-
 };
-
 
 
 #endif //LIGHT_HPP

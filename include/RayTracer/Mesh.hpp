@@ -1,12 +1,28 @@
 #ifndef MESH_HPP
 #define MESH_HPP
-
+#include <Eigen/dense>
 #include "Object.hpp"
 #include <vector>
 #include <iterator>
 #include <algorithm>
 #include <open3d/geometry/TriangleMesh.h>
+#include <cstdlib>
+#include <complex>
 
+struct ObjectInfo {
+	bool closed{ false };
+	bool specular{ false };
+	bool diffuse{ false };
+	bool emitter{ false };
+};
+
+// Utilities 
+struct Vertice {
+	Eigen::Vector3d pos{};
+	Eigen::Vector2d uv{};
+	std::complex<double> refractive_index{};
+	// if not specifically marked objects are specular
+};
 
 class PolygonMesh;
 class TriangularMesh;
@@ -15,6 +31,17 @@ class Mesh : public Object {
 public:
 	Mesh(const Mesh&) = delete;
 	Mesh& operator=(const Mesh&) = delete;
+	Mesh() = default;
+
+	Mesh& operator=(Mesh&& mesh) noexcept {
+		std::swap(m_vertices, mesh.m_vertices);
+		std::swap(m_vertice_normals, mesh.m_vertice_normals);
+		std::swap(m_indices, mesh.m_indices);
+		std::swap(m_n_ver_per_surface, mesh.m_n_ver_per_surface);
+		std::swap(m_n_vertices, mesh.m_n_vertices);
+		std::swap(m_n_surfaces, mesh.m_n_surfaces);
+		return *this;
+	}
 
 	explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
@@ -29,7 +56,89 @@ public:
 		, m_n_ver_per_surface{ std::move(n_ver_per_surface) }
 		, m_n_vertices{n_vertice}
 		, m_n_surfaces{n_surface}
-	{}
+	{ }
+
+	explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
+		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
+		std::unique_ptr<std::uint32_t[]>&& indices,
+		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
+		const std::uint32_t& n_vertice,
+		const std::uint32_t& n_surface,
+		const ObjectInfo& info)
+		: Object()
+		, m_vertices{ std::move(vertices) }
+		, m_vertice_normals{ std::move(vertice_normal) }
+		, m_indices{ std::move(indices) }
+		, m_n_ver_per_surface{ std::move(n_ver_per_surface) }
+		, m_n_vertices{ n_vertice }
+		, m_n_surfaces{ n_surface }
+		, m_info{info}
+	{
+	}
+
+	Mesh(Mesh&& mesh) noexcept
+		: Object()
+		, m_vertices{ std::move(mesh.m_vertices) }
+		, m_vertice_normals{ std::move(mesh.m_vertice_normals) }
+		, m_indices{ std::move(mesh.m_indices) }
+		, m_n_ver_per_surface{ std::move(mesh.m_n_ver_per_surface) }
+		, m_n_vertices{ std::move(mesh.m_n_vertices) }
+		, m_n_surfaces{ std::move(mesh.m_n_surfaces) }
+		, m_info{std::move(mesh.m_info)}
+	{ }
+
+	Mesh(std::unique_ptr<Mesh>&& mesh)
+		: Object()
+		, m_vertices{std::move(mesh->m_vertices)}
+		, m_vertice_normals{std::move(mesh->m_vertice_normals)}
+		, m_indices{std::move(mesh->m_indices)}
+		, m_n_ver_per_surface{std::move(mesh->m_n_ver_per_surface)}
+		, m_n_vertices{std::move(mesh->m_n_vertices)}
+		, m_n_surfaces{std::move(mesh->m_n_surfaces)}
+		, m_info{ std::move(mesh->m_info) }
+	{ }
+
+
+	virtual std::unique_ptr<double[]> get_Area() const noexcept = 0;
+
+	void applyTransform(const Eigen::Matrix4d& cam)
+	{
+		Eigen::Matrix4d transform{ cam * m_transform };
+		Eigen::Matrix3d normal_transform{ transform.block<3,3>(0,0).transpose().inverse() };
+		for (std::size_t i = 0; i < static_cast<std::size_t>(m_n_vertices); ++i)
+		{
+			Eigen::Vector4d homogenous{};
+			homogenous.head<3>() = m_vertices[i].pos;
+			homogenous(3) = 1.0;
+			m_vertices[i].pos = (transform * homogenous).head<3>();
+
+			m_vertice_normals[i] = normal_transform * m_vertice_normals[i];
+		}
+		m_transform = Eigen::Matrix4d::Identity();
+	} virtual
+
+	// Creates for all Triangular Surfaces a normalized Surface Vector
+	void calc_surface_normals()
+	{
+		if (!m_n_surfaces) {
+			std::cout << "Mesh contains zero surfaces \n";
+			return;
+		}
+
+		std::unique_ptr<Eigen::Vector3d[]>
+			surface_normals_temp{ new Eigen::Vector3d[m_n_surfaces] };
+
+		Vertice* vert_ptr{ m_vertices.get() };
+
+		for (std::size_t i = 0; i < static_cast<std::size_t>(m_n_surfaces); ++i) {
+			Eigen::Vector3d ab = vert_ptr[i + 1].pos - vert_ptr[i].pos;
+			Eigen::Vector3d ac = vert_ptr[i + 2].pos - vert_ptr[i].pos;
+			surface_normals_temp.get()[i] = ab.cross(ac).normalized();
+			vert_ptr += m_n_ver_per_surface[i];
+		}
+		std::swap(std::move(m_surface_normals), 
+			std::move(surface_normals_temp));
+	}
 
 	virtual bool shade() const = 0;
 
@@ -45,10 +154,12 @@ public:
 
 	std::unique_ptr<Vertice[]> m_vertices = nullptr;
 	std::unique_ptr<Eigen::Vector3d[]> m_vertice_normals = nullptr;
+	std::unique_ptr<Eigen::Vector3d[]> m_surface_normals = nullptr;
 	std::unique_ptr<std::uint32_t[]> m_indices = nullptr;
 	std::unique_ptr<std::uint32_t[]> m_n_ver_per_surface = nullptr;
 	std::uint32_t m_n_vertices{};
 	std::uint32_t m_n_surfaces{};
+	ObjectInfo m_info{};
 };
 
 class TriangularMesh : public Mesh {
@@ -68,6 +179,57 @@ public:
 			n_vertices,
 			n_surfaces)
 	{ }
+
+	TriangularMesh()
+		:Mesh()
+	{ }
+
+	static Eigen::Vector3d get_Coords_from_Barycentric(
+		const Eigen::Vector3d& v0,
+		const Eigen::Vector3d& v1,
+		const Eigen::Vector3d& v2,
+		const double& u,
+		const double& v
+	)
+	{
+		const Eigen::Vector3d BA{ v1 - v0 };
+		const Eigen::Vector3d CA{ v2 - v0 };
+
+		return v0 + (u * BA + v * CA);
+	}
+
+	static std::complex<double> get_Barycentric_Interpolated_refractive_index(
+		const Vertice& v0,
+		const Vertice& v1,
+		const Vertice& v2,
+		const double& u,
+		const double& v
+	) noexcept
+	{
+		if (v0.refractive_index == v1.refractive_index &&
+			v0.refractive_index == v2.refractive_index) 
+			return v1.refractive_index;
+
+		const double w{ 1.0 - u - v };
+
+		return v0.refractive_index * w + 
+			v1.refractive_index * u + 
+			v2.refractive_index * v;
+	}
+
+	std::unique_ptr<double[]> get_Area() const noexcept override 
+	{
+		std::unique_ptr<double[]> area{new double[m_n_surfaces]};
+		const Vertice* vert_ptr{ m_vertices.get() };
+		for (std::size_t i = 0; i < m_n_surfaces; ++i) {
+			const Eigen::Vector3d b_a{ vert_ptr[i + 1].pos - vert_ptr[i].pos };
+			const Eigen::Vector3d c_a{ vert_ptr[i + 2].pos - vert_ptr[i].pos };
+			area[i] = b_a.cross(c_a).norm() / 2.0;
+			vert_ptr += m_n_ver_per_surface[i];
+		}
+		return std::move(area);
+	}
+
 
 	bool shade() const override
 	{
@@ -198,10 +360,13 @@ private:
 
 class PolygonMesh : public Mesh {
 public:
-	~PolygonMesh() override = default;
-
+	
 	PolygonMesh(const PolygonMesh&) = delete;
 	PolygonMesh& operator=(const PolygonMesh&) = delete;
+
+	PolygonMesh()
+		:Mesh()
+	{ }
 
 	explicit PolygonMesh(
 		std::unique_ptr<Vertice[]>&& vertices,
@@ -224,7 +389,24 @@ public:
 		return false;
 	}
 
-	std::unique_ptr<TriangularMesh> convert2Triangular() {
+	std::unique_ptr<double[]> get_Area() const noexcept override {
+		const auto tri_mesh{ this->convert2Triangular() };
+		return tri_mesh->get_Area();
+	}
+
+	bool intersect(
+		const Eigen::Vector3d& origin,
+		const Eigen::Vector3d& dir,
+		const Eigen::Vector3d& v0,
+		const Eigen::Vector3d& v1,
+		const Eigen::Vector3d& v2,
+		double& t, double& u, double& v) const override
+	{
+		throw std::runtime_error("Not implemented");
+		return false;
+	}
+
+	std::unique_ptr<TriangularMesh> convert2Triangular() const {
 		const std::size_t n_surfaces{ static_cast<std::size_t>(m_n_surfaces) };
 
 		// Build Tempory Container 
@@ -349,7 +531,67 @@ public:
 			);
 	}
 
+	// CoordianteSystem placed in upper left corner! 
+	static std::unique_ptr<PolygonMesh> Display(
+		const int& pixel_x = 1920,
+		const int& pixel_y = 1080,
+		const double& pixel_pitch = 0.2745)
+	{
+		if (pixel_x < 0 || pixel_y < 0 || pixel_pitch < 0) 
+			throw std::invalid_argument("Display Parameters must be bigger than zero \n");
 
+		const std::size_t n_surfaces{ 1 };
+		const std::size_t n_vertices{ 4 };
+		const std::size_t n_indices{ 4 };
+
+		std::unique_ptr<Vertice[]> vertice_temp{ new Vertice[n_vertices] };
+		std::unique_ptr<Eigen::Vector3d[]> vertex_normals_temp{ new Eigen::Vector3d[n_vertices] };
+		std::unique_ptr<std::uint32_t[]> n_ver_per_surf_temp{ new std::uint32_t[n_surfaces] };
+		std::unique_ptr<std::uint32_t[]> indizes_temp{ new std::uint32_t[n_vertices] };
+
+		// Create Vertices
+		vertice_temp[0].pos = Eigen::Vector3d::Zero();
+		vertice_temp[1].pos = Eigen::Vector3d(0.0, pixel_y * pixel_pitch, 0.0);
+		vertice_temp[2].pos = Eigen::Vector3d(pixel_x * pixel_pitch, pixel_y * pixel_pitch, 0.0);
+		vertice_temp[3].pos = Eigen::Vector3d(pixel_x * pixel_pitch, 0.0, 0.0);
+
+		// Define TextureInformation
+		vertice_temp[0].uv = Eigen::Vector2d{ 0.0, 0.0 };
+		vertice_temp[1].uv = Eigen::Vector2d{ 0.0, pixel_y * pixel_pitch };
+		vertice_temp[2].uv = Eigen::Vector2d{ pixel_x * pixel_pitch, pixel_y * pixel_pitch };
+		vertice_temp[3].uv = Eigen::Vector2d{ pixel_y * pixel_pitch, 0.0 };
+
+		// Connectivity
+		vertex_normals_temp[0] = Eigen::Vector3d(0.0, 0.0, 1.0);
+		vertex_normals_temp[1] = vertex_normals_temp[0];
+		vertex_normals_temp[2] = vertex_normals_temp[1];
+		vertex_normals_temp[3] = vertex_normals_temp[2];
+
+		// Mesh information
+		ObjectInfo info{};
+		info.closed = false;
+		info.diffuse = false;
+		info.specular = false;
+		info.emitter = true;
+
+		n_ver_per_surf_temp[0] = 4;
+
+		indizes_temp[0] = 0;
+		indizes_temp[1] = 1;
+		indizes_temp[2] = 2;
+		indizes_temp[3] = 3;
+
+		return std::make_unique<PolygonMesh>(
+			std::move(vertice_temp),
+			std::move(vertex_normals_temp),
+			std::move(indizes_temp),
+			std::move(n_ver_per_surf_temp),
+			static_cast<std::uint32_t>(n_vertices),
+			static_cast<std::uint32_t>(n_surfaces),
+			info
+		);
+	}
+	
 	static std::unique_ptr<PolygonMesh> ParabolicalMirror(
 		double focal_length,
 		double max_r,
@@ -482,17 +724,23 @@ public:
 			}.normalized();
 		}
 
+		// Object Info
+		ObjectInfo info{};
+		info.specular = true;
+		
 		return std::make_unique<PolygonMesh>(
 			std::move(vertices),
 			std::move(vertex_normals),
 			std::move(indices),
 			std::move(vertices_per_surface),
 			static_cast<std::uint32_t>(n_vertices),
-			static_cast<std::uint32_t>(n_surfaces)
+			static_cast<std::uint32_t>(n_surfaces),
+			info
 		);
 	}
-	private:
-		std::unique_ptr<TriangularMesh> m_triangle{ nullptr };
+
+	~PolygonMesh() override = default;
+
 };
 
-#endif "Mesh"
+#endif //"Mesh"

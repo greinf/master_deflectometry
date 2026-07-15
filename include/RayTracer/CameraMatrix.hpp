@@ -136,6 +136,7 @@ public:
 			distCoeffs)
 	{}
 	
+	// Return normalized direction Vectors for each pixel 
 	void castRays(
 		Rays& rays,
 		const Sensor* sensor_coords) const override {
@@ -148,7 +149,8 @@ public:
 				Eigen::Vector3d homogeneousCoords(coords[0], coords[1], 1.0);
 				Eigen::Vector3d camera_coord{ m_camMat_inv * homogeneousCoords };
 				//return camera_coord;
-				return newtonSolverdistort(camera_coord, m_distCoeffs);
+				Eigen::Vector3d distorted{ newtonSolverdistort(camera_coord, m_distCoeffs) };
+				return distorted.normalized();
 			}
 		);
 	}
