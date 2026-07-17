@@ -1,5 +1,6 @@
 #ifndef MESH_HPP
 #define MESH_HPP
+
 #include <Eigen/dense>
 #include "Object.hpp"
 #include <vector>
@@ -120,24 +121,52 @@ public:
 	// Creates for all Triangular Surfaces a normalized Surface Vector
 	void calc_surface_normals()
 	{
-		if (!m_n_surfaces) {
-			std::cout << "Mesh contains zero surfaces \n";
+		if (m_n_surfaces == 0) {
+			std::cout << "Mesh contains zero surfaces\n";
 			return;
 		}
 
-		std::unique_ptr<Eigen::Vector3d[]>
-			surface_normals_temp{ new Eigen::Vector3d[m_n_surfaces] };
-
-		Vertice* vert_ptr{ m_vertices.get() };
-
-		for (std::size_t i = 0; i < static_cast<std::size_t>(m_n_surfaces); ++i) {
-			Eigen::Vector3d ab = vert_ptr[i + 1].pos - vert_ptr[i].pos;
-			Eigen::Vector3d ac = vert_ptr[i + 2].pos - vert_ptr[i].pos;
-			surface_normals_temp.get()[i] = ab.cross(ac).normalized();
-			vert_ptr += m_n_ver_per_surface[i];
+		if (!m_vertices || !m_indices || !m_n_ver_per_surface) {
+			throw std::runtime_error("Mesh data is incomplete.");
 		}
-		std::swap(std::move(m_surface_normals), 
-			std::move(surface_normals_temp));
+
+		auto surface_normals =
+			std::make_unique<Eigen::Vector3d[]>(m_n_surfaces);
+
+		std::size_t index_offset = 0;
+
+		for (std::size_t surface = 0; surface < m_n_surfaces; ++surface) {
+			const std::size_t vertex_count =
+				m_n_ver_per_surface[surface];
+
+			if (vertex_count < 3) {
+				throw std::runtime_error(
+					"Surface contains fewer than three vertices."
+				);
+			}
+
+			const std::uint32_t index0 = m_indices[index_offset];
+			const std::uint32_t index1 = m_indices[index_offset + 1];
+			const std::uint32_t index2 = m_indices[index_offset + 2];
+
+			const Eigen::Vector3d ab =
+				m_vertices[index1].pos - m_vertices[index0].pos;
+
+			const Eigen::Vector3d ac =
+				m_vertices[index2].pos - m_vertices[index0].pos;
+
+			const Eigen::Vector3d cross = ab.cross(ac);
+
+			if (cross.squaredNorm() == 0.0) {
+				throw std::runtime_error("Degenerate surface detected.");
+			}
+
+			surface_normals[surface] = cross.normalized();
+
+			index_offset += vertex_count;
+		}
+
+		m_surface_normals = std::move(surface_normals);
 	}
 
 	virtual bool shade() const = 0;
@@ -184,7 +213,19 @@ public:
 		:Mesh()
 	{ }
 
-	static Eigen::Vector3d get_Coords_from_Barycentric(
+	[[nodiscard]] static const Eigen::Vector2d get_Texture_Coord(
+		const Eigen::Vector2d& v0,
+		const Eigen::Vector2d& v1,
+		const Eigen::Vector2d& v2,
+		const double& u,
+		const double& v
+		) noexcept
+	{
+		const double w{ 1 - u - v };
+		return Eigen::Vector2d{ v0 * w + v1 * u + v2 * v };
+	}
+
+	[[nodiscard]] static const Eigen::Vector3d get_Coords_from_Barycentric(
 		const Eigen::Vector3d& v0,
 		const Eigen::Vector3d& v1,
 		const Eigen::Vector3d& v2,
@@ -198,7 +239,7 @@ public:
 		return v0 + (u * BA + v * CA);
 	}
 
-	static std::complex<double> get_Barycentric_Interpolated_refractive_index(
+	[[nodiscard]] static const std::complex<double> get_Barycentric_Interpolated_refractive_index(
 		const Vertice& v0,
 		const Vertice& v1,
 		const Vertice& v2,
@@ -281,7 +322,7 @@ public:
 		// t - value
 		const double det_t{ e2xe3.dot(R) };
 		t = det_t * inv_det;
-		if (t < -eps) return false;
+		if (t < eps) return false;
 
 		// v- value
 		const double det_v{ e1xe2.dot(R) };
@@ -384,6 +425,24 @@ public:
 			n_surfaces)
 	{ }
 
+	explicit PolygonMesh(
+		std::unique_ptr<Vertice[]>&& vertices,
+		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
+		std::unique_ptr<std::uint32_t[]>&& indices,
+		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
+		const std::uint32_t n_vertices,
+		const std::uint32_t n_surfaces,
+		const ObjectInfo& info)
+		: Mesh(
+			std::move(vertices),
+			std::move(vertice_normal),
+			std::move(indices),
+			std::move(n_ver_per_surface),
+			n_vertices,
+			n_surfaces,
+			info)
+	{ }
+
 	bool shade() const override {
 		throw std::runtime_error("Not implemented");
 		return false;
@@ -407,6 +466,7 @@ public:
 	}
 
 	std::unique_ptr<TriangularMesh> convert2Triangular() const {
+
 		const std::size_t n_surfaces{ static_cast<std::size_t>(m_n_surfaces) };
 
 		// Build Tempory Container 
@@ -435,6 +495,12 @@ public:
 		// Fill the temporary container  
 		for (std::size_t i = 0; i < n_surfaces; ++i)
 		{
+			if (m_n_ver_per_surface[i] < 3) {
+				throw std::runtime_error(
+					"Polygon surface contains fewer than three vertices."
+				);
+			}
+
 			if (m_n_ver_per_surface[i] == 3) {
 				std::uint32_t indizes[3]{};
 				for (std::size_t i = 0; i < 3; ++i) {
@@ -593,9 +659,10 @@ public:
 	}
 	
 	static std::unique_ptr<PolygonMesh> ParabolicalMirror(
-		double focal_length,
-		double max_r,
-		int division)
+		const double focal_length,
+		const double max_r,
+		const int division,
+		const std::complex<double> refractive_ind = {1.02, 6.63})
 	{
 		if (division < 2) {
 			throw std::invalid_argument(
@@ -656,6 +723,8 @@ public:
 					radius * std::sin(angle),
 					radius * radius / (4.0 * focal_length)
 				};
+
+				vertices[vertex_index].refractive_index = refractive_ind;
 
 				++vertex_index;
 			}

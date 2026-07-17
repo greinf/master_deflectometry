@@ -1,8 +1,8 @@
 #ifndef SCENE_HPP
 #define SCENE_HPP
 
-#include "Mesh.hpp"
 #include "Light.hpp"
+#include "Mesh.hpp"
 #include "Camera.hpp"
 #include "BRDF.hpp"
 #include <vector>
@@ -23,8 +23,6 @@ public:
 		: m_cam{std::move(cam)}
 		, m_mesh{std::move(mesh)}
 		, m_light{std::move(light)} { }
-
-
 
 	void addLight(std::unique_ptr<Light>&& light) 
 	{
@@ -60,6 +58,16 @@ public:
 			if (obj->m_surface_normals == nullptr) obj->calc_surface_normals();
 		}
 
+		for (auto& obj : m_light) {
+			auto mesh_opt = obj->getMesh();
+			if (mesh_opt.has_value()) {
+				TriangularMesh* mesh{ mesh_opt.value() };
+				if (mesh->m_surface_normals == nullptr) {
+					mesh->calc_surface_normals();
+				}
+			}
+		}
+
 		// Work for every Camera seperatly
 		// For each loop and for each camera the world coordiante System must be the camera system
 		for (const auto& cam : m_cam) {
@@ -68,7 +76,7 @@ public:
 			
 			Rays rays{};
 			cam->generateRays(rays);
-
+			
 			m_results.push_back(std::make_unique<Eigen::MatrixXd>());
 			std::unique_ptr<Eigen::MatrixXd>& result = m_results.back();
 			result->resize(
@@ -108,7 +116,7 @@ public:
 			if (!mesh_opt.has_value()) continue;
 			const auto& mesh{ mesh_opt.value() };
 			everyMesh.push_back(
-				std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(light_mesh.get(), mesh));
+				std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(light_mesh.get(), *mesh));
 		}
 
 		double closestU{};
@@ -147,10 +155,6 @@ public:
 					continue;
 				}
 
-				if (t >= closestT) {
-					continue;
-				}
-
 				closestT = t;
 				closestU = u;
 				closestV = v;
@@ -159,14 +163,13 @@ public:
 				closestIndex[1] = index1;
 				closestIndex[2] = index2;
 
-				closestObj = &meshRef.second.get();
+				closestObj = meshRef.first;
 
 				surfaceIndex = i;
 			}
 		}
 
-		if (std::holds_alternative<Light*>(closestObj) || 
-			std::holds_alternative<Mesh*>(closestObj)){
+		if (std::holds_alternative<std::monostate>(closestObj)){
 			return background;
 		}
 
@@ -185,19 +188,19 @@ private:
 	std::vector<std::unique_ptr<TriangularMesh>> m_mesh{};
 	std::vector<std::unique_ptr<Light>> m_light{};
 
-	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results;
+	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results{};
 	double m_background{};
-	using SceneObjPtr = std::variant<std::monostate, const Light*, const TriangularMesh*>;
+	using SceneObjPtr = std::variant<std::monostate, TriangularMesh*, Light*>;
 
 	template<typename... Ts> struct Overload : Ts...{
 		using Ts::operator()...; 
 	};
 
 	void transform_all(const Eigen::Matrix4d& cam_transform) {
-		for (const auto& obj : m_mesh) {
+		for (auto& obj : m_mesh) {
 			obj->applyTransform(cam_transform);
 		}
-		for (const auto& obj : m_light){
+		for (auto& obj : m_light){
 			obj->applyTransform(cam_transform);
 		}
 	}
@@ -220,7 +223,7 @@ private:
 				};
 			auto f2 = [&](const Light* const& light) -> const TriangularMesh* {
 				light_ptr = light;
-				return &light->getMesh().value();
+				return const_cast<const TriangularMesh*>(light->getMesh().value());
 			};
 			auto f3 = [](const TriangularMesh* const& mesh) -> const TriangularMesh* {
 				return mesh;
@@ -235,18 +238,6 @@ private:
 			return m_background;
 		}
 		
-		const Eigen::Vector3d origin{t * dir};
-		
-		if (mesh->m_info.emitter) {
-			/* Not implemented at this time */
-			std::cout << "Not implemented ";
-		}
-
-		Eigen::Vector3d reflected = reflect_ray(
-			dir,
-			(mesh->m_vertices[vertice_index[1]].pos - mesh->m_vertices[vertice_index[0]].pos).cross(
-				mesh->m_vertices[vertice_index[2]].pos - mesh->m_vertices[vertice_index[0]].pos));
-
 		const std::complex<double> refractive{
 			TriangularMesh::get_Barycentric_Interpolated_refractive_index(
 				mesh->m_vertices[vertice_index[0]],
@@ -255,15 +246,41 @@ private:
 				u,
 				v)
 		};
-		
+
 		// it might be necessary to inverto one vector 
-		double cos_theta{ mesh->m_surface_normals[surface_index].dot(dir)};
+		double cos_theta{ mesh->m_surface_normals[surface_index].dot(dir) };
 
 		// Only validity check!! should be later removed 
 		if (cos_theta < 0.0) {
 			std::cout << "cos Theta is negative \n";
+			throw std::runtime_error("Check");
 		}
 
+		// Hardcoded Display Image !!! 
+		if (mesh->m_info.emitter) {
+			const Eigen::Vector2d texture_coord{ TriangularMesh::get_Texture_Coord(
+			mesh->m_vertices[vertice_index[0]].uv,
+			mesh->m_vertices[vertice_index[1]].uv,
+			mesh->m_vertices[vertice_index[2]].uv,
+			u,
+			v) 
+			};
+			// BRDF characeteristic of Source
+			const double scalingBRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta,t) };
+			// Local Brightness in [0...1] 
+			const double light_Brightness{ light_ptr->get_local_Texture(texture_coord, 0) };
+			// Return maxLightPower * Angle- & distance- Scaling * Brightness IF the light is modular 
+			return light_ptr->m_info.m_power * scalingBRDF * light_Brightness;
+		}
+
+		Eigen::Vector3d reflected = reflect_ray(
+			dir,
+			(mesh->m_vertices[vertice_index[1]].pos - mesh->m_vertices[vertice_index[0]].pos).cross(
+				mesh->m_vertices[vertice_index[2]].pos - mesh->m_vertices[vertice_index[0]].pos));
+
+		const Eigen::Vector3d origin{ t * dir };
+		
+		
 		if (mesh->m_info.specular) {
 			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta, t) };
 			return scaling_BRDF * castRay(
@@ -275,16 +292,11 @@ private:
 				);
 		}
 
-		if (mesh->m_info.emitter) {
-
-		}
-
 		// Here the same 
 		if (mesh->m_info.diffuse) {
-			
+			throw std::invalid_argument("We do not have a pipeline for diffuse objects \n");
 		}
-
-		
+		return m_background;
 	}
 	//bool optimizer();
 

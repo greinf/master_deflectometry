@@ -1,5 +1,6 @@
 #ifndef CAMERA_HPP
 #define CAMERA_HPP
+
 #include "CameraMatrix.hpp"
 
 #include <memory>
