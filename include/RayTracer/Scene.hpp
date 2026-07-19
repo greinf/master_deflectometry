@@ -10,7 +10,11 @@
 #include <algorithm>
 #include <functional>
 #include <variant>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
+using SceneObjPtr = std::variant<std::monostate, TriangularMesh*, Light*>;
 
 class Scene {
 public:
@@ -52,7 +56,8 @@ public:
 		if (m_mesh.empty()) std::cout << "No object in the scene \n";
 		if (m_light.empty()) std::cout << "No Light sources in the scene \n";
 
-		m_results.reserve(m_cam.size());
+		out_img.clear();
+		out_img.reserve(m_cam.size());
 		
 		for (auto& obj : m_mesh) {
 			if (obj->m_surface_normals == nullptr) obj->calc_surface_normals();
@@ -62,6 +67,7 @@ public:
 			auto mesh_opt = obj->getMesh();
 			if (mesh_opt.has_value()) {
 				TriangularMesh* mesh{ mesh_opt.value() };
+				if (mesh == nullptr) throw std::invalid_argument("Not good");
 				if (mesh->m_surface_normals == nullptr) {
 					mesh->calc_surface_normals();
 				}
@@ -76,21 +82,133 @@ public:
 			
 			Rays rays{};
 			cam->generateRays(rays);
+
+			std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>> everyMesh{};
+			for (const auto& mesh : m_mesh) {
+				everyMesh.push_back(
+					std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(mesh.get(), *mesh));
+			}
+			for (const auto& light_mesh : m_light) {
+				const auto& mesh_opt{ light_mesh->getMesh() };
+				// This is optional since at some Point Spot light might be implemented which should not be tested 
+				if (!mesh_opt.has_value()) continue;
+				const auto& mesh{ mesh_opt.value() };
+				everyMesh.push_back(
+					std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(light_mesh.get(), *mesh));
+			}
 			
-			m_results.push_back(std::make_unique<Eigen::MatrixXd>());
-			std::unique_ptr<Eigen::MatrixXd>& result = m_results.back();
-			result->resize(
+			out_img.push_back(Eigen::MatrixXd());
+			Eigen::MatrixXd& result = out_img.back();
+			result.resize(
 				rays.rows(),
 				rays.cols());
 
-			for (Eigen::Index i = 0; i < rays.size(); ++i) {
-				// Here threads could be created 
-				result->data()[i] = castRay(
-					Eigen::Vector3d::Zero(),
-					rays.data()[i],
-					m_mesh,
-					m_light,
-					m_background);
+			const std::size_t numberOfRays{
+				static_cast<std::size_t>(rays.size())};
+
+			const std::size_t numberOfWorkers{
+				getWorkerCount(numberOfRays)};
+
+			if (numberOfWorkers == 0) {
+				continue;
+			}
+
+			const std::size_t raysPerWorker{
+				(numberOfRays + numberOfWorkers - 1)
+				/ numberOfWorkers
+			};
+
+			std::vector<std::thread> workers{};
+			workers.reserve(numberOfWorkers);
+
+			// Exceptions must not escape directly from a std::thread.
+			// Otherwise std::terminate() is called.
+			std::exception_ptr workerException{};
+			std::mutex exceptionMutex{};
+			std::atomic_bool stopRequested{ false };
+
+			try {
+				for (std::size_t workerIndex = 0;
+					workerIndex < numberOfWorkers;
+					++workerIndex)
+				{
+					const std::size_t begin{
+						workerIndex * raysPerWorker
+					};
+
+					const std::size_t end{
+						std::min(
+							begin + raysPerWorker,
+							numberOfRays
+						)
+					};
+
+					if (begin >= end) {
+						break;
+					}
+
+					workers.emplace_back(
+						[&, begin, end]()
+						{
+							try {
+								for (std::size_t rayIndex = begin;
+									rayIndex < end;
+									++rayIndex)
+								{
+									if (stopRequested.load(
+										std::memory_order_relaxed))
+									{
+										return;
+									}
+
+									result.data()[rayIndex] = castRay(
+										Eigen::Vector3d::Zero(),
+										rays.data()[rayIndex],
+										everyMesh,
+										m_background
+									);
+								}
+							}
+							catch (...) {
+								stopRequested.store(
+									true,
+									std::memory_order_relaxed
+								);
+
+								std::lock_guard<std::mutex> lock{
+									exceptionMutex
+								};
+
+								if (!workerException) {
+									workerException =
+										std::current_exception();
+								}
+							}
+						}
+					);
+				}
+			}
+			catch (...) {
+				stopRequested.store(
+					true,
+					std::memory_order_relaxed
+				);
+
+				for (std::thread& worker : workers) {
+					if (worker.joinable()) {
+						worker.join();
+					}
+				}
+
+				throw;
+			}
+
+			for (std::thread& worker : workers) {
+				worker.join();
+			}
+
+			if (workerException) {
+				std::rethrow_exception(workerException);
 			}
 		}
 	}
@@ -98,26 +216,10 @@ public:
 	double castRay(
 		const Eigen::Vector3d& origin,
 		const Eigen::Vector3d& dir,
-		const std::vector<std::unique_ptr<TriangularMesh>>& meshes,
-		const std::vector<std::unique_ptr<Light>>& lights,
+		const std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>>& everyMesh,
 		const double& background)
 	{
 		double closestT = std::numeric_limits<double>::infinity();
-
-		std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>> everyMesh{};
-		// It would be possible to implement accelerating structures here.
-		for (const auto& mesh : meshes) {
-			everyMesh.push_back(
-				std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(mesh.get(), *mesh));
-		}
-		for (const auto& light_mesh : lights) {
-			const auto& mesh_opt{ light_mesh->getMesh() };
-			// This is optional since at some Point Spot light might be implemented which should not be tested 
-			if (!mesh_opt.has_value()) continue;
-			const auto& mesh{ mesh_opt.value() };
-			everyMesh.push_back(
-				std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(light_mesh.get(), *mesh));
-		}
 
 		double closestU{};
 		double closestV{};
@@ -155,6 +257,8 @@ public:
 					continue;
 				}
 
+				if (t >= closestT) continue;
+
 				closestT = t;
 				closestU = u;
 				closestV = v;
@@ -172,11 +276,15 @@ public:
 		if (std::holds_alternative<std::monostate>(closestObj)){
 			return background;
 		}
+	
+		const Eigen::Vector3d newOrigin{ closestT * dir + origin };
 
 		return trace(
 			closestObj,
+			everyMesh,
 			closestIndex,
 			surfaceIndex,
+			newOrigin,
 			dir,
 			closestU,
 			closestV,
@@ -190,8 +298,7 @@ private:
 
 	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results{};
 	double m_background{};
-	using SceneObjPtr = std::variant<std::monostate, TriangularMesh*, Light*>;
-
+	
 	template<typename... Ts> struct Overload : Ts...{
 		using Ts::operator()...; 
 	};
@@ -204,12 +311,37 @@ private:
 			obj->applyTransform(cam_transform);
 		}
 	}
+	
+	
+	[[nodiscard]] static std::size_t getWorkerCount(
+		const std::size_t numberOfTasks) noexcept
+	{
+		if (numberOfTasks == 0) {
+			return 0;
+		}
+
+		const unsigned int hardwareHint{
+			std::thread::hardware_concurrency()
+		};
+
+		// may return 0 if not possibible to determine
+		const std::size_t availableThreads{
+			hardwareHint == 0
+				? std::size_t{1}
+				: static_cast<std::size_t>(hardwareHint)
+		};
+
+		// Never create more workers than there are tasks.
+		return std::min(availableThreads, numberOfTasks);
+	}
 
 	double trace(
 		const SceneObjPtr& obj_ptr,
+		const std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>>& everyMesh,
 		const std::size_t* vertice_index,
 		const std::size_t& surface_index,
-		const Eigen::Vector3d& dir,
+		const Eigen::Vector3d& origin_new,
+		const Eigen::Vector3d& dir_incoming,
 		const double& u,
 		const double& v,
 		const double& t)
@@ -232,11 +364,6 @@ private:
 				Overload<decltype(f1), decltype(f2), decltype(f3)>{f1, f2, f3},
 				obj_ptr);
 		}
-		// This propably can be deleted
-		if (mesh == nullptr) {
-			std::cout << "This path should never be reached \n";
-			return m_background;
-		}
 		
 		const std::complex<double> refractive{
 			TriangularMesh::get_Barycentric_Interpolated_refractive_index(
@@ -247,14 +374,16 @@ private:
 				v)
 		};
 
-		// it might be necessary to inverto one vector 
-		double cos_theta{ mesh->m_surface_normals[surface_index].dot(dir) };
+		const Eigen::Vector3d surf_normal{
+			TriangularMesh::get_Barycentric_Interpolated_vertex_normal(
+				mesh->m_vertice_normals[vertice_index[0]],
+				mesh->m_vertice_normals[vertice_index[1]],
+				mesh->m_vertice_normals[vertice_index[2]],
+				u,
+				v
+		) };
 
-		// Only validity check!! should be later removed 
-		if (cos_theta < 0.0) {
-			std::cout << "cos Theta is negative \n";
-			throw std::runtime_error("Check");
-		}
+		double cos_theta{ surf_normal.dot(-dir_incoming) };
 
 		// Hardcoded Display Image !!! 
 		if (mesh->m_info.emitter) {
@@ -263,10 +392,9 @@ private:
 			mesh->m_vertices[vertice_index[1]].uv,
 			mesh->m_vertices[vertice_index[2]].uv,
 			u,
-			v) 
-			};
+			v)};
 			// BRDF characeteristic of Source
-			const double scalingBRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta,t) };
+			const double scalingBRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			// Local Brightness in [0...1] 
 			const double light_Brightness{ light_ptr->get_local_Texture(texture_coord, 0) };
 			// Return maxLightPower * Angle- & distance- Scaling * Brightness IF the light is modular 
@@ -274,20 +402,15 @@ private:
 		}
 
 		Eigen::Vector3d reflected = reflect_ray(
-			dir,
-			(mesh->m_vertices[vertice_index[1]].pos - mesh->m_vertices[vertice_index[0]].pos).cross(
-				mesh->m_vertices[vertice_index[2]].pos - mesh->m_vertices[vertice_index[0]].pos));
-
-		const Eigen::Vector3d origin{ t * dir };
-		
+			dir_incoming,
+			surf_normal);
 		
 		if (mesh->m_info.specular) {
-			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta, t) };
+			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			return scaling_BRDF * castRay(
-					origin,
+					origin_new,
 					reflected,
-					m_mesh,
-					m_light,
+					everyMesh,
 					m_background
 				);
 		}
@@ -298,7 +421,6 @@ private:
 		}
 		return m_background;
 	}
-	//bool optimizer();
 
 	static Eigen::Vector3d reflect_ray(
 		const Eigen::Vector3d& dir,

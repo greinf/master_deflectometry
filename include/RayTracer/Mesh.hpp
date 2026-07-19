@@ -41,23 +41,27 @@ public:
 		std::swap(m_n_ver_per_surface, mesh.m_n_ver_per_surface);
 		std::swap(m_n_vertices, mesh.m_n_vertices);
 		std::swap(m_n_surfaces, mesh.m_n_surfaces);
+		std::swap(m_surface_normals, mesh.m_surface_normals);
+		std::swap(m_info, mesh.m_info);
+		std::swap(m_transform, mesh.m_transform);
 		return *this;
 	}
 
-	explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
+	/*explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
 		std::unique_ptr<std::uint32_t[]>&& indices,
 		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
 		const std::uint32_t& n_vertice,
-		const std::uint32_t& n_surface)
-		: Object()
+		const std::uint32_t& n_surface,
+		const Eigen::Matrix4d& transform)
+		: Object(std::move(transform))
 		, m_vertices{ std::move(vertices) }
 		, m_vertice_normals{ std::move(vertice_normal) }
 		, m_indices{ std::move(indices) }
 		, m_n_ver_per_surface{ std::move(n_ver_per_surface) }
 		, m_n_vertices{n_vertice}
 		, m_n_surfaces{n_surface}
-	{ }
+	{ }*/
 
 	explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
@@ -65,8 +69,9 @@ public:
 		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
 		const std::uint32_t& n_vertice,
 		const std::uint32_t& n_surface,
-		const ObjectInfo& info)
-		: Object()
+		const ObjectInfo& info,
+		const Eigen::Matrix4d& transform)
+		: Object(std::move(transform))
 		, m_vertices{ std::move(vertices) }
 		, m_vertice_normals{ std::move(vertice_normal) }
 		, m_indices{ std::move(indices) }
@@ -78,45 +83,77 @@ public:
 	}
 
 	Mesh(Mesh&& mesh) noexcept
-		: Object()
+		: Object(mesh.m_transform)
 		, m_vertices{ std::move(mesh.m_vertices) }
 		, m_vertice_normals{ std::move(mesh.m_vertice_normals) }
 		, m_indices{ std::move(mesh.m_indices) }
 		, m_n_ver_per_surface{ std::move(mesh.m_n_ver_per_surface) }
 		, m_n_vertices{ std::move(mesh.m_n_vertices) }
 		, m_n_surfaces{ std::move(mesh.m_n_surfaces) }
+		, m_surface_normals{std::move(mesh.m_surface_normals)}
 		, m_info{std::move(mesh.m_info)}
 	{ }
 
-	Mesh(std::unique_ptr<Mesh>&& mesh)
-		: Object()
+	Mesh(std::unique_ptr<Mesh>&& mesh) noexcept
+		: Object(std::move(mesh->m_transform))
 		, m_vertices{std::move(mesh->m_vertices)}
 		, m_vertice_normals{std::move(mesh->m_vertice_normals)}
 		, m_indices{std::move(mesh->m_indices)}
 		, m_n_ver_per_surface{std::move(mesh->m_n_ver_per_surface)}
 		, m_n_vertices{std::move(mesh->m_n_vertices)}
 		, m_n_surfaces{std::move(mesh->m_n_surfaces)}
+		, m_surface_normals{std::move(mesh->m_surface_normals)}
 		, m_info{ std::move(mesh->m_info) }
 	{ }
 
-
 	virtual std::unique_ptr<double[]> get_Area() const noexcept = 0;
 
-	void applyTransform(const Eigen::Matrix4d& cam)
+	virtual void applyTransform(const Eigen::Matrix4d& cam)
 	{
-		Eigen::Matrix4d transform{ cam * m_transform };
-		Eigen::Matrix3d normal_transform{ transform.block<3,3>(0,0).transpose().inverse() };
-		for (std::size_t i = 0; i < static_cast<std::size_t>(m_n_vertices); ++i)
-		{
-			Eigen::Vector4d homogenous{};
-			homogenous.head<3>() = m_vertices[i].pos;
-			homogenous(3) = 1.0;
-			m_vertices[i].pos = (transform * homogenous).head<3>();
-
-			m_vertice_normals[i] = normal_transform * m_vertice_normals[i];
+		if (!m_vertices) {
+			throw std::runtime_error("Mesh contains no vertices.");
 		}
+
+		const Eigen::Matrix4d transform{
+			cam * m_transform
+		};
+
+		const Eigen::Matrix3d linear_transform{
+			transform.block<3, 3>(0, 0)
+		};
+
+		const Eigen::Matrix3d normal_transform{
+			linear_transform.inverse().transpose()
+		};
+
+		for (std::size_t i = 0;
+			i < static_cast<std::size_t>(m_n_vertices);
+			++i)
+		{
+			Eigen::Vector4d homogeneous;
+			homogeneous << m_vertices[i].pos, 1.0;
+
+			m_vertices[i].pos =
+				(transform * homogeneous).head<3>();
+
+			if (m_vertice_normals) {
+				m_vertice_normals[i] =
+					(normal_transform * m_vertice_normals[i]).normalized();
+			}
+		}
+
+		if (m_surface_normals) {
+			for (std::size_t i = 0;
+				i < static_cast<std::size_t>(m_n_surfaces);
+				++i)
+			{
+				m_surface_normals[i] =
+					(normal_transform * m_surface_normals[i]).normalized();
+			}
+		}
+
 		m_transform = Eigen::Matrix4d::Identity();
-	} virtual
+	}
 
 	// Creates for all Triangular Surfaces a normalized Surface Vector
 	void calc_surface_normals()
@@ -155,6 +192,11 @@ public:
 			const Eigen::Vector3d ac =
 				m_vertices[index2].pos - m_vertices[index0].pos;
 
+			if (ab.isZero() || ac.isZero()) {
+				std::cout << "Why tu fuck \n";
+			}
+
+
 			const Eigen::Vector3d cross = ab.cross(ac);
 
 			if (cross.squaredNorm() == 0.0) {
@@ -166,7 +208,7 @@ public:
 			index_offset += vertex_count;
 		}
 
-		m_surface_normals = std::move(surface_normals);
+		m_surface_normals = (std::move(surface_normals));
 	}
 
 	virtual bool shade() const = 0;
@@ -193,27 +235,50 @@ public:
 
 class TriangularMesh : public Mesh {
 public:
-	explicit TriangularMesh(
+	/*explicit TriangularMesh(
 		std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normals,
 		std::unique_ptr<std::uint32_t[]>&& indices,
 		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
 		const std::uint32_t& n_vertices,
-		const std::uint32_t& n_surfaces)
+		const std::uint32_t& n_surfaces,
+		const Eigen::Matrix4d& transform)
 		:Mesh(
 			std::move(vertices),
 			std::move(vertice_normals),
 			std::move(indices),
 			std::move(n_ver_per_surface),
 			n_vertices,
-			n_surfaces)
+			n_surfaces,
+			std::move(transform))
+	{ }*/
+
+	explicit TriangularMesh(
+		std::unique_ptr<Vertice[]>&& vertices,
+		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normals,
+		std::unique_ptr<std::uint32_t[]>&& indices,
+		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
+		const std::uint32_t& n_vertices,
+		const std::uint32_t& n_surfaces,
+		const ObjectInfo& info,
+		const Eigen::Matrix4d& m_transform
+		)
+		:Mesh(
+			std::move(vertices),
+			std::move(vertice_normals),
+			std::move(indices),
+			std::move(n_ver_per_surface),
+			n_vertices,
+			n_surfaces,
+			info,
+			std::move(m_transform))
 	{ }
 
 	TriangularMesh()
 		:Mesh()
 	{ }
 
-	[[nodiscard]] static const Eigen::Vector2d get_Texture_Coord(
+	[[nodiscard]] static Eigen::Vector2d get_Texture_Coord(
 		const Eigen::Vector2d& v0,
 		const Eigen::Vector2d& v1,
 		const Eigen::Vector2d& v2,
@@ -225,7 +290,7 @@ public:
 		return Eigen::Vector2d{ v0 * w + v1 * u + v2 * v };
 	}
 
-	[[nodiscard]] static const Eigen::Vector3d get_Coords_from_Barycentric(
+	[[nodiscard]] static Eigen::Vector3d get_Coords_from_Barycentric(
 		const Eigen::Vector3d& v0,
 		const Eigen::Vector3d& v1,
 		const Eigen::Vector3d& v2,
@@ -239,7 +304,19 @@ public:
 		return v0 + (u * BA + v * CA);
 	}
 
-	[[nodiscard]] static const std::complex<double> get_Barycentric_Interpolated_refractive_index(
+	[[nodiscard]] static Eigen::Vector3d get_Barycentric_Interpolated_vertex_normal(
+		const Eigen::Vector3d& v0,
+		const Eigen::Vector3d& v1,
+		const Eigen::Vector3d& v2,
+		const double& u,
+		const double& v
+	)noexcept 
+	{
+		const double w{ 1.0 - u - v };
+		return w * v0 + u * v1 + v * v2;
+	}
+
+	[[nodiscard]] static std::complex<double> get_Barycentric_Interpolated_refractive_index(
 		const Vertice& v0,
 		const Vertice& v1,
 		const Vertice& v2,
@@ -261,16 +338,19 @@ public:
 	std::unique_ptr<double[]> get_Area() const noexcept override 
 	{
 		std::unique_ptr<double[]> area{new double[m_n_surfaces]};
+		std::size_t indices[3]{};
 		const Vertice* vert_ptr{ m_vertices.get() };
 		for (std::size_t i = 0; i < m_n_surfaces; ++i) {
-			const Eigen::Vector3d b_a{ vert_ptr[i + 1].pos - vert_ptr[i].pos };
-			const Eigen::Vector3d c_a{ vert_ptr[i + 2].pos - vert_ptr[i].pos };
-			area[i] = b_a.cross(c_a).norm() / 2.0;
+			indices[0] = static_cast<std::size_t>(m_indices[i * 3]);
+			indices[1] = static_cast<std::size_t>(m_indices[i * 3 + 1]);
+			indices[2] = static_cast<std::size_t>(m_indices[i * 3 + 2]);
+			const Eigen::Vector3d b_a{ vert_ptr[indices[1]].pos - vert_ptr[indices[0]].pos };
+			const Eigen::Vector3d c_a{ vert_ptr[indices[2]].pos - vert_ptr[indices[0]].pos };
+			area[i] = b_a.cross(c_a).norm() * 0.5;
 			vert_ptr += m_n_ver_per_surface[i];
 		}
 		return std::move(area);
 	}
-
 
 	bool shade() const override
 	{
@@ -409,13 +489,14 @@ public:
 		:Mesh()
 	{ }
 
-	explicit PolygonMesh(
+	/*explicit PolygonMesh(
 		std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
 		std::unique_ptr<std::uint32_t[]>&& indices,
 		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
 		const std::uint32_t n_vertices,
-		const std::uint32_t n_surfaces)
+		const std::uint32_t n_surfaces,
+		)
 		: Mesh(
 			std::move(vertices), 
 			std::move(vertice_normal),
@@ -423,7 +504,7 @@ public:
 			std::move(n_ver_per_surface),
 			n_vertices,
 			n_surfaces)
-	{ }
+	{ }*/
 
 	explicit PolygonMesh(
 		std::unique_ptr<Vertice[]>&& vertices,
@@ -432,7 +513,8 @@ public:
 		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
 		const std::uint32_t n_vertices,
 		const std::uint32_t n_surfaces,
-		const ObjectInfo& info)
+		const ObjectInfo& info,
+		Eigen::Matrix4d transform = Eigen::Matrix4d::Identity())
 		: Mesh(
 			std::move(vertices),
 			std::move(vertice_normal),
@@ -440,7 +522,8 @@ public:
 			std::move(n_ver_per_surface),
 			n_vertices,
 			n_surfaces,
-			info)
+			info,
+			std::move(transform))
 	{ }
 
 	bool shade() const override {
@@ -593,7 +676,9 @@ public:
 			std::move(temp_indizes_swap),
 			std::move(temp_ver_per_surf_swap),
 			m_n_vertices,
-			n_triangles
+			n_triangles,
+			m_info,
+			m_transform
 			);
 	}
 
@@ -614,24 +699,27 @@ public:
 		std::unique_ptr<Eigen::Vector3d[]> vertex_normals_temp{ new Eigen::Vector3d[n_vertices] };
 		std::unique_ptr<std::uint32_t[]> n_ver_per_surf_temp{ new std::uint32_t[n_surfaces] };
 		std::unique_ptr<std::uint32_t[]> indizes_temp{ new std::uint32_t[n_vertices] };
+		// std::unique_ptr<Eigen::Vector3d[]> surface_normals{ new Eigen::Vector3d[n_surfaces] };
 
-		// Create Vertices
+		// Create 
 		vertice_temp[0].pos = Eigen::Vector3d::Zero();
-		vertice_temp[1].pos = Eigen::Vector3d(0.0, pixel_y * pixel_pitch, 0.0);
+		vertice_temp[1].pos = Eigen::Vector3d(pixel_x * pixel_pitch, 0.0, 0.0);
 		vertice_temp[2].pos = Eigen::Vector3d(pixel_x * pixel_pitch, pixel_y * pixel_pitch, 0.0);
-		vertice_temp[3].pos = Eigen::Vector3d(pixel_x * pixel_pitch, 0.0, 0.0);
+		vertice_temp[3].pos = Eigen::Vector3d(0.0, pixel_y * pixel_pitch, 0.0);
+		
+		
 
 		// Define TextureInformation
 		vertice_temp[0].uv = Eigen::Vector2d{ 0.0, 0.0 };
-		vertice_temp[1].uv = Eigen::Vector2d{ 0.0, pixel_y * pixel_pitch };
+		vertice_temp[1].uv = Eigen::Vector2d{ pixel_x * pixel_pitch, 0.0 };
 		vertice_temp[2].uv = Eigen::Vector2d{ pixel_x * pixel_pitch, pixel_y * pixel_pitch };
-		vertice_temp[3].uv = Eigen::Vector2d{ pixel_y * pixel_pitch, 0.0 };
+		vertice_temp[3].uv = Eigen::Vector2d{ 0.0, pixel_y * pixel_pitch };
 
-		// Connectivity
+		
 		vertex_normals_temp[0] = Eigen::Vector3d(0.0, 0.0, 1.0);
 		vertex_normals_temp[1] = vertex_normals_temp[0];
-		vertex_normals_temp[2] = vertex_normals_temp[1];
-		vertex_normals_temp[3] = vertex_normals_temp[2];
+		vertex_normals_temp[2] = vertex_normals_temp[0];
+		vertex_normals_temp[3] = vertex_normals_temp[0];
 
 		// Mesh information
 		ObjectInfo info{};
@@ -642,6 +730,7 @@ public:
 
 		n_ver_per_surf_temp[0] = 4;
 
+		// Connectivity
 		indizes_temp[0] = 0;
 		indizes_temp[1] = 1;
 		indizes_temp[2] = 2;

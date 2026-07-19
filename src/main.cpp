@@ -36,6 +36,10 @@ auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName 
 auto shownormalized = [](const cv::Mat& d) {
     cv::Mat img;
     cv::normalize(d, img, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+    // Erlaubt das freie Skalieren des Fensters per Maus
+    cv::namedWindow("norm", cv::WINDOW_NORMAL);
+
     cv::imshow("norm", img);
     cv::waitKey(0);
     };
@@ -55,6 +59,10 @@ int main()
 
     Scene raycasting{};
 
+    camMat[0].at<double>(0, 2) = 2464.0 / 2;
+    camMat[0].at<double>(1, 2) = 2056.0 / 2;
+    distCoeffs[0] = cv::Mat(distCoeffs[0].size(), CV_64F, cv::Scalar(0.0));
+
     std::unique_ptr<Camera> cam_ptr = 
         std::make_unique<Camera>(std::make_unique<OpenCvMatrix>(camMat[0], distCoeffs[0]));
     
@@ -63,22 +71,37 @@ int main()
     std::unique_ptr<TriangularMesh> parabolical_mirror{ PolygonMesh::ParabolicalMirror(
         1600.0,
         200.0,
-        5)->convert2Triangular() };
+        30)->convert2Triangular() };
 
     Eigen::Matrix4d mirror_trans =
         (Eigen::Matrix4d() << -1, 0, 0, 0,
             0, 1, 0, 0,
-            0, 0, -1, 1000,
+            0, 0, -1, 1600,
             0, 0, 0, 1).finished();
 
     parabolical_mirror->addTransform(mirror_trans);
 
     raycasting.addObject(std::move(parabolical_mirror));
 
+    constexpr double width = 1920.0 * 0.2745;
+    constexpr double height = 1080.0 * 0.2745;
+
+    const double z = 0.0;
+
+    Eigen::Matrix4d display_trans =
+        (Eigen::Matrix4d() <<
+            1, 0, 0, -width / 2.0,
+            0, 1, 0, - height / 2.0,
+            0, 0, 1, z,
+            0, 0, 0, 1
+            ).finished();
+
     std::unique_ptr<TriangularMesh> displayMesh{ PolygonMesh::Display()->convert2Triangular() };
 
+    displayMesh->addTransform(display_trans);
+
     std::unique_ptr<Display> display{ new Display(
-        PolygonMesh::Display(1920, 1080, 0.2745)->convert2Triangular(),
+        std::move(displayMesh),
         1920,
         1080,
         0.2745,
@@ -86,16 +109,27 @@ int main()
         4
     ) };
 
+    display->m_info.m_power = 220.0;
+
     raycasting.addLight(std::move(display));
 
     std::vector<Eigen::MatrixXd> outputImages{};
 
     raycasting.raytraceScene(outputImages);
 
-    cv::Mat output(outputImages[0].rows(), outputImages[0].cols(), CV_64F, outputImages[0].data());
+    std::cout << outputImages.size() << '\n';
 
-    cv::imshow("Maybe output", output);
-    cv::waitKey(0);
+    cv::Mat output;
+
+    cv::eigen2cv(outputImages.at(0), output);
+
+    double maxVal;
+    // Pass cv::noArray() or NULL if you don't need the minimum value or locations
+    cv::minMaxLoc(output, nullptr, &maxVal);
+
+    std::cout << "Max coefficient: " << maxVal << std::endl;
+
+    shownormalized(output);
 
     return 0;
 

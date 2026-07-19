@@ -9,8 +9,7 @@
 class RadiationCharakteristics {
 public:
 	virtual double operator()(
-		const double& cos_theta,
-		const double& dist) = 0;
+		const double& cos_theta) = 0;
 };
 
 
@@ -27,10 +26,9 @@ public:
 	}
 
 	double operator()(
-		const double& cos_theta,
-		const double& dist) override 
+		const double& cos_theta) override 
 	{
-		return m_R0 + (1 - m_R0) * std::pow(1.0 - cos_theta, 5) / (dist * dist);
+		return (m_R0 + (1 - m_R0) * std::pow(1.0 - cos_theta, 5));
 	}
 
 private:
@@ -62,10 +60,9 @@ public:
 	BRDF(std::unique_ptr<RadiationCharakteristics>&& radiation)
 		: m_characteristic{std::move(radiation)} { }
 
-	double get_Reflection(const double& cos_theta,
-				const double& dist) 
+	double get_Reflection(const double& cos_theta) 
 	{
-		return (*m_characteristic)(cos_theta, dist);
+		return (*m_characteristic)(cos_theta);
 	}
 	
 private:

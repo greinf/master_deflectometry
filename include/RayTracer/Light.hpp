@@ -45,10 +45,10 @@ public:
 
 	virtual const std::optional<const TriangularMesh*> getMesh() const noexcept = 0;
 
-	virtual const double get_local_Texture(
+	virtual double get_local_Texture(
 		const Eigen::Vector2d& texture_Coord,
 		const std::size_t& index
-		) const noexcept = 0;
+		) const = 0;
 
 	Eigen::Matrix4d getTransform()
 	{
@@ -91,33 +91,31 @@ public:
 		m_mesh->m_transform = trans;
 	}
 
-	const double get_local_Texture(
+	double get_local_Texture(
 		const Eigen::Vector2d& texture_coor,
-		const std::size_t& i) const noexcept override
+		const std::size_t& i) const override
 	{
 		if (m_Texture == nullptr) return 1.0;
 
 		Eigen::Index image_x{ m_Texture->begin()->cols() };
 		Eigen::Index image_y{ m_Texture->begin()->rows() };
 
-		const Eigen::Vector2i texture_index = texture_coor.array().round().cast<int>();
-		const Eigen::Index x_i = std::clamp(
-			static_cast<Eigen::Index>(texture_index.x()), 
-			static_cast<Eigen::Index>(0), 
-			image_x);
-
-		const Eigen::Index y_i = std::clamp(
-			static_cast<Eigen::Index>(texture_index.y()),
-			static_cast<Eigen::Index>(0),
-			image_y
+		const Eigen::Index x_i = std::clamp<Eigen::Index>(
+			static_cast<Eigen::Index>(texture_coor.x()),
+			0,
+			image_x - 1
 		);
 
-		const double val = m_Texture->at(i)(image_x, image_y);
+		const Eigen::Index y_i = std::clamp<Eigen::Index>(
+			static_cast<Eigen::Index>(texture_coor.y()),
+			0,
+			image_y - 1
+		);
 
-		return std::clamp(val, 0.0, 1.0);
+		const double val = m_Texture->at(i)(y_i, x_i);
 	}
 
-	const std::optional<TriangularMesh*> getMesh() noexcept override 
+	const std::optional<TriangularMesh*> getMesh() noexcept override
 	{
 		return std::optional<TriangularMesh*>(m_mesh.get());
 	}
@@ -125,8 +123,6 @@ public:
 	const std::optional<const TriangularMesh*> getMesh() const noexcept override {
 		return std::optional<const TriangularMesh*>(m_mesh.get());
 	}
-
-	Light_Info m_info{};
 	
 	void add_Texture(std::unique_ptr<std::vector<Eigen::MatrixXd>>&& texture) {
 		if (texture == nullptr) throw std::invalid_argument("Used nullptr for Texture");
@@ -135,7 +131,7 @@ public:
 		const Eigen::Index rows{ texture->begin()->rows() };
 		const Eigen::Index cols{ texture->begin()->cols() };
 
-		if (rows == 0 || cols || 0) throw std::invalid_argument("Empty Matrix for Texture");
+		if (rows == 0 || cols == 0) throw std::invalid_argument("Empty Matrix for Texture");
 
 		for (auto it = texture->begin(); it != texture->end(); ++it) {
 			if (it->rows() != rows || it->cols() != cols) 
@@ -157,59 +153,87 @@ class Display : public AreaLight {
 public:
 	explicit Display(
 		std::unique_ptr<TriangularMesh>&& mesh,
-		const std::size_t& pixel_x,
-		const std::size_t& pixel_y,
-		const double& pixel_pitch,
-		const double& wavelength,
-		const std::size_t shifts)
+		std::size_t pixel_x,
+		std::size_t pixel_y,
+		double pixel_pitch,
+		double wavelength,
+		std::size_t shifts)
 		: AreaLight{ std::move(mesh) }
-		, m_pixel_x{pixel_x}
-		, m_pixel_y{pixel_y}
-		, m_pixel_pitch{pixel_pitch}
-		, m_wavelength{wavelength}
-		, m_n_shifts{shifts}
-	{ }
-
-	double m_wavelength{};
-	
-	// Return a Value between 0 ... 1
-	const double get_local_Texture(
-		const Eigen::Vector2d& texture_coor,
-		const std::size_t& i) const noexcept override
+		, m_pixel_x{ pixel_x }
+		, m_pixel_y{ pixel_y }
+		, m_pixel_pitch{ pixel_pitch }
+		, m_wavelength{ wavelength }
+		, m_n_shifts{ shifts }
 	{
-		return get_Cos(
-			texture_coor.x(),
-			texture_coor.y(),
-			m_wavelength,
-			i,
-			m_n_shifts);
+		if (m_wavelength <= 0.0) {
+			throw std::invalid_argument(
+				"Wavelength must be positive"
+			);
+		}
+
+		if (m_n_shifts == 0) {
+			throw std::invalid_argument(
+				"Number of phase shifts must be positive"
+			);
+		}
+	}
+
+	double get_local_Texture(
+		const Eigen::Vector2d& texture_coord,
+		const std::size_t& pattern_index) const override
+	{
+		if (pattern_index >= 2 * m_n_shifts) {
+			throw std::out_of_range(
+				"Pattern index exceeds available patterns"
+			);
+		}
+
+		constexpr double two_pi{
+			6.283185307179586476925286766559
+		};
+
+		const bool second_orientation{
+			pattern_index >= m_n_shifts
+		};
+
+		const std::size_t shift_index{
+			pattern_index % m_n_shifts
+		};
+
+		const double coordinate{
+			second_orientation
+				? texture_coord.x()
+				: texture_coord.y()
+		};
+
+		const double spatial_phase{
+			two_pi * coordinate / m_wavelength
+		};
+
+		const double phase_shift{
+			two_pi
+			* static_cast<double>(shift_index)
+			/ static_cast<double>(m_n_shifts)
+		};
+
+		return 0.5 * (
+			std::cos(spatial_phase + phase_shift) + 1.0
+			);
+	}
+
+	[[nodiscard]]
+	std::size_t patternCount() const noexcept
+	{
+		return 2 * m_n_shifts;
 	}
 
 private:
 	std::size_t m_pixel_x{};
 	std::size_t m_pixel_y{};
 	std::size_t m_n_shifts{};
+
 	double m_pixel_pitch{};
-	
-	// Start with horizontal Phase, after that vertical Phase 
-	// Wavelength in mm per period
-	const double get_Cos(
-		const double& u, 
-		const double& v,
-		const double& wavelength,
-		const std::size_t current_step, 
-		const std::size_t n_steps) const 
-	{
-		if (current_step * 2 > n_steps) 
-			throw std::invalid_argument("More Shits are wanted than available");
-		
-		const double phase{ (current_step % n_steps) * wavelength/static_cast<double>(n_steps)};
-		// Integer division: zero for Horizontal
-		if (current_step / n_steps == 0) {
-			return std::cos(u * wavelength + phase) * 0.5 + 0.5;
-		}
-		return std::cos(v * wavelength + phase) * 0.5 + 0.5;
-	}
+	double m_wavelength{};
 };
 
 

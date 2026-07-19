@@ -71,30 +71,40 @@ public:
 		const double x_start = 0.0,
 		const double y_start = 0.0,
 		const double width = 2464.0,
-		const double height = 2056 ,
+		const double height = 2056.0,
 		const double stepwidth_x = 1.0,
 		const double stepwidth_y = 1.0)
 	{
-		if (width < 0 || height < 0) throw std::invalid_argument("Width and height must be > 0");
-		if (stepwidth_x > 9 * width) throw std::invalid_argument("stepwith_x to high");
-		if (stepwidth_y > 9 * height) throw std::invalid_argument("stepthwidth_y to high");
+		if (width <= 0.0 || height <= 0.0) {
+			throw std::invalid_argument("Width and height must be positive");
+		}
 
-		const Eigen::Index rows{ 
-			static_cast<Eigen::Index>(std::round(width / stepwidth_x))};
-		const Eigen::Index cols{ 
-			static_cast<Eigen::Index>(std::round(height / stepwidth_y))};
+		if (stepwidth_x <= 0.0 || stepwidth_y <= 0.0) {
+			throw std::invalid_argument("Step widths must be positive");
+		}
 
-		Sensor sensor_coords{};
-		sensor_coords.resize(rows, cols);
+		const Eigen::Index rows = static_cast<Eigen::Index>(
+			std::ceil((height - y_start) / stepwidth_y)
+			);
 
-		for (Eigen::Index row = static_cast<Eigen::Index>(x_start);
-			row < rows; ++row) {
-			for (Eigen::Index col = static_cast<Eigen::Index>(y_start);
-				col < cols; ++col) {
-				sensor_coords(row, col) = { row, col };
+		const Eigen::Index cols = static_cast<Eigen::Index>(
+			std::ceil((width - x_start) / stepwidth_x)
+			);
+
+		Sensor sensor_coords(rows, cols);
+
+		for (Eigen::Index row = 0; row < rows; ++row) {
+			for (Eigen::Index col = 0; col < cols; ++col) {
+				const double u =
+					x_start + static_cast<double>(col) * stepwidth_x;
+
+				const double v =
+					y_start + static_cast<double>(row) * stepwidth_y;
+
+				sensor_coords(row, col) = Eigen::Vector2d{ u, v };
 			}
 		}
-		
+
 		return sensor_coords;
 	}
 
