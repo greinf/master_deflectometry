@@ -113,6 +113,7 @@ public:
 		);
 
 		const double val = m_Texture->at(i)(y_i, x_i);
+		return val;
 	}
 
 	const std::optional<TriangularMesh*> getMesh() noexcept override

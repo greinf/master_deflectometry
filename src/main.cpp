@@ -76,8 +76,15 @@ int main()
     Eigen::Matrix4d mirror_trans =
         (Eigen::Matrix4d() << -1, 0, 0, 0,
             0, 1, 0, 0,
-            0, 0, -1, 1600,
+            0, 0, -1, 4000,
             0, 0, 0, 1).finished();
+
+   /* Eigen::Matrix4d mirror_trans1 =
+        (Eigen::Matrix4d() <<
+            std::cos(CV_PI * 0.99), 0.0, std::sin(CV_PI * 0.99), 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            -std::sin(CV_PI * 0.99), 0.0, std::cos(CV_PI * 0.99), 4000.0
+            ).finished();*/
 
     parabolical_mirror->addTransform(mirror_trans);
 

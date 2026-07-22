@@ -9,7 +9,12 @@
 using Rays = Eigen::Matrix<Eigen::Vector3d, Eigen::Dynamic, Eigen::Dynamic>;
 using Sensor = Eigen::Matrix<Eigen::Vector2d, Eigen::Dynamic, Eigen::Dynamic>;
 
+
 class CameraMatrix: public Object {
+	struct CamData {
+		Eigen::Matrix3d* camMat{ nullptr };
+		Eigen::VectorXd* distCoeffs{ nullptr };
+	};
 public:
 	CameraMatrix() = default;
 	CameraMatrix(
@@ -114,6 +119,13 @@ public:
 	
 	virtual ~CameraMatrix() = default;
 
+	CamData getCameraData() {
+		return CamData{
+			{&m_camMat},
+			{&m_distCoeffs}
+		};
+	}
+
 protected:
 	Eigen::Matrix3d m_camMat{};
 	Eigen::Matrix3d m_camMat_inv{};
@@ -124,6 +136,7 @@ private:
 		if (m_distCoeffs.size() > 5) {
 			std::cout << "Warning: More than 5 Distortion Coefficients \n";
 			std::cout << m_distCoeffs.size() << " - Coefficients provided \n";
+			m_distCoeffs.resize(5, Eigen::NoChange);
 		}
 		if (m_distCoeffs.size() < 4) {
 			std::cout << "Warning: Less than 4 Distortion Coefficient provided \n";
@@ -165,6 +178,62 @@ public:
 		);
 	}
 
+	static Eigen::Vector3d undistort(
+		const Eigen::Vector3d& image_pt,
+		const Eigen::VectorXd& dist_Coeffs)
+	{
+		if (dist_Coeffs.size() > 5) {
+			std::cerr << "WARNING: More than 5 distortion Coefficient Provided. "
+				"Only the first 5 are taken into account" << std::endl;
+		}
+
+		if (dist_Coeffs.sum() == 0) return image_pt;
+
+		double x{};
+		double y{};
+		double z{};
+		
+		if (image_pt.z() != 1.0) {
+			const double scale{ 1.0 / image_pt.z() };
+			x = image_pt.x() * scale;
+			y = image_pt.y() * scale;
+			z = 1.0;
+		}
+
+		x = image_pt.x();
+		y = image_pt.y();
+		z = image_pt.z();
+
+		const double* d_ptr = dist_Coeffs.data();
+		const double k1 = d_ptr[0];
+		const double k2 = d_ptr[1];
+		const double p1 = d_ptr[2];
+		const double p2 = d_ptr[3];
+		const double k3 = d_ptr[4];
+
+		const double r2 = x * x  + y * y;
+		const double r4 = r2 * r2;
+		const double r6 = r4 * r2;
+
+		const double xy = x * y;
+
+		Eigen::Vector3d output{};
+
+		const double radial_dist{ k1 * r2 + k2 * r4 + k3 * r6 };
+		
+		output.x() = radial_dist * x +
+			(2 * p1 * xy + (p2 * (r2 + 2 * (x * x))));
+
+		output.y() = radial_dist * y +
+			(2 * p2 * xy + (p1 * (r2 + 2 * (y * y))));
+
+		output.z() = 1.0;
+		return output;
+	}
+
+
+
+
 	static Eigen::Vector3d newtonSolverdistort(
 		const Eigen::Vector3d& pixelCoords,   // (u_d, v_d) verzerrt in Pixeln
 		const Eigen::VectorXd& dist_coeffs)
@@ -175,6 +244,8 @@ public:
 		const double p1 = dptr[2];
 		const double p2 = dptr[3];
 		const double k3 = (dist_coeffs.size() > 4) ? dptr[4] : 0.0;
+
+		if (dist_coeffs.sum()) return pixelCoords;
 
 		// --- Distorted pixel coordinates (u_d, v_d) ---
 		const double x_d = pixelCoords[0];

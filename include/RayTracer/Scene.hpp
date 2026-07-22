@@ -5,6 +5,7 @@
 #include "Mesh.hpp"
 #include "Camera.hpp"
 #include "BRDF.hpp"
+#include "BVH.hpp"
 #include <vector>
 #include <memory>
 #include <algorithm>
@@ -13,10 +14,126 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <array>
+#include <cmath>
 
 using SceneObjPtr = std::variant<std::monostate, TriangularMesh*, Light*>;
 
-class Scene {
+// Traceable Mesh builds a wrapper around the 
+class TraceAbleMesh {
+public:
+	TraceAbleMesh(TriangularMesh* mesh)
+		:m_mesh{ mesh } 
+	{
+		build();
+	}
+	TraceAbleMesh(Light* light)
+		:m_light{ light }
+	{
+		auto opt = light->getMesh();
+		if (opt.has_value()) m_mesh = opt.value();
+		else throw std::runtime_error("Light is not traceable");
+		build();
+	}
+	
+	std::size_t m_n_triangles{};
+	
+	std::optional<const Light*> getLight() { return std::optional<const Light*>(m_light); }
+	
+	virtual bool intersect(
+		const Eigen::Vector3d& origin,
+		const Eigen::Vector3d& dir,
+		const Eigen::Vector3d& v0,
+		const Eigen::Vector3d& v1,
+		const Eigen::Vector3d& v2,
+		double& t, double& u, double& v) const
+	{
+		return TriangularMesh::intersect(origin, dir, v0, v1, v2, t, u, v);
+	}
+
+	ObjectInfo* m_info{nullptr};
+
+	std::optional<Light*> getLight() const {
+		if (m_light == nullptr) return std::nullopt;
+		return std::optional<Light*>(m_light);
+	}
+
+private:
+	TriangularMesh* m_mesh{ nullptr };
+	Light* m_light{ nullptr };
+
+	struct Vertex {
+		Eigen::Vector3d* pos{ nullptr };
+		Eigen::Vector3d* vertex_normal{ nullptr };
+		Eigen::Vector2d* uv_Vertice{ nullptr };
+		std::complex<double>* refractive{ nullptr };
+	};
+
+	void build() {
+		auto n_surfaces{ static_cast<std::size_t>(m_mesh->m_n_surfaces) };
+
+		if (n_surfaces == 0) throw std::invalid_argument("Empty Mesh given");
+
+		m_triangle = std::unique_ptr<Triangle[]>(new Triangle[n_surfaces]);
+
+		m_n_triangles = n_surfaces;
+
+		if (m_mesh->m_area == nullptr) {
+			m_mesh->get_Area();
+		}
+
+		if (m_mesh->m_surface_normals == nullptr) {
+			m_mesh->calc_surface_normals();
+		}
+
+		for (std::size_t i = 0; i < static_cast<std::size_t>(n_surfaces); ++i) {
+			std::size_t index[3]{
+				static_cast<std::size_t>(m_mesh->m_indices[i * 3]),
+				static_cast<std::size_t>(m_mesh->m_indices[i * 3 + 1]),
+				static_cast<std::size_t>(m_mesh->m_indices[i * 3 + 2])
+			};
+			// Check for indexing!!! 
+			if (index[0] >= m_mesh->m_n_vertices ||
+				index[1] >= m_mesh->m_n_vertices ||
+				index[2] >= m_mesh->m_n_vertices)
+				throw std::out_of_range("You Failed misserably \n");
+
+			m_triangle[i].area = &m_mesh->m_area[i];
+			m_triangle[i].surf_norm = &m_mesh->m_surface_normals[i];
+			m_triangle[i].vertex[0].pos = &m_mesh->m_vertices[index[0]].pos;
+			m_triangle[i].vertex[1].pos = &m_mesh->m_vertices[index[1]].pos;
+			m_triangle[i].vertex[2].pos = &m_mesh->m_vertices[index[2]].pos;
+			m_triangle[i].vertex[0].refractive = &m_mesh->m_vertices[index[0]].refractive_index;
+			m_triangle[i].vertex[1].refractive = &m_mesh->m_vertices[index[1]].refractive_index;
+			m_triangle[i].vertex[2].refractive = &m_mesh->m_vertices[index[2]].refractive_index;
+			m_triangle[i].vertex[0].uv_Vertice = &m_mesh->m_vertices[index[0]].uv;
+			m_triangle[i].vertex[1].uv_Vertice = &m_mesh->m_vertices[index[1]].uv;
+			m_triangle[i].vertex[2].uv_Vertice = &m_mesh->m_vertices[index[2]].uv;
+			m_triangle[i].vertex[0].vertex_normal = &m_mesh->m_vertice_normals[index[0]];
+			m_triangle[i].vertex[1].vertex_normal = &m_mesh->m_vertice_normals[index[1]];
+			m_triangle[i].vertex[2].vertex_normal = &m_mesh->m_vertice_normals[index[2]];
+			
+			m_info = &m_mesh->m_info;
+		}
+	}
+public: 
+	struct Triangle {
+		Eigen::Vector3d* surf_norm{ nullptr };
+		Vertex vertex[3]{};
+		double* area{};
+	};
+
+	std::unique_ptr<Triangle[]> m_triangle{ nullptr };
+};
+
+
+class Scene{
+private: 
+	struct RayStructure {
+		const Eigen::Vector3d* dir;
+		const Eigen::Vector3d* origin;
+	};
+
 public:
 	Scene() = default;
 
@@ -46,8 +163,7 @@ public:
 		m_cam.push_back(std::move(cam));
 	}
 	
-	void raytraceScene(
-		std::vector<Eigen::MatrixXd>& out_img)
+	void raytraceScene(std::vector<Eigen::MatrixXd>& out_img)
 	{
 		if (m_cam.empty()) {
 			throw std::runtime_error("No Camera in the scene");
@@ -58,21 +174,6 @@ public:
 
 		out_img.clear();
 		out_img.reserve(m_cam.size());
-		
-		for (auto& obj : m_mesh) {
-			if (obj->m_surface_normals == nullptr) obj->calc_surface_normals();
-		}
-
-		for (auto& obj : m_light) {
-			auto mesh_opt = obj->getMesh();
-			if (mesh_opt.has_value()) {
-				TriangularMesh* mesh{ mesh_opt.value() };
-				if (mesh == nullptr) throw std::invalid_argument("Not good");
-				if (mesh->m_surface_normals == nullptr) {
-					mesh->calc_surface_normals();
-				}
-			}
-		}
 
 		// Work for every Camera seperatly
 		// For each loop and for each camera the world coordiante System must be the camera system
@@ -83,18 +184,17 @@ public:
 			Rays rays{};
 			cam->generateRays(rays);
 
-			std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>> everyMesh{};
+			std::vector<TraceAbleMesh> traceableMeshes{};
+
 			for (const auto& mesh : m_mesh) {
-				everyMesh.push_back(
-					std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(mesh.get(), *mesh));
+				traceableMeshes.push_back(TraceAbleMesh(mesh.get()));
 			}
 			for (const auto& light_mesh : m_light) {
 				const auto& mesh_opt{ light_mesh->getMesh() };
 				// This is optional since at some Point Spot light might be implemented which should not be tested 
 				if (!mesh_opt.has_value()) continue;
 				const auto& mesh{ mesh_opt.value() };
-				everyMesh.push_back(
-					std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>(light_mesh.get(), *mesh));
+				traceableMeshes.push_back(TraceAbleMesh(light_mesh.get()));
 			}
 			
 			out_img.push_back(Eigen::MatrixXd());
@@ -127,6 +227,8 @@ public:
 			std::mutex exceptionMutex{};
 			std::atomic_bool stopRequested{ false };
 
+			Eigen::Vector3d start = Eigen::Vector3d::Zero();
+
 			try {
 				for (std::size_t workerIndex = 0;
 					workerIndex < numberOfWorkers;
@@ -155,6 +257,11 @@ public:
 									rayIndex < end;
 									++rayIndex)
 								{
+									RayStructure ray{
+										{&rays.data()[rayIndex]},
+										{&start}
+									};
+
 									if (stopRequested.load(
 										std::memory_order_relaxed))
 									{
@@ -162,9 +269,8 @@ public:
 									}
 
 									result.data()[rayIndex] = castRay(
-										Eigen::Vector3d::Zero(),
-										rays.data()[rayIndex],
-										everyMesh,
+										ray,
+										traceableMeshes,
 										m_background
 									);
 								}
@@ -213,46 +319,36 @@ public:
 		}
 	}
 	// Cast Rays into the Scene. Ray and origin point are provided
-	double castRay(
-		const Eigen::Vector3d& origin,
-		const Eigen::Vector3d& dir,
-		const std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>>& everyMesh,
+	[[nodiscard]] double castRay(
+		RayStructure& ray,
+		const std::vector<TraceAbleMesh>& everyMesh,
 		const double& background)
 	{
 		double closestT = std::numeric_limits<double>::infinity();
 
 		double closestU{};
 		double closestV{};
+				
+		const TraceAbleMesh* closestObj{ nullptr };
+		const TraceAbleMesh::Triangle* closestTriangle{ nullptr };
 
-		std::size_t closestIndex[3];
-		std::size_t surfaceIndex{};
-		
-		SceneObjPtr closestObj{};
-		
 		for (const auto& meshRef : everyMesh) {
-			const TriangularMesh& mesh = meshRef.second.get();
 
 			for (std::size_t i = 0;
-				i < static_cast<std::size_t>(mesh.m_n_surfaces);
+				i < meshRef.m_n_triangles;
 				++i)
 			{
-				const std::size_t index0 = mesh.m_indices[i * 3];
-				const std::size_t index1 = mesh.m_indices[i * 3 + 1];
-				const std::size_t index2 = mesh.m_indices[i * 3 + 2];
-
 				double t{};
 				double u{};
 				double v{};
 
-				if (!mesh.intersect(
-					origin,
-					dir,
-					mesh.m_vertices[index0].pos,
-					mesh.m_vertices[index1].pos,
-					mesh.m_vertices[index2].pos,
-					t,
-					u,
-					v))
+				if (!meshRef.intersect(
+					*ray.origin,
+					*ray.dir,
+					*meshRef.m_triangle[i].vertex[0].pos,
+					*meshRef.m_triangle[i].vertex[1].pos,
+					*meshRef.m_triangle[i].vertex[2].pos,
+					t, u, v))
 				{
 					continue;
 				}
@@ -263,29 +359,19 @@ public:
 				closestU = u;
 				closestV = v;
 
-				closestIndex[0] = index0;
-				closestIndex[1] = index1;
-				closestIndex[2] = index2;
+				closestObj = &meshRef;
 
-				closestObj = meshRef.first;
-
-				surfaceIndex = i;
+				closestTriangle = &meshRef.m_triangle[i];
 			}
 		}
 
-		if (std::holds_alternative<std::monostate>(closestObj)){
-			return background;
-		}
-	
-		const Eigen::Vector3d newOrigin{ closestT * dir + origin };
+		if (std::isinf(closestT)) return m_background;
 
 		return trace(
-			closestObj,
 			everyMesh,
-			closestIndex,
-			surfaceIndex,
-			newOrigin,
-			dir,
+			closestObj,
+			closestTriangle,
+			ray,
 			closestU,
 			closestV,
 			closestT);
@@ -299,9 +385,6 @@ private:
 	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results{};
 	double m_background{};
 	
-	template<typename... Ts> struct Overload : Ts...{
-		using Ts::operator()...; 
-	};
 
 	void transform_all(const Eigen::Matrix4d& cam_transform) {
 		for (auto& obj : m_mesh) {
@@ -311,7 +394,6 @@ private:
 			obj->applyTransform(cam_transform);
 		}
 	}
-	
 	
 	[[nodiscard]] static std::size_t getWorkerCount(
 		const std::size_t numberOfTasks) noexcept
@@ -335,64 +417,60 @@ private:
 		return std::min(availableThreads, numberOfTasks);
 	}
 
-	double trace(
-		const SceneObjPtr& obj_ptr,
-		const std::vector<std::pair<SceneObjPtr, std::reference_wrapper<const TriangularMesh>>>& everyMesh,
-		const std::size_t* vertice_index,
-		const std::size_t& surface_index,
-		const Eigen::Vector3d& origin_new,
-		const Eigen::Vector3d& dir_incoming,
+	[[nodiscard]] double trace(
+		const std::vector<TraceAbleMesh>& meshes,
+		const TraceAbleMesh* closestObj,
+		const TraceAbleMesh::Triangle* closestTri,
+		RayStructure& ray,
 		const double& u,
 		const double& v,
 		const double& t)
 	{
-		const Light* light_ptr{ nullptr };
-		const TriangularMesh* mesh{ nullptr };
-		
-		{
-			auto f1 = [](const std::monostate&) -> const TriangularMesh* {
-				return nullptr;
-				};
-			auto f2 = [&](const Light* const& light) -> const TriangularMesh* {
-				light_ptr = light;
-				return const_cast<const TriangularMesh*>(light->getMesh().value());
-			};
-			auto f3 = [](const TriangularMesh* const& mesh) -> const TriangularMesh* {
-				return mesh;
-				};
-			mesh = std::visit(
-				Overload<decltype(f1), decltype(f2), decltype(f3)>{f1, f2, f3},
-				obj_ptr);
-		}
-		
 		const std::complex<double> refractive{
 			TriangularMesh::get_Barycentric_Interpolated_refractive_index(
-				mesh->m_vertices[vertice_index[0]],
-				mesh->m_vertices[vertice_index[1]],
-				mesh->m_vertices[vertice_index[2]],
+				*closestTri->vertex[0].refractive,
+				*closestTri->vertex[1].refractive,
+				*closestTri->vertex[2].refractive,
 				u,
 				v)
 		};
 
-		const Eigen::Vector3d surf_normal{
+		const Eigen::Vector3d vert_normal{
 			TriangularMesh::get_Barycentric_Interpolated_vertex_normal(
-				mesh->m_vertice_normals[vertice_index[0]],
-				mesh->m_vertice_normals[vertice_index[1]],
-				mesh->m_vertice_normals[vertice_index[2]],
+				*closestTri->vertex[0].vertex_normal,
+				*closestTri->vertex[1].vertex_normal,
+				*closestTri->vertex[2].vertex_normal,
 				u,
 				v
 		) };
 
-		double cos_theta{ surf_normal.dot(-dir_incoming) };
+		double cos_theta{ vert_normal.dot(-*ray.dir) };
+
+		Eigen::Vector3d newOrigin{ t * *ray.dir };
 
 		// Hardcoded Display Image !!! 
-		if (mesh->m_info.emitter) {
+		if (closestObj->m_info->emitter == true) {
 			const Eigen::Vector2d texture_coord{ TriangularMesh::get_Texture_Coord(
-			mesh->m_vertices[vertice_index[0]].uv,
-			mesh->m_vertices[vertice_index[1]].uv,
-			mesh->m_vertices[vertice_index[2]].uv,
-			u,
-			v)};
+				*closestTri->vertex[0].uv_Vertice,
+				*closestTri->vertex[1].uv_Vertice,
+				*closestTri->vertex[2].uv_Vertice,
+				u,
+				v)
+			};
+
+			auto optLight{ closestObj->getLight() };
+
+			if (!optLight.has_value()) {
+				std::cout << "Mesh that should contain Mesh has no value \n";
+				return m_background;
+			}
+
+			auto light_ptr{ optLight.value() };
+
+			if (light_ptr == nullptr) {
+				std::cout << "Alarm should contain a value \n";
+			}
+
 			// BRDF characeteristic of Source
 			const double scalingBRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			// Local Brightness in [0...1] 
@@ -402,21 +480,23 @@ private:
 		}
 
 		Eigen::Vector3d reflected = reflect_ray(
-			dir_incoming,
-			surf_normal);
+			*ray.dir,
+			vert_normal);
 		
-		if (mesh->m_info.specular) {
+		ray.dir = &reflected;
+		ray.origin = &newOrigin;
+		
+		if (closestObj->m_info->specular) {
 			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			return scaling_BRDF * castRay(
-					origin_new,
-					reflected,
-					everyMesh,
+					ray,
+					meshes,
 					m_background
 				);
 		}
 
 		// Here the same 
-		if (mesh->m_info.diffuse) {
+		if (closestObj->m_info->diffuse) {
 			throw std::invalid_argument("We do not have a pipeline for diffuse objects \n");
 		}
 		return m_background;

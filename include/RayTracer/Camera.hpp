@@ -5,6 +5,11 @@
 
 #include <memory>
 
+struct CameraData {
+	const Eigen::Matrix3d* camMat{ nullptr };
+	const Eigen::VectorXd* distCoeffs{ nullptr };
+};
+
 class Camera {
 public:
 	Camera(
@@ -48,11 +53,11 @@ public:
 		}
 	}
 	
-	void generateRays(Rays& rays) const {
+	[[nodiscard]] void generateRays(Rays& rays) const {
 		m_cameraMatrix->castRays(rays, m_sensorCoords.get());
 	}
 
-	const Eigen::Matrix4d& getTransform() const {
+	[[nodiscard]] const Eigen::Matrix4d& getTransform() const {
 		return m_cameraMatrix->m_transform;
 	}
 

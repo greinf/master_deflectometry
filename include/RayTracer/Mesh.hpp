@@ -106,7 +106,7 @@ public:
 		, m_info{ std::move(mesh->m_info) }
 	{ }
 
-	virtual std::unique_ptr<double[]> get_Area() const noexcept = 0;
+	virtual void get_Area() noexcept = 0;
 
 	virtual void applyTransform(const Eigen::Matrix4d& cam)
 	{
@@ -213,13 +213,13 @@ public:
 
 	virtual bool shade() const = 0;
 
-	virtual bool intersect(
+	/*virtual bool intersect(
 		const Eigen::Vector3d& origin,
 		const Eigen::Vector3d& dir,
 		const Eigen::Vector3d& v0, 
 		const Eigen::Vector3d& v1,
 		const Eigen::Vector3d& v2,
-		double& t, double &u, double &v) const = 0;
+		double& t, double &u, double &v) const = 0;*/
 
 	~Mesh() override = default;
 
@@ -228,6 +228,7 @@ public:
 	std::unique_ptr<Eigen::Vector3d[]> m_surface_normals = nullptr;
 	std::unique_ptr<std::uint32_t[]> m_indices = nullptr;
 	std::unique_ptr<std::uint32_t[]> m_n_ver_per_surface = nullptr;
+	std::unique_ptr<double[]> m_area = nullptr;
 	std::uint32_t m_n_vertices{};
 	std::uint32_t m_n_surfaces{};
 	ObjectInfo m_info{};
@@ -317,54 +318,52 @@ public:
 	}
 
 	[[nodiscard]] static std::complex<double> get_Barycentric_Interpolated_refractive_index(
-		const Vertice& v0,
-		const Vertice& v1,
-		const Vertice& v2,
+		const std::complex<double>& v0,
+		const std::complex<double>& v1,
+		const std::complex<double>& v2,
 		const double& u,
 		const double& v
 	) noexcept
 	{
-		if (v0.refractive_index == v1.refractive_index &&
-			v0.refractive_index == v2.refractive_index) 
-			return v1.refractive_index;
+		if (v0 == v1 &&
+			v0 == v2) 
+			return v1;
 
 		const double w{ 1.0 - u - v };
 
-		return v0.refractive_index * w + 
-			v1.refractive_index * u + 
-			v2.refractive_index * v;
+		return v0 * w + v1 * u + v2 * v;
 	}
 
-	std::unique_ptr<double[]> get_Area() const noexcept override 
+	void get_Area() noexcept override 
 	{
 		std::unique_ptr<double[]> area{new double[m_n_surfaces]};
-		std::size_t indices[3]{};
-		const Vertice* vert_ptr{ m_vertices.get() };
-		for (std::size_t i = 0; i < m_n_surfaces; ++i) {
-			indices[0] = static_cast<std::size_t>(m_indices[i * 3]);
-			indices[1] = static_cast<std::size_t>(m_indices[i * 3 + 1]);
-			indices[2] = static_cast<std::size_t>(m_indices[i * 3 + 2]);
-			const Eigen::Vector3d b_a{ vert_ptr[indices[1]].pos - vert_ptr[indices[0]].pos };
-			const Eigen::Vector3d c_a{ vert_ptr[indices[2]].pos - vert_ptr[indices[0]].pos };
-			area[i] = b_a.cross(c_a).norm() * 0.5;
-			vert_ptr += m_n_ver_per_surface[i];
-		}
-		return std::move(area);
-	}
 
+		std::size_t index[3]{};
+
+		for (std::size_t i = 0; i < m_n_surfaces; ++i) {
+			index[0] = static_cast<std::size_t>(m_indices[i * 3]);
+			index[1] = static_cast<std::size_t>(m_indices[i * 3 + 1]);
+			index[2] = static_cast<std::size_t>(m_indices[i * 3 + 2]);
+			const Eigen::Vector3d b_a{ m_vertices[index[1]].pos - m_vertices[index[0]].pos};
+			const Eigen::Vector3d c_a{ m_vertices[index[2]].pos - m_vertices[index[0]].pos};
+			area[i] = b_a.cross(c_a).norm() * 0.5;
+		}
+		m_area = std::move(area);
+	}
+	
 	bool shade() const override
 	{
 		throw std::runtime_error("not implemented");
 		return false;
 	}
 
-	bool intersect(
+	static bool intersect(
 		const Eigen::Vector3d& origin,
 		const Eigen::Vector3d& dir,
 		const Eigen::Vector3d& v0, // A
 		const Eigen::Vector3d& v1, // B
 		const Eigen::Vector3d& v2, // C
-		double& t, double& u, double& v) const override
+		double& t, double& u, double& v)
 	{
 		// Truber-Moller algorithm
 		const Eigen::Vector3d AB{ v1 - v0 };
@@ -489,23 +488,6 @@ public:
 		:Mesh()
 	{ }
 
-	/*explicit PolygonMesh(
-		std::unique_ptr<Vertice[]>&& vertices,
-		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
-		std::unique_ptr<std::uint32_t[]>&& indices,
-		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
-		const std::uint32_t n_vertices,
-		const std::uint32_t n_surfaces,
-		)
-		: Mesh(
-			std::move(vertices), 
-			std::move(vertice_normal),
-			std::move(indices),
-			std::move(n_ver_per_surface),
-			n_vertices,
-			n_surfaces)
-	{ }*/
-
 	explicit PolygonMesh(
 		std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
@@ -531,12 +513,15 @@ public:
 		return false;
 	}
 
-	std::unique_ptr<double[]> get_Area() const noexcept override {
+	void get_Area() noexcept override {
+		std::cout << "Be carefull the Area is calcualted over a Triangles. " <<
+			"Therefore only the sum is valid not the singular Values \n";
 		const auto tri_mesh{ this->convert2Triangular() };
-		return tri_mesh->get_Area();
+		tri_mesh->get_Area();
+		m_area = std::move(tri_mesh->m_area);
 	}
 
-	bool intersect(
+	/*bool intersect(
 		const Eigen::Vector3d& origin,
 		const Eigen::Vector3d& dir,
 		const Eigen::Vector3d& v0,
@@ -546,7 +531,7 @@ public:
 	{
 		throw std::runtime_error("Not implemented");
 		return false;
-	}
+	}*/
 
 	std::unique_ptr<TriangularMesh> convert2Triangular() const {
 
