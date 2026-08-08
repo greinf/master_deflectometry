@@ -9,6 +9,7 @@
 #include "Scene.hpp"
 #include <opencv2/core/eigen.hpp> // Must include this header
 
+
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
     {
         CV_Assert(img.type() == CV_64FC2);
@@ -76,7 +77,7 @@ int main()
     Eigen::Matrix4d mirror_trans =
         (Eigen::Matrix4d() << -1, 0, 0, 0,
             0, 1, 0, 0,
-            0, 0, -1, 4000,
+            0, 0, -1, 3700,
             0, 0, 0, 1).finished();
 
    /* Eigen::Matrix4d mirror_trans1 =

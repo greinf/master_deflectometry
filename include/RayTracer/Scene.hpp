@@ -1,12 +1,14 @@
 #ifndef SCENE_HPP
 #define SCENE_HPP
 
+#include "Utils.hpp"
 #include "Light.hpp"
 #include "Mesh.hpp"
+#include "TraceAlbeMesh.hpp"
 #include "Camera.hpp"
 #include "BRDF.hpp"
 #include "BVH.hpp"
-#include <vector>
+#include <deque>
 #include <memory>
 #include <algorithm>
 #include <functional>
@@ -17,123 +19,10 @@
 #include <array>
 #include <cmath>
 
+
 using SceneObjPtr = std::variant<std::monostate, TriangularMesh*, Light*>;
 
-// Traceable Mesh builds a wrapper around the 
-class TraceAbleMesh {
-public:
-	TraceAbleMesh(TriangularMesh* mesh)
-		:m_mesh{ mesh } 
-	{
-		build();
-	}
-	TraceAbleMesh(Light* light)
-		:m_light{ light }
-	{
-		auto opt = light->getMesh();
-		if (opt.has_value()) m_mesh = opt.value();
-		else throw std::runtime_error("Light is not traceable");
-		build();
-	}
-	
-	std::size_t m_n_triangles{};
-	
-	std::optional<const Light*> getLight() { return std::optional<const Light*>(m_light); }
-	
-	virtual bool intersect(
-		const Eigen::Vector3d& origin,
-		const Eigen::Vector3d& dir,
-		const Eigen::Vector3d& v0,
-		const Eigen::Vector3d& v1,
-		const Eigen::Vector3d& v2,
-		double& t, double& u, double& v) const
-	{
-		return TriangularMesh::intersect(origin, dir, v0, v1, v2, t, u, v);
-	}
-
-	ObjectInfo* m_info{nullptr};
-
-	std::optional<Light*> getLight() const {
-		if (m_light == nullptr) return std::nullopt;
-		return std::optional<Light*>(m_light);
-	}
-
-private:
-	TriangularMesh* m_mesh{ nullptr };
-	Light* m_light{ nullptr };
-
-	struct Vertex {
-		Eigen::Vector3d* pos{ nullptr };
-		Eigen::Vector3d* vertex_normal{ nullptr };
-		Eigen::Vector2d* uv_Vertice{ nullptr };
-		std::complex<double>* refractive{ nullptr };
-	};
-
-	void build() {
-		auto n_surfaces{ static_cast<std::size_t>(m_mesh->m_n_surfaces) };
-
-		if (n_surfaces == 0) throw std::invalid_argument("Empty Mesh given");
-
-		m_triangle = std::unique_ptr<Triangle[]>(new Triangle[n_surfaces]);
-
-		m_n_triangles = n_surfaces;
-
-		if (m_mesh->m_area == nullptr) {
-			m_mesh->get_Area();
-		}
-
-		if (m_mesh->m_surface_normals == nullptr) {
-			m_mesh->calc_surface_normals();
-		}
-
-		for (std::size_t i = 0; i < static_cast<std::size_t>(n_surfaces); ++i) {
-			std::size_t index[3]{
-				static_cast<std::size_t>(m_mesh->m_indices[i * 3]),
-				static_cast<std::size_t>(m_mesh->m_indices[i * 3 + 1]),
-				static_cast<std::size_t>(m_mesh->m_indices[i * 3 + 2])
-			};
-			// Check for indexing!!! 
-			if (index[0] >= m_mesh->m_n_vertices ||
-				index[1] >= m_mesh->m_n_vertices ||
-				index[2] >= m_mesh->m_n_vertices)
-				throw std::out_of_range("You Failed misserably \n");
-
-			m_triangle[i].area = &m_mesh->m_area[i];
-			m_triangle[i].surf_norm = &m_mesh->m_surface_normals[i];
-			m_triangle[i].vertex[0].pos = &m_mesh->m_vertices[index[0]].pos;
-			m_triangle[i].vertex[1].pos = &m_mesh->m_vertices[index[1]].pos;
-			m_triangle[i].vertex[2].pos = &m_mesh->m_vertices[index[2]].pos;
-			m_triangle[i].vertex[0].refractive = &m_mesh->m_vertices[index[0]].refractive_index;
-			m_triangle[i].vertex[1].refractive = &m_mesh->m_vertices[index[1]].refractive_index;
-			m_triangle[i].vertex[2].refractive = &m_mesh->m_vertices[index[2]].refractive_index;
-			m_triangle[i].vertex[0].uv_Vertice = &m_mesh->m_vertices[index[0]].uv;
-			m_triangle[i].vertex[1].uv_Vertice = &m_mesh->m_vertices[index[1]].uv;
-			m_triangle[i].vertex[2].uv_Vertice = &m_mesh->m_vertices[index[2]].uv;
-			m_triangle[i].vertex[0].vertex_normal = &m_mesh->m_vertice_normals[index[0]];
-			m_triangle[i].vertex[1].vertex_normal = &m_mesh->m_vertice_normals[index[1]];
-			m_triangle[i].vertex[2].vertex_normal = &m_mesh->m_vertice_normals[index[2]];
-			
-			m_info = &m_mesh->m_info;
-		}
-	}
-public: 
-	struct Triangle {
-		Eigen::Vector3d* surf_norm{ nullptr };
-		Vertex vertex[3]{};
-		double* area{};
-	};
-
-	std::unique_ptr<Triangle[]> m_triangle{ nullptr };
-};
-
-
 class Scene{
-private: 
-	struct RayStructure {
-		const Eigen::Vector3d* dir;
-		const Eigen::Vector3d* origin;
-	};
-
 public:
 	Scene() = default;
 
@@ -165,6 +54,8 @@ public:
 	
 	void raytraceScene(std::vector<Eigen::MatrixXd>& out_img)
 	{
+		const std::size_t rays_per_thread{ 100 };
+
 		if (m_cam.empty()) {
 			throw std::runtime_error("No Camera in the scene");
 			return;
@@ -175,28 +66,34 @@ public:
 		out_img.clear();
 		out_img.reserve(m_cam.size());
 
+		// Create the instance of ThreadPool
+		ThreadPool& thread_p = ThreadPool::instance();
+		// Create the future Object
+		std::vector<std::shared_future<std::vector<double>>> result_task_All;
+		
 		// Work for every Camera seperatly
 		// For each loop and for each camera the world coordiante System must be the camera system
 		for (const auto& cam : m_cam) {
 			// Transform all vertices 
 			transform_all(cam->getTransform());
-			
+
 			Rays rays{};
 			cam->generateRays(rays);
 
-			std::vector<TraceAbleMesh> traceableMeshes{};
+			// Deque to have some safety for pointers 
+			std::deque<TraceAbleMesh> traceableMeshes;
 
 			for (const auto& mesh : m_mesh) {
-				traceableMeshes.push_back(TraceAbleMesh(mesh.get()));
+				traceableMeshes.emplace_back(mesh.get());
 			}
 			for (const auto& light_mesh : m_light) {
 				const auto& mesh_opt{ light_mesh->getMesh() };
 				// This is optional since at some Point Spot light might be implemented which should not be tested 
 				if (!mesh_opt.has_value()) continue;
 				const auto& mesh{ mesh_opt.value() };
-				traceableMeshes.push_back(TraceAbleMesh(light_mesh.get()));
+				traceableMeshes.emplace_back(light_mesh.get());
 			}
-			
+
 			out_img.push_back(Eigen::MatrixXd());
 			Eigen::MatrixXd& result = out_img.back();
 			result.resize(
@@ -206,123 +103,84 @@ public:
 			const std::size_t numberOfRays{
 				static_cast<std::size_t>(rays.size())};
 
-			const std::size_t numberOfWorkers{
-				getWorkerCount(numberOfRays)};
+			const std::size_t outerDim{ numberOfRays / rays_per_thread };
 
-			if (numberOfWorkers == 0) {
-				continue;
-			}
-
-			const std::size_t raysPerWorker{
-				(numberOfRays + numberOfWorkers - 1)
-				/ numberOfWorkers
-			};
-
-			std::vector<std::thread> workers{};
-			workers.reserve(numberOfWorkers);
-
-			// Exceptions must not escape directly from a std::thread.
-			// Otherwise std::terminate() is called.
-			std::exception_ptr workerException{};
-			std::mutex exceptionMutex{};
-			std::atomic_bool stopRequested{ false };
-
+			thread_p.start();
 			Eigen::Vector3d start = Eigen::Vector3d::Zero();
 
-			try {
-				for (std::size_t workerIndex = 0;
-					workerIndex < numberOfWorkers;
-					++workerIndex)
+			auto task = [
+				function = &Scene::castRay,
+				instance_ptr = this,
+				rays_per_thread,
+				&rays,
+				&traceableMeshes,
+				start](const std::size_t start_index) -> std::vector<double>
 				{
-					const std::size_t begin{
-						workerIndex * raysPerWorker
-					};
+					std::vector<double> results;
+					results.reserve(rays_per_thread);
 
-					const std::size_t end{
+					const std::size_t end_index =
 						std::min(
-							begin + raysPerWorker,
-							numberOfRays
-						)
-					};
+							start_index + rays_per_thread,
+							static_cast<std::size_t>(rays.size())
+						);
 
-					if (begin >= end) {
-						break;
+					for (std::size_t i = start_index; i < end_index; ++i)
+					{
+						RayStructure ray{
+							{&rays.data()[i]},
+							{&start}
+						};
+
+						results.push_back(std::invoke(function, instance_ptr, ray, traceableMeshes));
 					}
+					return results;
+				};
 
-					workers.emplace_back(
-						[&, begin, end]()
-						{
-							try {
-								for (std::size_t rayIndex = begin;
-									rayIndex < end;
-									++rayIndex)
-								{
-									RayStructure ray{
-										{&rays.data()[rayIndex]},
-										{&start}
-									};
+			for (std::size_t i = 0; i < numberOfRays; i += rays_per_thread) {
+				std::size_t outerDim_current{ i / rays_per_thread };
+				std::size_t innerDim_current{ i % rays_per_thread };
 
-									if (stopRequested.load(
-										std::memory_order_relaxed))
-									{
-										return;
-									}
+				std::shared_future<std::vector<double>> result = 
+					thread_p.queueTask(task, i);
 
-									result.data()[rayIndex] = castRay(
-										ray,
-										traceableMeshes,
-										m_background
-									);
-								}
-							}
-							catch (...) {
-								stopRequested.store(
-									true,
-									std::memory_order_relaxed
-								);
-
-								std::lock_guard<std::mutex> lock{
-									exceptionMutex
-								};
-
-								if (!workerException) {
-									workerException =
-										std::current_exception();
-								}
-							}
-						}
-					);
-				}
+				result_task_All.push_back(std::move(result));
 			}
-			catch (...) {
-				stopRequested.store(
-					true,
-					std::memory_order_relaxed
-				);
+			
+			thread_p.stop();
 
-				for (std::thread& worker : workers) {
-					if (worker.joinable()) {
-						worker.join();
+			{ // Extract
+				std::size_t i = 0;
+
+				while (i < result_task_All.size()) {
+
+					if (result_task_All[i].valid() &&
+						result_task_All[i].wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+					{
+						std::vector<double> task_res = result_task_All[i].get();
+
+						std::size_t target_counter = i * rays_per_thread;
+
+						std::copy(task_res.begin(), task_res.end(), result.data() + target_counter);
+
+						++i;
+					}
+					else {
+						// Future ist noch nicht bereit: Kurze Pause und im nächsten Durchlauf dasselbe i prüfen
+						std::this_thread::sleep_for(std::chrono::milliseconds(1));
 					}
 				}
-
-				throw;
 			}
 
-			for (std::thread& worker : workers) {
-				worker.join();
-			}
-
-			if (workerException) {
-				std::rethrow_exception(workerException);
-			}
+			return;
 		}
 	}
+
 	// Cast Rays into the Scene. Ray and origin point are provided
 	[[nodiscard]] double castRay(
 		RayStructure& ray,
-		const std::vector<TraceAbleMesh>& everyMesh,
-		const double& background)
+		const std::deque<TraceAbleMesh>& everyMesh
+		)
 	{
 		double closestT = std::numeric_limits<double>::infinity();
 
@@ -331,38 +189,33 @@ public:
 				
 		const TraceAbleMesh* closestObj{ nullptr };
 		const TraceAbleMesh::Triangle* closestTriangle{ nullptr };
+		
 
-		for (const auto& meshRef : everyMesh) {
+		for (auto& meshRef : everyMesh) {
+			double t{};
+			double u{};
+			double v{};
 
-			for (std::size_t i = 0;
-				i < meshRef.m_n_triangles;
-				++i)
+			TraceAbleMesh::Triangle* triangle_ptr{ nullptr };
+
+			if (!meshRef.intersect(
+				*ray.origin,
+				*ray.dir,
+				triangle_ptr,
+				t, u, v))
 			{
-				double t{};
-				double u{};
-				double v{};
-
-				if (!meshRef.intersect(
-					*ray.origin,
-					*ray.dir,
-					*meshRef.m_triangle[i].vertex[0].pos,
-					*meshRef.m_triangle[i].vertex[1].pos,
-					*meshRef.m_triangle[i].vertex[2].pos,
-					t, u, v))
-				{
-					continue;
-				}
-
-				if (t >= closestT) continue;
-
-				closestT = t;
-				closestU = u;
-				closestV = v;
-
-				closestObj = &meshRef;
-
-				closestTriangle = &meshRef.m_triangle[i];
+				continue;
 			}
+
+			if (t >= closestT) continue;
+
+			closestT = t;
+			closestU = u;
+			closestV = v;
+
+			closestObj = &meshRef;
+
+			closestTriangle = triangle_ptr;
 		}
 
 		if (std::isinf(closestT)) return m_background;
@@ -395,30 +248,9 @@ private:
 		}
 	}
 	
-	[[nodiscard]] static std::size_t getWorkerCount(
-		const std::size_t numberOfTasks) noexcept
-	{
-		if (numberOfTasks == 0) {
-			return 0;
-		}
-
-		const unsigned int hardwareHint{
-			std::thread::hardware_concurrency()
-		};
-
-		// may return 0 if not possibible to determine
-		const std::size_t availableThreads{
-			hardwareHint == 0
-				? std::size_t{1}
-				: static_cast<std::size_t>(hardwareHint)
-		};
-
-		// Never create more workers than there are tasks.
-		return std::min(availableThreads, numberOfTasks);
-	}
 
 	[[nodiscard]] double trace(
-		const std::vector<TraceAbleMesh>& meshes,
+		const std::deque<TraceAbleMesh>& meshes,
 		const TraceAbleMesh* closestObj,
 		const TraceAbleMesh::Triangle* closestTri,
 		RayStructure& ray,
@@ -490,8 +322,7 @@ private:
 			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			return scaling_BRDF * castRay(
 					ray,
-					meshes,
-					m_background
+					meshes
 				);
 		}
 
