@@ -72,7 +72,7 @@ int main()
     std::unique_ptr<TriangularMesh> parabolical_mirror{ PolygonMesh::ParabolicalMirror(
         1600.0,
         200.0,
-        30)->convert2Triangular() };
+        50)->convert2Triangular() };
 
     Eigen::Matrix4d mirror_trans =
         (Eigen::Matrix4d() << -1, 0, 0, 0,

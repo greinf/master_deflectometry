@@ -81,17 +81,17 @@ public:
 			cam->generateRays(rays);
 
 			// Deque to have some safety for pointers 
-			std::deque<TraceAbleMesh> traceableMeshes;
+			//std::deque<std::unique_ptr<TraceAbleMesh>> traceableMeshes;
 
 			for (const auto& mesh : m_mesh) {
-				traceableMeshes.emplace_back(mesh.get());
+				m_workingMeshes.emplace_back(std::make_unique<BVH>(mesh.get()));
 			}
 			for (const auto& light_mesh : m_light) {
 				const auto& mesh_opt{ light_mesh->getMesh() };
 				// This is optional since at some Point Spot light might be implemented which should not be tested 
 				if (!mesh_opt.has_value()) continue;
 				const auto& mesh{ mesh_opt.value() };
-				traceableMeshes.emplace_back(light_mesh.get());
+				m_workingMeshes.emplace_back(std::make_unique<BVH>(light_mesh.get()));
 			}
 
 			out_img.push_back(Eigen::MatrixXd());
@@ -105,15 +105,14 @@ public:
 
 			const std::size_t outerDim{ numberOfRays / rays_per_thread };
 
-			thread_p.start();
-			Eigen::Vector3d start = Eigen::Vector3d::Zero();
+			const Eigen::Vector3d start = Eigen::Vector3d::Zero();
+
 
 			auto task = [
 				function = &Scene::castRay,
 				instance_ptr = this,
 				rays_per_thread,
 				&rays,
-				&traceableMeshes,
 				start](const std::size_t start_index) -> std::vector<double>
 				{
 					std::vector<double> results;
@@ -132,10 +131,12 @@ public:
 							{&start}
 						};
 
-						results.push_back(std::invoke(function, instance_ptr, ray, traceableMeshes));
+						results.push_back(std::invoke(function, instance_ptr, ray));
 					}
 					return results;
 				};
+
+			thread_p.start();
 
 			for (std::size_t i = 0; i < numberOfRays; i += rays_per_thread) {
 				std::size_t outerDim_current{ i / rays_per_thread };
@@ -178,8 +179,7 @@ public:
 
 	// Cast Rays into the Scene. Ray and origin point are provided
 	[[nodiscard]] double castRay(
-		RayStructure& ray,
-		const std::deque<TraceAbleMesh>& everyMesh
+		RayStructure& ray
 		)
 	{
 		double closestT = std::numeric_limits<double>::infinity();
@@ -191,14 +191,14 @@ public:
 		const TraceAbleMesh::Triangle* closestTriangle{ nullptr };
 		
 
-		for (auto& meshRef : everyMesh) {
+		for (auto& meshRef : m_workingMeshes) {
 			double t{};
 			double u{};
 			double v{};
 
 			TraceAbleMesh::Triangle* triangle_ptr{ nullptr };
 
-			if (!meshRef.intersect(
+			if (!meshRef->intersect(
 				*ray.origin,
 				*ray.dir,
 				triangle_ptr,
@@ -213,7 +213,7 @@ public:
 			closestU = u;
 			closestV = v;
 
-			closestObj = &meshRef;
+			closestObj = meshRef.get();
 
 			closestTriangle = triangle_ptr;
 		}
@@ -221,7 +221,6 @@ public:
 		if (std::isinf(closestT)) return m_background;
 
 		return trace(
-			everyMesh,
 			closestObj,
 			closestTriangle,
 			ray,
@@ -234,6 +233,10 @@ private:
 	std::vector<std::unique_ptr<Camera>> m_cam{};
 	std::vector<std::unique_ptr<TriangularMesh>> m_mesh{};
 	std::vector<std::unique_ptr<Light>> m_light{};
+
+	// New  09.08
+	std::vector<std::unique_ptr<TraceAbleMesh>> m_workingMeshes{ };
+
 
 	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results{};
 	double m_background{};
@@ -250,7 +253,6 @@ private:
 	
 
 	[[nodiscard]] double trace(
-		const std::deque<TraceAbleMesh>& meshes,
 		const TraceAbleMesh* closestObj,
 		const TraceAbleMesh::Triangle* closestTri,
 		RayStructure& ray,
@@ -321,8 +323,7 @@ private:
 		if (closestObj->m_info->specular) {
 			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			return scaling_BRDF * castRay(
-					ray,
-					meshes
+					ray
 				);
 		}
 

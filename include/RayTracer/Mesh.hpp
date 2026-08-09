@@ -272,7 +272,7 @@ public:
 			n_vertices,
 			n_surfaces,
 			info,
-			std::move(m_transform))
+			m_transform)
 	{ }
 
 	TriangularMesh()

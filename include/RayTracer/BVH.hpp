@@ -5,7 +5,6 @@
 #include "Mesh.hpp"
 
 #include <Eigen/Dense>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -21,7 +20,7 @@ class BVH : public TraceAbleMesh
 {
 private:
     static constexpr std::size_t kDirectionCount{ 7 };
-    static constexpr std::size_t kLeafSize{ 8 };
+    static constexpr std::size_t kLeafSize{ 20 };
 
     static constexpr std::uint32_t kInvalidNode{
         std::numeric_limits<std::uint32_t>::max()
@@ -211,6 +210,7 @@ private:
 
 
     std::vector<BVHNode> m_nodes{};
+    //std::vector<std::size_t>
     std::vector<std::size_t> m_triangleIndices{};
 
 
@@ -388,7 +388,6 @@ private:
             static_cast<std::uint32_t>(m_nodes.size())
         };
 
-        
         m_nodes.emplace_back();
 
         const std::size_t triangleCount{ end - begin };
