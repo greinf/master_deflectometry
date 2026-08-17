@@ -15,6 +15,17 @@ struct ObjectInfo {
 	bool specular{ false };
 	bool diffuse{ false };
 	bool emitter{ false };
+	
+	struct Diffuse_Settings {
+		double reflectivity_scattered{ 0.2 };
+		double reflectivity_direct{ 0.1 };
+
+		Diffuse_Settings() {
+			if (reflectivity_scattered + reflectivity_direct >= 1)
+				throw std::runtime_error("Sum of Diffuse Settings must be lower than 1 \n");
+		}
+	} m_diffuse_settings{};
+	
 };
 
 // Utilities 
@@ -47,22 +58,7 @@ public:
 		return *this;
 	}
 
-	/*explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
-		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
-		std::unique_ptr<std::uint32_t[]>&& indices,
-		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
-		const std::uint32_t& n_vertice,
-		const std::uint32_t& n_surface,
-		const Eigen::Matrix4d& transform)
-		: Object(std::move(transform))
-		, m_vertices{ std::move(vertices) }
-		, m_vertice_normals{ std::move(vertice_normal) }
-		, m_indices{ std::move(indices) }
-		, m_n_ver_per_surface{ std::move(n_ver_per_surface) }
-		, m_n_vertices{n_vertice}
-		, m_n_surfaces{n_surface}
-	{ }*/
-
+	
 	explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
 		std::unique_ptr<std::uint32_t[]>&& indices,
@@ -213,14 +209,6 @@ public:
 
 	virtual bool shade() const = 0;
 
-	/*virtual bool intersect(
-		const Eigen::Vector3d& origin,
-		const Eigen::Vector3d& dir,
-		const Eigen::Vector3d& v0, 
-		const Eigen::Vector3d& v1,
-		const Eigen::Vector3d& v2,
-		double& t, double &u, double &v) const = 0;*/
-
 	~Mesh() override = default;
 
 	std::unique_ptr<Vertice[]> m_vertices = nullptr;
@@ -232,27 +220,11 @@ public:
 	std::uint32_t m_n_vertices{};
 	std::uint32_t m_n_surfaces{};
 	ObjectInfo m_info{};
+	double m_completeArea{};
 };
 
 class TriangularMesh : public Mesh {
 public:
-	/*explicit TriangularMesh(
-		std::unique_ptr<Vertice[]>&& vertices,
-		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normals,
-		std::unique_ptr<std::uint32_t[]>&& indices,
-		std::unique_ptr<std::uint32_t[]>&& n_ver_per_surface,
-		const std::uint32_t& n_vertices,
-		const std::uint32_t& n_surfaces,
-		const Eigen::Matrix4d& transform)
-		:Mesh(
-			std::move(vertices),
-			std::move(vertice_normals),
-			std::move(indices),
-			std::move(n_ver_per_surface),
-			n_vertices,
-			n_surfaces,
-			std::move(transform))
-	{ }*/
 
 	explicit TriangularMesh(
 		std::unique_ptr<Vertice[]>&& vertices,
@@ -314,7 +286,7 @@ public:
 	)noexcept 
 	{
 		const double w{ 1.0 - u - v };
-		return w * v0 + u * v1 + v * v2;
+		return (w * v0 + u * v1 + v * v2).normalized();
 	}
 
 	[[nodiscard]] static std::complex<double> get_Barycentric_Interpolated_refractive_index(
@@ -336,6 +308,7 @@ public:
 
 	void get_Area() noexcept override 
 	{
+		m_completeArea = 0.0;
 		std::unique_ptr<double[]> area{new double[m_n_surfaces]};
 
 		std::size_t index[3]{};
@@ -347,6 +320,7 @@ public:
 			const Eigen::Vector3d b_a{ m_vertices[index[1]].pos - m_vertices[index[0]].pos};
 			const Eigen::Vector3d c_a{ m_vertices[index[2]].pos - m_vertices[index[0]].pos};
 			area[i] = b_a.cross(c_a).norm() * 0.5;
+			m_completeArea += area[i];
 		}
 		m_area = std::move(area);
 	}
@@ -520,18 +494,6 @@ public:
 		tri_mesh->get_Area();
 		m_area = std::move(tri_mesh->m_area);
 	}
-
-	/*bool intersect(
-		const Eigen::Vector3d& origin,
-		const Eigen::Vector3d& dir,
-		const Eigen::Vector3d& v0,
-		const Eigen::Vector3d& v1,
-		const Eigen::Vector3d& v2,
-		double& t, double& u, double& v) const override
-	{
-		throw std::runtime_error("Not implemented");
-		return false;
-	}*/
 
 	std::unique_ptr<TriangularMesh> convert2Triangular() const {
 
@@ -732,11 +694,237 @@ public:
 		);
 	}
 	
+	static std::unique_ptr<PolygonMesh> TelsecopeTubus(
+		const double& length,
+		const double& diameter,
+		const double& hemisphäric_reflectivity,
+		const double& direct_light_reflectifity,
+		const std::size_t& division,
+		const std::complex<double>& refractive_ind = {}
+	)
+	{
+		if (division < 2) {
+			throw std::invalid_argument("divison must be greatet than 2");
+		}
+		if (hemisphäric_reflectivity <= 0)
+			throw std::invalid_argument("Reflectivity must be greater than zero");
+
+		if (length <= diameter)
+			throw std::invalid_argument("Length must be greater than the diameter");
+
+		if (diameter <= 0)
+			throw std::invalid_argument("Diameter must be greater than zero");
+
+		constexpr double two_pi = 2.0 * M_PI;
+
+		const double radius{ diameter / 2.0 };
+
+		const double radius_steps{ radius / static_cast<double>(division-1) };
+
+		const double angle_step{ two_pi / division };
+
+		const double z_axis_steps{ length / static_cast<double>(division-1)};
+
+		const std::size_t div{ division };
+
+		const std::size_t n_tubus_surfaces{
+			div + div * (div-2) + div * (div-1)};
+
+		const std::size_t n_tubus_vertices{
+			(div - 1) * div * 2 + 1 
+		};
+		
+		const std::size_t n_indices{
+			div * 3 +                   // center triangles
+			div * (div - 2) * 4 +       // backplate quads
+			div * (div - 1) * 4         // tube quads
+		};
+		
+		auto vertices =
+			std::make_unique<Vertice[]>(n_tubus_vertices);
+
+		auto vertex_normals =
+			std::make_unique<Eigen::Vector3d[]>(n_tubus_vertices);
+
+		auto indices =
+			std::make_unique<std::uint32_t[]>(n_indices);
+
+		auto vertices_per_surface =
+			std::make_unique<std::uint32_t[]>(n_tubus_surfaces);
+
+		// Center vertex
+		vertices[0].pos = Eigen::Vector3d{ 0.0, 0.0, 0.0 };
+		vertex_normals[0] = Eigen::Vector3d{ 0.0, 0.0, 1.0 };
+
+		std::size_t vert_index{ 1 };
+		
+		// Create Vertices Backplate
+		// Refractive Index and uv Stays blank
+		for (std::size_t i_rad = 1; i_rad < div; ++i_rad) {
+			for (std::size_t i_angle = 0; i_angle < div; ++i_angle) {
+				if (vert_index > n_tubus_vertices - 1) throw std::runtime_error("Index failure");
+				vertex_normals[vert_index] =
+					Eigen::Vector3d{
+						0.0,
+						0.0,
+						1.0
+					};
+				vertices[vert_index++].pos =
+					Eigen::Vector3d{
+						radius_steps * i_rad * std::cos(i_angle * angle_step),
+						radius_steps * i_rad * std::sin(i_angle * angle_step),
+						0.0
+					};
+			}
+		}
+		// Create Vertices Tubus 
+		for (std::size_t z_axis = 1; z_axis < div; ++z_axis) {
+			for (std::size_t i_angle = 0; i_angle < div; ++i_angle) {
+				if (vert_index > n_tubus_vertices - 1) throw std::runtime_error("Index failure");
+				vertex_normals[vert_index] =
+					Eigen::Vector3d{
+						-radius * std::cos(i_angle * angle_step),
+						-radius * std::sin(i_angle * angle_step),
+						0.0
+					}.normalized();
+
+				vertices[vert_index++].pos =
+					Eigen::Vector3d{
+						radius * std::cos(i_angle * angle_step),
+						radius * std::sin(i_angle * angle_step),
+						z_axis * z_axis_steps
+					};
+			}
+		}
+
+		// Connectivity
+		std::size_t i_indices{}, i_surfaces{};
+
+		// Center Triangles Backplate
+		for (std::size_t i = 0; i < div; ++i) {
+			if (i_surfaces > n_tubus_surfaces - 1) throw std::runtime_error("Index Failure");
+			if (i_indices > n_indices - 1) throw std::runtime_error("Index Failure");
+			vertices_per_surface[i_surfaces++] = 3;
+			indices[i_indices++] = static_cast<std::uint32_t>(0);
+			indices[i_indices++] = static_cast<std::uint32_t>(1 + i);
+			indices[i_indices++] = static_cast<std::uint32_t>(1+((1 + i) % div));
+		}
+
+		// Quads between rings
+		for (std::size_t r = 2; r < div; ++r) {
+			const std::uint32_t previous_start =
+				static_cast<std::uint32_t>(
+					1 + (r - 2) * div
+					);
+
+			const std::uint32_t current_start =
+				static_cast<std::uint32_t>(
+					1 + (r - 1) * div
+					);
+
+			for (std::size_t theta = 0; theta < div; ++theta) {
+				const std::size_t next_theta = (theta + 1) % div;
+
+				vertices_per_surface[i_surfaces++] = 4;
+
+				indices[i_indices++] =
+					previous_start
+					+ static_cast<std::uint32_t>(theta);
+
+				indices[i_indices++] =
+					current_start
+					+ static_cast<std::uint32_t>(theta);
+
+				indices[i_indices++] =
+					current_start
+					+ static_cast<std::uint32_t>(next_theta);
+
+				indices[i_indices++] =
+					previous_start
+					+ static_cast<std::uint32_t>(next_theta);
+			}
+		}
+
+		// Create cylindrical tube surfaces
+		const std::uint32_t outer_backplate_start =
+			static_cast<std::uint32_t>(
+				1 + (div - 2) * div
+				);
+
+		for (std::size_t z = 0; z < div - 1; ++z)
+		{
+			const std::uint32_t previous_start =
+				(z == 0)
+				? outer_backplate_start
+				: static_cast<std::uint32_t>(
+					1 + (div - 1) * div
+					+ (z - 1) * div
+					);
+
+			const std::uint32_t current_start =
+				static_cast<std::uint32_t>(
+					1 + (div - 1) * div
+					+ z * div
+					);
+
+			for (std::size_t theta = 0; theta < div; ++theta)
+			{
+				const std::size_t next_theta =
+					(theta + 1) % div;
+
+				vertices_per_surface[i_surfaces++] = 4;
+
+				indices[i_indices++] =
+					previous_start
+					+ static_cast<std::uint32_t>(theta);
+
+				indices[i_indices++] =
+					current_start
+					+ static_cast<std::uint32_t>(theta);
+
+				indices[i_indices++] =
+					current_start
+					+ static_cast<std::uint32_t>(next_theta);
+
+				indices[i_indices++] =
+					previous_start
+					+ static_cast<std::uint32_t>(next_theta);
+			}
+		}
+		// Quads Tubus
+
+		ObjectInfo info{};
+		info.diffuse = true;
+
+		info.m_diffuse_settings.reflectivity_scattered = hemisphäric_reflectivity;
+		info.m_diffuse_settings.reflectivity_direct = direct_light_reflectifity;
+
+		if (vert_index != n_tubus_vertices)
+			throw std::runtime_error("Wrong vertex count");
+
+		if (i_surfaces != n_tubus_surfaces)
+			throw std::runtime_error("Wrong surface count");
+
+		if (i_indices != n_indices)
+			throw std::runtime_error("Wrong index count");
+
+
+		return std::make_unique<PolygonMesh>(
+			std::move(vertices),
+			std::move(vertex_normals),
+			std::move(indices),
+			std::move(vertices_per_surface),
+			static_cast<std::uint32_t>(n_tubus_vertices),
+			static_cast<std::uint32_t>(n_tubus_surfaces),
+			info
+		);
+	}
+
 	static std::unique_ptr<PolygonMesh> ParabolicalMirror(
-		const double focal_length,
-		const double max_r,
-		const int division,
-		const std::complex<double> refractive_ind = {1.02, 6.63})
+		const double& focal_length,
+		const double& max_r,
+		const int& division,
+		const std::complex<double>& refractive_ind = {1.02, 6.63})
 	{
 		if (division < 2) {
 			throw std::invalid_argument(
@@ -775,10 +963,11 @@ public:
 			std::make_unique<std::uint32_t[]>(n_surfaces);
 
 		constexpr double two_pi = 2.0 * M_PI;
-		const double r_step = max_r / static_cast<double>(div);
+		const double r_step = max_r / static_cast<double>(div - 1);
 
 		// Center vertex
 		vertices[0].pos = Eigen::Vector3d{ 0.0, 0.0, 0.0 };
+		vertices[0].refractive_index = refractive_ind;
 
 		// Circular rings
 		std::size_t vertex_index = 1;

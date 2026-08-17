@@ -18,9 +18,17 @@ struct MersenneTwister: public RandomGenerator {
 
 	// Creates Random Values [0,1]
 	// Most efficient when called via multiple threads 
+	// Gives the generator Constructor a callable lambda {} and directly calls it(). Since the variable is marked as thread local
+	// All variables inside the constructor are only called once per thread!
 	[[nodiscard]] float operator()() {
-		thread_local std::mt19937_64 generator(std::random_device{}());
+		thread_local std::mt19937_64 generator([]() -> unsigned int {
+			std::random_device rd;
+			uint64_t thread_hash = std::hash<std::thread::id>{}(std::this_thread::get_id());
+			return static_cast<unsigned int>(rd() ^ thread_hash);
+			}());
+
 		thread_local std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
+
 		return distribution(generator);
 	}
 	

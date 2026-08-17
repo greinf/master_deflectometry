@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <iostream>
 #include <ImageStore.hpp>
-//#include <open3d/Open3D.h>
+#include <open3d/Open3D.h>
 #include "Camera.hpp"
 #include "Mesh.hpp"
 #include "Light.hpp"
@@ -72,7 +72,7 @@ int main()
     std::unique_ptr<TriangularMesh> parabolical_mirror{ PolygonMesh::ParabolicalMirror(
         1600.0,
         200.0,
-        50)->convert2Triangular() };
+        30)->convert2Triangular() };
 
     Eigen::Matrix4d mirror_trans =
         (Eigen::Matrix4d() << -1, 0, 0, 0,
@@ -90,6 +90,23 @@ int main()
     parabolical_mirror->addTransform(mirror_trans);
 
     raycasting.addObject(std::move(parabolical_mirror));
+
+    std::unique_ptr<TriangularMesh> tubus{ PolygonMesh::TelsecopeTubus(
+        1100,
+        500,
+        100,
+        100,
+        30)->convert2Triangular() };
+
+    Eigen::Matrix4d tubus_trans =
+        (Eigen::Matrix4d() << -1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, -1, 4000,
+            0, 0, 0, 1).finished();
+
+    tubus->addTransform(tubus_trans);
+
+    raycasting.addObject(std::move(tubus));
 
     constexpr double width = 1920.0 * 0.2745;
     constexpr double height = 1080.0 * 0.2745;
@@ -142,3 +159,10 @@ int main()
     return 0;
 
 }
+
+
+/*open3d::geometry::TriangleMesh mesh(*tubus);
+
+    auto tubus_mesh_ptr = std::make_shared<open3d::geometry::TriangleMesh>(mesh);
+
+    open3d::visualization::DrawGeometries({ tubus_mesh_ptr }, "Custom Mesh Window");*/

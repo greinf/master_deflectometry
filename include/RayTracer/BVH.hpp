@@ -223,6 +223,7 @@ public:
     BVH& operator=(const BVH&) = delete;
     BVH& operator=(BVH&&) noexcept = delete;
 
+    ~BVH() override = default;
 
     explicit BVH(TriangularMesh* mesh)
         : TraceAbleMesh(mesh)
@@ -243,7 +244,7 @@ public:
         Triangle*& triangleOut,
         double& tOut,
         double& uOut,
-        double& vOut)
+        double& vOut) const override
     {
         triangleOut = nullptr;
 

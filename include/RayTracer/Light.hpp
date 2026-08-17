@@ -190,7 +190,7 @@ public:
 		}
 
 		constexpr double two_pi{
-			6.283185307179586476925286766559
+			M_PI * 2.0
 		};
 
 		const bool second_orientation{

@@ -24,11 +24,14 @@ protected:
 	};
 
 public:
+	double* m_area{};
 	struct Triangle {
 		Eigen::Vector3d* surf_norm{ nullptr };
 		Vertex vertex[3]{};
 		double* area{};
 	};
+
+	virtual ~TraceAbleMesh() = default;
 
 	std::unique_ptr<Triangle[]> m_triangle{ nullptr };
 
@@ -42,6 +45,7 @@ public:
 	{
 		build();
 	}
+
 	TraceAbleMesh(Light* light)
 		:m_light{ light }
 	{
@@ -207,6 +211,7 @@ private:
 			m_triangle[i].vertex[2].vertex_normal = &m_mesh->m_vertice_normals[index[2]];
 
 			m_info = &m_mesh->m_info;
+			m_area = &m_mesh->m_completeArea;
 		}
 	}
 };

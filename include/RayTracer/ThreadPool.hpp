@@ -132,7 +132,7 @@ public:
 		std::shared_ptr<std::packaged_task<returnType()>> task = 
 			std::make_shared<std::packaged_task<returnType()>>(
 				[func = std::forward<T>(t),
-				arguments = std::make_tuple(args...)]() mutable
+				arguments = std::make_tuple(std::forward<Args>(args)...)]() mutable
 				{
 					return std::apply(func, arguments);
 				}
@@ -140,6 +140,7 @@ public:
 
 		std::shared_future<returnType> result = task->get_future().share();
 
+		// Important to lock while increasing the task vector
 		{
 			std::lock_guard<std::mutex> lock(mtx);
 

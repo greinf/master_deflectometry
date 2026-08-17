@@ -245,7 +245,7 @@ public:
 		const double p2 = dptr[3];
 		const double k3 = (dist_coeffs.size() > 4) ? dptr[4] : 0.0;
 
-		if (dist_coeffs.sum()) return pixelCoords;
+		if (dist_coeffs.isZero()) return pixelCoords;
 
 		// --- Distorted pixel coordinates (u_d, v_d) ---
 		const double x_d = pixelCoords[0];

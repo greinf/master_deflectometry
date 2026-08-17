@@ -8,6 +8,7 @@
 #include "Camera.hpp"
 #include "BRDF.hpp"
 #include "BVH.hpp"
+#include "Integrator.hpp"
 #include <deque>
 #include <memory>
 #include <algorithm>
@@ -19,8 +20,6 @@
 #include <array>
 #include <cmath>
 
-
-using SceneObjPtr = std::variant<std::monostate, TriangularMesh*, Light*>;
 
 class Scene{
 public:
@@ -52,6 +51,7 @@ public:
 		m_cam.push_back(std::move(cam));
 	}
 	
+	// The main Controll function from which every task gets started 
 	void raytraceScene(std::vector<Eigen::MatrixXd>& out_img)
 	{
 		const std::size_t rays_per_thread{ 100 };
@@ -70,29 +70,52 @@ public:
 		ThreadPool& thread_p = ThreadPool::instance();
 		// Create the future Object
 		std::vector<std::shared_future<std::vector<double>>> result_task_All;
+
+		Integrator& integrator{ Integrator::instance() };
 		
 		// Work for every Camera seperatly
 		// For each loop and for each camera the world coordiante System must be the camera system
 		for (const auto& cam : m_cam) {
 			// Transform all vertices 
+
+			// Clear the old working Vectors!!!
+			m_workingMeshes.clear();
+			integrator.clear();
+
 			transform_all(cam->getTransform());
 
 			Rays rays{};
 			cam->generateRays(rays);
 
-			// Deque to have some safety for pointers 
-			//std::deque<std::unique_ptr<TraceAbleMesh>> traceableMeshes;
-
+			// --- Create TraceAbleMeshes from Objects and Lights --- 
+			// TraceAbleMeshes is the Working Class for processing the only holds pointer to the Mesh Data
+			// TraceAbleMesh is the Base Class of BVH. BVH is used to directly create a Bounding Hirachy of the Meshes 
+			// Also Integrator is gets Ptrs to the newly created TraceAbleMeshes and Light instances. 
 			for (const auto& mesh : m_mesh) {
 				m_workingMeshes.emplace_back(std::make_unique<BVH>(mesh.get()));
 			}
 			for (const auto& light_mesh : m_light) {
 				const auto& mesh_opt{ light_mesh->getMesh() };
 				// This is optional since at some Point Spot light might be implemented which should not be tested 
-				if (!mesh_opt.has_value()) continue;
+				if (!mesh_opt.has_value()) {
+					integrator.addLight(light_mesh.get(), nullptr);
+					continue;
+				}
 				const auto& mesh{ mesh_opt.value() };
 				m_workingMeshes.emplace_back(std::make_unique<BVH>(light_mesh.get()));
+				integrator.addLight(light_mesh.get(), m_workingMeshes.back().get());
 			}
+
+
+			// Ad all Traceable Objects (as ptr) to the Integrator
+			for (const auto& workers : m_workingMeshes) {
+				integrator.addTraceAbleObjects(workers.get());
+			}
+
+			IntegratorSettings integ_set{};
+
+			// Here Some options can be applied to the intergrator by assinging values to Integrator Settings. 
+			integrator.check(std::move(integ_set));
 
 			out_img.push_back(Eigen::MatrixXd());
 			Eigen::MatrixXd& result = out_img.back();
@@ -106,7 +129,6 @@ public:
 			const std::size_t outerDim{ numberOfRays / rays_per_thread };
 
 			const Eigen::Vector3d start = Eigen::Vector3d::Zero();
-
 
 			auto task = [
 				function = &Scene::castRay,
@@ -138,6 +160,8 @@ public:
 
 			thread_p.start();
 
+			//std::cout << "Tubus into it \n";
+
 			for (std::size_t i = 0; i < numberOfRays; i += rays_per_thread) {
 				std::size_t outerDim_current{ i / rays_per_thread };
 				std::size_t innerDim_current{ i % rays_per_thread };
@@ -167,14 +191,15 @@ public:
 						++i;
 					}
 					else {
-						// Future ist noch nicht bereit: Kurze Pause und im nächsten Durchlauf dasselbe i prüfen
-						std::this_thread::sleep_for(std::chrono::milliseconds(1));
+						std::this_thread::sleep_for(std::chrono::microseconds(50));
 					}
 				}
 			}
 
-			return;
+			result_task_All.clear();
 		}
+
+		return;
 	}
 
 	// Cast Rays into the Scene. Ray and origin point are provided
@@ -234,11 +259,10 @@ private:
 	std::vector<std::unique_ptr<TriangularMesh>> m_mesh{};
 	std::vector<std::unique_ptr<Light>> m_light{};
 
-	// New  09.08
 	std::vector<std::unique_ptr<TraceAbleMesh>> m_workingMeshes{ };
 
-
 	std::vector<std::unique_ptr<Eigen::MatrixXd>> m_results{};
+
 	double m_background{};
 	
 
@@ -280,7 +304,9 @@ private:
 
 		double cos_theta{ vert_normal.dot(-*ray.dir) };
 
-		Eigen::Vector3d newOrigin{ t * *ray.dir };
+		Eigen::Vector3d newOrigin{
+			*ray.origin + t * *ray.dir
+		};
 
 		// Hardcoded Display Image !!! 
 		if (closestObj->m_info->emitter == true) {
@@ -294,22 +320,13 @@ private:
 
 			auto optLight{ closestObj->getLight() };
 
-			if (!optLight.has_value()) {
-				std::cout << "Mesh that should contain Mesh has no value \n";
-				return m_background;
-			}
-
 			auto light_ptr{ optLight.value() };
-
-			if (light_ptr == nullptr) {
-				std::cout << "Alarm should contain a value \n";
-			}
 
 			// BRDF characeteristic of Source
 			const double scalingBRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			// Local Brightness in [0...1] 
 			const double light_Brightness{ light_ptr->get_local_Texture(texture_coord, 0) };
-			// Return maxLightPower * Angle- & distance- Scaling * Brightness IF the light is modular 
+			// Return maxLightPower * Angle- * Brightness IF the light is modular 
 			return light_ptr->m_info.m_power * scalingBRDF * light_Brightness;
 		}
 
@@ -320,16 +337,29 @@ private:
 		ray.dir = &reflected;
 		ray.origin = &newOrigin;
 		
-		if (closestObj->m_info->specular) {
+		if (closestObj->m_info->specular) 
+		{
 			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
+			// In this case Fine, but also a bit dangerous since there is no stopping condition!!! 
 			return scaling_BRDF * castRay(
 					ray
 				);
 		}
 
-		// Here the same 
-		if (closestObj->m_info->diffuse) {
-			throw std::invalid_argument("We do not have a pipeline for diffuse objects \n");
+		if (closestObj->m_info->diffuse) 
+		{
+			Integrator& instance = Integrator::instance();
+			// BRDF brdf(std::make_unique<Lambert>());
+
+			const auto scattered_scaling = closestObj->m_info->m_diffuse_settings.reflectivity_scattered;
+
+			// This part needs to be implemented in the near future. 
+			const auto direct_light_scaling = closestObj->m_info->m_diffuse_settings.reflectivity_direct;
+
+			//&brdf,
+
+			return scattered_scaling * instance.evaluate(newOrigin, closestTri, cos_theta);
+
 		}
 		return m_background;
 	}
