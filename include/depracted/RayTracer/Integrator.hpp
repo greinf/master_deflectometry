@@ -206,21 +206,25 @@ private:
         const TraceAbleMesh* light_ptr,
         const double& distance) const
     {
-        const double eps{ 1e-6 * std::max(1.0, distance) };
-        const double maxDistance{ distance - eps };
+        TraceAbleMesh::Triangle* triangle_ptr{ nullptr };
 
-        if (maxDistance <= 0.0) return false;
+        double t_{}, u_{}, v_{};
+        const double eps{ 1e-6 * std::max(1.0, distance) };
 
         for (const auto& obj : m_Objects) {
-            // The sampled light must not shadow itself.
+            // We do excpect that light sources can not obscure itself
             if (obj == light_ptr) continue;
 
-            if (obj->intersectAny(
+            if (!obj->intersect(
                 *ray.origin,
                 *ray.dir,
-                maxDistance))
-            {
-                return true;
+                triangle_ptr,
+                t_, u_, v_)
+                ) continue;
+            else {
+                if (t_ < distance - eps) {
+                    return true;
+                }
             }
         }
         return false;

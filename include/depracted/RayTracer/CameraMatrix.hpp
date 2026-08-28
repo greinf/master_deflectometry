@@ -50,8 +50,6 @@ public:
 			throw std::invalid_argument("CameraMatrix wrong size");
 		if (camMat.type() != CV_64F) 
 			throw std::invalid_argument("CameraMatrix wrong type");
-		if (!distCoeffs.empty() && distCoeffs.type() != CV_64F)
-			throw std::invalid_argument("Distortion coefficients must use CV_64F");
 
 		camMat.forEach<double>(
 			[&](const double& value, const int* pos) -> void {
@@ -61,19 +59,16 @@ public:
 
 		m_camMat_inv = m_camMat.inverse();
 
-		const Eigen::Index nDistCoeffs{
-			static_cast<Eigen::Index>(distCoeffs.total())
-		};
-		m_distCoeffs.resize(nDistCoeffs);
+		m_distCoeffs.resize(
+			static_cast<Eigen::Index>(std::max(distCoeffs.size[0], distCoeffs.size[1])),
+			Eigen::NoChange
+		);
 
-		if (!distCoeffs.empty()) {
-			Eigen::Index coeffIndex{ 0 };
-			distCoeffs.forEach<double>(
-				[this, &coeffIndex](const double& value, const int*) -> void {
-					m_distCoeffs(coeffIndex++) = value;
-				}
-			);
-		}
+		distCoeffs.forEach<double>(
+			[this](const double& value, const int* pos) -> void {
+				m_distCoeffs(pos[0], pos[1]) = value;
+			}
+		);
 		check();
 	}
 
@@ -91,11 +86,6 @@ public:
 
 		if (stepwidth_x <= 0.0 || stepwidth_y <= 0.0) {
 			throw std::invalid_argument("Step widths must be positive");
-		}
-
-		if (x_start < 0.0 || x_start >= width ||
-			y_start < 0.0 || y_start >= height) {
-			throw std::invalid_argument("Sensor start coordinate lies outside the sensor");
 		}
 
 		const Eigen::Index rows = static_cast<Eigen::Index>(
@@ -146,10 +136,10 @@ private:
 		if (m_distCoeffs.size() > 5) {
 			std::cout << "Warning: More than 5 Distortion Coefficients \n";
 			std::cout << m_distCoeffs.size() << " - Coefficients provided \n";
-			m_distCoeffs.conservativeResize(5);
+			m_distCoeffs.resize(5, Eigen::NoChange);
 		}
-		if (m_distCoeffs.size() < 5) {
-			std::cout << "Warning: Less than 5 Distortion Coefficients provided \n";
+		if (m_distCoeffs.size() < 4) {
+			std::cout << "Warning: Less than 4 Distortion Coefficient provided \n";
 			const Eigen::Index wanted_length{ 5 };
 			const Eigen::Index current_length{ m_distCoeffs.size() };
 			m_distCoeffs.conservativeResize(wanted_length);
@@ -192,27 +182,67 @@ public:
 		const Eigen::Vector3d& image_pt,
 		const Eigen::VectorXd& dist_Coeffs)
 	{
-		if (std::abs(image_pt.z()) < 1e-15)
-			throw std::invalid_argument("Cannot undistort homogeneous point with z == 0");
+		if (dist_Coeffs.size() > 5) {
+			std::cerr << "WARNING: More than 5 distortion Coefficient Provided. "
+				"Only the first 5 are taken into account" << std::endl;
+		}
 
-		const Eigen::Vector3d normalized{
-			image_pt.x() / image_pt.z(),
-			image_pt.y() / image_pt.z(),
-			1.0
-		};
+		if (dist_Coeffs.sum() == 0) return image_pt;
 
-		return newtonSolverdistort(normalized, dist_Coeffs);
+		double x{};
+		double y{};
+		double z{};
+		
+		if (image_pt.z() != 1.0) {
+			const double scale{ 1.0 / image_pt.z() };
+			x = image_pt.x() * scale;
+			y = image_pt.y() * scale;
+			z = 1.0;
+		}
+
+		x = image_pt.x();
+		y = image_pt.y();
+		z = image_pt.z();
+
+		const double* d_ptr = dist_Coeffs.data();
+		const double k1 = d_ptr[0];
+		const double k2 = d_ptr[1];
+		const double p1 = d_ptr[2];
+		const double p2 = d_ptr[3];
+		const double k3 = d_ptr[4];
+
+		const double r2 = x * x  + y * y;
+		const double r4 = r2 * r2;
+		const double r6 = r4 * r2;
+
+		const double xy = x * y;
+
+		Eigen::Vector3d output{};
+
+		const double radial_dist{ k1 * r2 + k2 * r4 + k3 * r6 };
+		
+		output.x() = radial_dist * x +
+			(2 * p1 * xy + (p2 * (r2 + 2 * (x * x))));
+
+		output.y() = radial_dist * y +
+			(2 * p2 * xy + (p1 * (r2 + 2 * (y * y))));
+
+		output.z() = 1.0;
+		return output;
 	}
+
+
+
 
 	static Eigen::Vector3d newtonSolverdistort(
 		const Eigen::Vector3d& pixelCoords,   // (u_d, v_d) verzerrt in Pixeln
 		const Eigen::VectorXd& dist_coeffs)
 	{
 		const double* dptr = dist_coeffs.data();
-		const double k1 = (dist_coeffs.size() > 0) ? dptr[0] : 0.0;
-		const double k2 = (dist_coeffs.size() > 1) ? dptr[1] : 0.0;
-		const double p1 = (dist_coeffs.size() > 2) ? dptr[2] : 0.0;
-		const double p2 = (dist_coeffs.size() > 3) ? dptr[3] : 0.0;
+		const double k1 = dptr[0];
+		const double k2 = dptr[1];
+		const double p1 = dptr[2];
+		const double p2 = dptr[3];
 		const double k3 = (dist_coeffs.size() > 4) ? dptr[4] : 0.0;
 
 		if (dist_coeffs.isZero()) return pixelCoords;

@@ -72,7 +72,7 @@ int main()
     std::unique_ptr<TriangularMesh> parabolical_mirror{ PolygonMesh::ParabolicalMirror(
         1600.0,
         200.0,
-        30)->convert2Triangular() };
+        10)->convert2Triangular() };
 
     Eigen::Matrix4d mirror_trans =
         (Eigen::Matrix4d() << -1, 0, 0, 0,
@@ -94,9 +94,9 @@ int main()
     std::unique_ptr<TriangularMesh> tubus{ PolygonMesh::TelsecopeTubus(
         1100,
         500,
-        100,
-        100,
-        30)->convert2Triangular() };
+        0.8,
+        0.1,
+        10)->convert2Triangular() };
 
     Eigen::Matrix4d tubus_trans =
         (Eigen::Matrix4d() << -1, 0, 0, 0,

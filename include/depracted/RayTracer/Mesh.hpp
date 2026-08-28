@@ -9,8 +9,6 @@
 #include <open3d/geometry/TriangleMesh.h>
 #include <cstdlib>
 #include <complex>
-#include <iostream>
-#include <stdexcept>
 
 struct ObjectInfo {
 	bool closed{ false };
@@ -22,21 +20,9 @@ struct ObjectInfo {
 		double reflectivity_scattered{ 0.2 };
 		double reflectivity_direct{ 0.1 };
 
-		Diffuse_Settings() = default;
-
-		Diffuse_Settings(double scattered, double direct)
-			: reflectivity_scattered{ scattered }
-			, reflectivity_direct{ direct }
-		{
-			validate();
-		}
-
-		void validate() const {
-			if (reflectivity_scattered < 0.0 || reflectivity_direct < 0.0)
-				throw std::invalid_argument("Diffuse reflectivities must be non-negative");
-
-			if (reflectivity_scattered + reflectivity_direct >= 1.0)
-				throw std::invalid_argument("Sum of diffuse reflectivities must be lower than 1");
+		Diffuse_Settings() {
+			if (reflectivity_scattered + reflectivity_direct >= 1)
+				throw std::runtime_error("Sum of Diffuse Settings must be lower than 1 \n");
 		}
 	} m_diffuse_settings{};
 	
@@ -67,8 +53,6 @@ public:
 		std::swap(m_n_vertices, mesh.m_n_vertices);
 		std::swap(m_n_surfaces, mesh.m_n_surfaces);
 		std::swap(m_surface_normals, mesh.m_surface_normals);
-		std::swap(m_area, mesh.m_area);
-		std::swap(m_completeArea, mesh.m_completeArea);
 		std::swap(m_info, mesh.m_info);
 		std::swap(m_transform, mesh.m_transform);
 		return *this;
@@ -103,9 +87,7 @@ public:
 		, m_n_vertices{ std::move(mesh.m_n_vertices) }
 		, m_n_surfaces{ std::move(mesh.m_n_surfaces) }
 		, m_surface_normals{std::move(mesh.m_surface_normals)}
-		, m_area{std::move(mesh.m_area)}
 		, m_info{std::move(mesh.m_info)}
-		, m_completeArea{mesh.m_completeArea}
 	{ }
 
 	Mesh(std::unique_ptr<Mesh>&& mesh) noexcept
@@ -117,12 +99,10 @@ public:
 		, m_n_vertices{std::move(mesh->m_n_vertices)}
 		, m_n_surfaces{std::move(mesh->m_n_surfaces)}
 		, m_surface_normals{std::move(mesh->m_surface_normals)}
-		, m_area{std::move(mesh->m_area)}
 		, m_info{ std::move(mesh->m_info) }
-		, m_completeArea{mesh->m_completeArea}
 	{ }
 
-	virtual void get_Area() = 0;
+	virtual void get_Area() noexcept = 0;
 
 	virtual void applyTransform(const Eigen::Matrix4d& cam)
 	{
@@ -326,7 +306,7 @@ public:
 		return v0 * w + v1 * u + v2 * v;
 	}
 
-	void get_Area() override 
+	void get_Area() noexcept override 
 	{
 		m_completeArea = 0.0;
 		std::unique_ptr<double[]> area{new double[m_n_surfaces]};
@@ -507,13 +487,12 @@ public:
 		return false;
 	}
 
-	void get_Area() override {
+	void get_Area() noexcept override {
 		std::cout << "Be carefull the Area is calcualted over a Triangles. " <<
 			"Therefore only the sum is valid not the singular Values \n";
 		const auto tri_mesh{ this->convert2Triangular() };
 		tri_mesh->get_Area();
 		m_area = std::move(tri_mesh->m_area);
-		m_completeArea = tri_mesh->m_completeArea;
 	}
 
 	std::unique_ptr<TriangularMesh> convert2Triangular() const {
@@ -618,20 +597,18 @@ public:
 		// Create deepcopy
 		std::unique_ptr<Vertice[]> 
 			vertice_copy{ new Vertice[static_cast<std::size_t>(m_n_vertices)] };
-		std::unique_ptr<Eigen::Vector3d[]> vertice_normal_copy{ nullptr };
-		if (m_vertice_normals != nullptr) {
-			vertice_normal_copy =
-				std::make_unique<Eigen::Vector3d[]>(static_cast<std::size_t>(m_n_vertices));
-		}
+		std::unique_ptr<Eigen::Vector3d[]> 
+			vertice_normal_copy{ new Eigen::Vector3d[static_cast<std::size_t>(m_n_vertices)] };
 
 		{
 			Vertice* vertice_copy_ptr{ vertice_copy.get() };
 			Vertice* vertices_ptr{ m_vertices.get() };
+			Eigen::Vector3d* vertice_normal_copy_ptr{ vertice_normal_copy.get() };
+			Eigen::Vector3d* vertice_normal_ptr{ m_vertice_normals.get() };
 
 			for (std::size_t i = 0; i < static_cast<std::size_t>(m_n_vertices); ++i) {
 				vertice_copy_ptr[i] = vertices_ptr[i];
-				if (vertice_normal_copy != nullptr)
-					vertice_normal_copy[i] = m_vertice_normals[i];
+				vertice_normal_copy_ptr[i] = vertice_normal_ptr[i];
 			}
 		}
 
@@ -658,7 +635,7 @@ public:
 		const int& pixel_y = 1080,
 		const double& pixel_pitch = 0.2745)
 	{
-		if (pixel_x <= 0 || pixel_y <= 0 || pixel_pitch <= 0) 
+		if (pixel_x < 0 || pixel_y < 0 || pixel_pitch < 0) 
 			throw std::invalid_argument("Display Parameters must be bigger than zero \n");
 
 		const std::size_t n_surfaces{ 1 };
@@ -726,8 +703,8 @@ public:
 		const std::complex<double>& refractive_ind = {}
 	)
 	{
-		if (division < 3) {
-			throw std::invalid_argument("division must be at least 3");
+		if (division < 2) {
+			throw std::invalid_argument("divison must be greatet than 2");
 		}
 		if (hemisphäric_reflectivity <= 0)
 			throw std::invalid_argument("Reflectivity must be greater than zero");
@@ -919,10 +896,8 @@ public:
 		ObjectInfo info{};
 		info.diffuse = true;
 
-		info.m_diffuse_settings = ObjectInfo::Diffuse_Settings{
-			hemisphäric_reflectivity,
-			direct_light_reflectifity
-		};
+		info.m_diffuse_settings.reflectivity_scattered = hemisphäric_reflectivity;
+		info.m_diffuse_settings.reflectivity_direct = direct_light_reflectifity;
 
 		if (vert_index != n_tubus_vertices)
 			throw std::runtime_error("Wrong vertex count");
@@ -951,20 +926,16 @@ public:
 		const int& division,
 		const std::complex<double>& refractive_ind = {1.02, 6.63})
 	{
-		if (division < 3) {
+		if (division < 2) {
 			throw std::invalid_argument(
-				"division must be at least 3."
+				"division must be at least 2."
 			);
 		}
 
-		if (focal_length <= 0.0) {
+		if (focal_length == 0.0) {
 			throw std::invalid_argument(
-				"focal_length must be positive."
+				"focal_length must not be zero."
 			);
-		}
-
-		if (max_r <= 0.0) {
-			throw std::invalid_argument("max_r must be positive.");
 		}
 
 		const std::size_t div =

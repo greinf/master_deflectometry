@@ -3,8 +3,6 @@
 
 #include <random>
 #include <thread>
-#include <functional>
-#include <cstdint>
 
 struct RandomGenerator {
 	[[nodiscard]] virtual float operator()() = 0;

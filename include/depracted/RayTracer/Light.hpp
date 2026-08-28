@@ -7,9 +7,6 @@
 #include "Mesh.hpp"
 #include "Random.hpp"
 #include <optional>
-#include <algorithm>
-#include <iostream>
-#include <stdexcept>
 
 
 struct Light_Sample {
@@ -41,7 +38,7 @@ public:
 
 	virtual ~Light() = default;
 
-	virtual void applyTransform(const Eigen::Matrix4d&) = 0;
+	virtual void applyTransform(const Eigen::Matrix4d&) noexcept = 0;
 
 	virtual void addTransform(const Eigen::Matrix4d& trans) noexcept = 0;
 
@@ -78,9 +75,6 @@ public:
 		: Light()
 		, m_mesh{ std::move(mesh) }
 	{
-		if (m_mesh == nullptr)
-			throw std::invalid_argument("AreaLight received nullptr mesh");
-
 		// Wrapper for the Mesh Transformation
 		m_info.add_Transform(&m_mesh->m_transform);
 		m_mesh->m_info.diffuse = false;
@@ -92,11 +86,11 @@ public:
 
 	bool is_Display() const override { return false; }
 
-	std::optional<std::size_t> n_display_shifts() const noexcept override {
+	std::optional<std::size_t> n_display_shifts() const noexcept {
 		return std::nullopt;
 	}
 
-	void applyTransform(const Eigen::Matrix4d& cam) override {
+	void applyTransform(const Eigen::Matrix4d& cam) noexcept override {
 		m_mesh->applyTransform(cam);
 	}
 
@@ -183,12 +177,6 @@ public:
 		, m_wavelength{ wavelength }
 		, m_n_shifts{ shifts }
 	{
-		if (m_pixel_x == 0 || m_pixel_y == 0 || m_pixel_pitch <= 0.0) {
-			throw std::invalid_argument(
-				"Display dimensions and pixel pitch must be positive"
-			);
-		}
-
 		if (m_wavelength <= 0.0) {
 			throw std::invalid_argument(
 				"Wavelength must be positive"
@@ -205,10 +193,6 @@ public:
 
 
 	bool is_Display() const override { return true; }
-
-	std::optional<std::size_t> n_display_shifts() const noexcept override {
-		return m_n_shifts;
-	}
 
 	double get_local_Texture(
 		const Eigen::Vector2d& texture_coord,

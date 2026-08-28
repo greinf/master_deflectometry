@@ -14,32 +14,23 @@ class Camera {
 public:
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
-		Sensor sensor_coords = CameraMatrix::generateSensorCoords())
+		Sensor& sensor_coords = CameraMatrix::generateSensorCoords())
 		: m_cameraMatrix{std::move(camMat)}
 		, m_sensorCoords{std::make_unique<Sensor>(std::move(sensor_coords))}
-	{
-		if (m_cameraMatrix == nullptr)
-			throw std::invalid_argument("Camera received nullptr CameraMatrix");
-	}
+	{}
 
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
 		std::unique_ptr<Sensor>&& sensor_coords)
 		: m_cameraMatrix{ std::move(camMat) }
 		, m_sensorCoords{ std::move(sensor_coords) }
-	{
-		if (m_cameraMatrix == nullptr || m_sensorCoords == nullptr)
-			throw std::invalid_argument("Camera received nullptr input");
-	}
+	{}
 
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
 		const cv::Mat_<cv::Vec2d>& sensor)
 		: m_cameraMatrix{ std::move(camMat) }
 	{
-		if (m_cameraMatrix == nullptr)
-			throw std::invalid_argument("Camera received nullptr CameraMatrix");
-
 		m_sensorCoords = std::make_unique<Sensor>();
 		m_sensorCoords->resize(
 			static_cast<Eigen::Index>(sensor.rows),
@@ -78,4 +69,4 @@ private:
 
 
 
-#endif // CAMERA_HPP
+#endif "CAMERA_HPP"

@@ -1,0 +1,79 @@
+RayTracer review - 2026-08-28
+
+Conservative fixes applied
+==========================
+
+Scene.hpp
+- Kept HitProtocol architecture.
+- Keeps depth directly in ProtocolNode (current project already contained this improvement).
+- Added validation for null scene inputs and diffuse settings.
+- Added hasDisplay() and displayShiftCount() as non-invasive preparation for phase-shift rendering.
+- Removed per-hit heap allocation for the hard-coded Schlick model by constructing Schlick_Approximation on the stack.
+- Added an explicit error if an emitter mesh is not associated with a Light.
+
+BVH.hpp / TraceAlbeMesh.hpp / Integrator.hpp
+- Kept the existing 7-DOP BVH, median split, leaf size and closest-hit traversal.
+- Added intersectAny() for shadow rays. It stops on the first blocker instead of calculating closest triangle/u/v.
+- Shadow visibility uses two-sided triangle tests, so a back face can also block light.
+- Fixed TraceAbleMesh(nTriangles, triangle) to set m_n_triangles.
+- Fixed the private TraceAbleMesh::build() copy loop (triangle[i] instead of always triangle[0]).
+- Added null checks and a flat-normal fallback when explicit vertex normals are absent.
+
+Mesh.hpp
+- Fixed move constructor/move assignment to move/swap m_area and m_completeArea as well.
+- PolygonMesh::get_Area() now also copies the total area.
+- Diffuse settings now have validation for non-negative values and total reflectivity < 1.
+- Telescope tube uses validated diffuse settings.
+- Display/tube/parabolic-mirror input validation tightened where division=2 or zero dimensions produce degenerate geometry.
+- get_Area() is no longer noexcept because it allocates and can legitimately throw.
+- Triangle intersection gained an optional cull_backface parameter; existing camera/reflection rays keep the old default behavior.
+
+Light.hpp
+- AreaLight checks for a null mesh.
+- applyTransform() is no longer noexcept because Mesh::applyTransform() can throw.
+- Display now correctly overrides n_display_shifts() and reports m_n_shifts.
+- Added basic Display parameter validation.
+
+Camera.hpp / CameraMatrix.hpp
+- Camera's default Sensor argument is now passed by value instead of a non-const lvalue reference to a temporary.
+- Added null input checks.
+- Fixed #endif line in Camera.hpp.
+- OpenCV distortion coefficients are flattened safely from row or column matrices.
+- Empty distortion coefficient matrices are allowed; missing coefficients are padded with zeros.
+- Truncation to 5 coefficients preserves the first values.
+- Reworked the unused undistort() helper to call the existing Newton undistortion routine safely.
+- Newton coefficient access is safe even if fewer than five coefficients are supplied.
+
+BRDF.hpp / Random.hpp
+- Added missing direct includes.
+- Schlick x^5 is evaluated with multiplications rather than std::pow.
+- BRDF constructors use std::make_unique.
+
+Known remaining issues / intentionally not changed
+=================================================
+
+1. Phase-shift orchestration is NOT implemented yet.
+   Display can already generate patterns and now reports its number of shifts, but Scene and Integrator still call get_local_Texture(..., 0). SceneConfig::display_images is currently unused. The next clean step is to introduce a selected pattern index (or render all 2*N patterns) and pass the same index to both directly visible emitters and Monte-Carlo light samples.
+
+2. Mesh::applyTransform() is destructive.
+   For the current single-camera/single-render workflow this is fine. Calling raytraceScene repeatedly on the same Scene or rendering multiple cameras will transform already transformed geometry. This should be fixed before phase patterns are rendered through repeated raytraceScene() calls; alternatively all patterns should be rendered inside one camera transform.
+
+3. Integrator sample count can exceed n_samples_per_point for lights with many triangles because every triangle receives at least one sample. For a simple rectangular display (two triangles) this is not important. A later exact-N area-weighted triangle sampler would fix it.
+
+4. TraceAbleMeshIntegrator::m_section is currently built but unused. It is actually useful groundwork for area-weighted triangle selection, so it was kept.
+
+5. AreaLight texture indexing assumes UV coordinates are already image indices. The generated Display mesh uses physical UV coordinates (pixel_count * pixel_pitch). This is harmless for Display::get_local_Texture(), which analytically evaluates a sinusoid in physical coordinates, but arbitrary image textures added through AreaLight::add_Texture() may require an explicit physical-coordinate-to-pixel mapping.
+
+6. BRDF remains polymorphic and heap-owning for callers that construct BRDF directly. Scene's current Schlick hot path no longer pays this allocation. A later material model can make this cleaner without a singleton.
+
+7. Camera distortion ray generation uses Newton iteration with a maximum of 1000 iterations per pixel. Usually it converges much earlier, but this can be profiled later. It is unrelated to the HitProtocol regression.
+
+8. ThreadPool still returns shared_future although each result currently has one consumer. This is minor compared with ray/BVH/Monte-Carlo work and was left unchanged.
+
+9. Polygon-to-triangle conversion uses fan triangulation and therefore assumes convex polygons. This is correct for the generated display/tube/mirror quads, but should be documented if arbitrary concave polygons are added later.
+
+10. Direct/scattered naming is physically ambiguous: the recursive component is mirror/specular continuation while the Monte-Carlo component is direct-light estimation of diffuse scattering. No naming or physics change was made in this review.
+
+Verification limitation
+=======================
+The archive was statically reviewed and patched. A full compile could not be performed in this container because Eigen/OpenCV/Open3D development headers are not installed here. The project is intended for the user's existing Visual Studio/dependency environment.

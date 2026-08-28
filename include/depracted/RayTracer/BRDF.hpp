@@ -4,7 +4,6 @@
 #include <complex>
 #include <cmath>
 #include <memory>
-#include <algorithm>
 
 
 class RadiationCharakteristics {
@@ -34,9 +33,7 @@ public:
 		const double& cos_theta) override 
 	{	
 		//std::cout << "M_R0 " << m_R0 << std::endl;
-		const double x{ 1.0 - cos_theta };
-		const double x2{ x * x };
-		const double val{ m_R0 + (1.0 - m_R0) * x2 * x2 * x };
+		auto val = (m_R0 + (1 - m_R0) * std::pow(1.0 - cos_theta, 5));
 		//std::cout << "BRDF Scaling " << val << std::endl;
 		return val;
 	}
@@ -77,10 +74,10 @@ public:
 class BRDF {
 public:
 	BRDF(const double& n1, const double& n2)
-		:m_characteristic{std::make_unique<Schlick_Approximation>(n1, n2)}{ }
+		:m_characteristic{new Schlick_Approximation(n1, n2)}{ }
 
 	BRDF(const double& n1, const std::complex<double>& n2)
-		:m_characteristic{std::make_unique<Schlick_Approximation>(n1, n2)} { }
+		:m_characteristic{new Schlick_Approximation(n1, n2)} { }
 
 	BRDF(std::unique_ptr<RadiationCharakteristics>&& radiation)
 		: m_characteristic{std::move(radiation)} { }

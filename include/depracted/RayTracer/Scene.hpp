@@ -153,16 +153,6 @@ public:
 		: m_cam{ std::move(cam) }
 		, m_mesh{ std::move(mesh) }
 		, m_light{ std::move(light) } {
-		for (const auto& camera : m_cam)
-			if (camera == nullptr) throw std::invalid_argument("Scene received nullptr camera");
-
-		for (const auto& object : m_mesh) {
-			if (object == nullptr) throw std::invalid_argument("Scene received nullptr mesh");
-			if (object->m_info.diffuse) object->m_info.m_diffuse_settings.validate();
-		}
-
-		for (const auto& source : m_light)
-			if (source == nullptr) throw std::invalid_argument("Scene received nullptr light");
 	}
 
 	void addLight(std::unique_ptr<Light>&& light)
@@ -174,7 +164,6 @@ public:
 	void addObject(std::unique_ptr<TriangularMesh>&& mesh)
 	{
 		if (mesh == nullptr) throw std::invalid_argument("PTR was nullptr");
-		if (mesh->m_info.diffuse) mesh->m_info.m_diffuse_settings.validate();
 		m_mesh.push_back(std::move(mesh));
 	}
 
@@ -182,35 +171,6 @@ public:
 	{
 		if (cam == nullptr) throw std::invalid_argument("PTR was nullptr");
 		m_cam.push_back(std::move(cam));
-	}
-
-	[[nodiscard]] bool hasDisplay() const noexcept
-	{
-		return std::any_of(
-			m_light.begin(),
-			m_light.end(),
-			[](const auto& light) { return light != nullptr && light->is_Display(); }
-		);
-	}
-
-	[[nodiscard]] std::optional<std::size_t> displayShiftCount() const
-	{
-		std::optional<std::size_t> shiftCount{};
-
-		for (const auto& light : m_light) {
-			if (light == nullptr || !light->is_Display()) continue;
-
-			const auto current{ light->n_display_shifts() };
-			if (!current.has_value())
-				throw std::logic_error("Display does not provide a phase-shift count");
-
-			if (shiftCount.has_value() && shiftCount.value() != current.value())
-				throw std::logic_error("Displays use different phase-shift counts");
-
-			shiftCount = current;
-		}
-
-		return shiftCount;
 	}
 
 	// The main Controll function from which every task gets started 
@@ -472,14 +432,11 @@ private:
 			};
 
 			auto optLight{ closestObj->getLight() };
-			if (!optLight.has_value())
-				throw std::logic_error("Emitter mesh is not associated with a Light instance");
 
-			const auto light_ptr{ optLight.value() };
+			auto light_ptr{ optLight.value() };
 
-			// Schlick is used directly here to avoid a heap allocation for every hit.
-			Schlick_Approximation schlick{ 1.0, refractive };
-			const double scalingBRDF{ schlick(cos_theta) };
+			// BRDF characeteristic of Source
+			const double scalingBRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			// Local Brightness in [0...1] 
 			const double light_Brightness{ light_ptr->get_local_Texture(texture_coord, 0) };
 			// Return maxLightPower * Angle- * Brightness IF the light is modular
@@ -502,8 +459,7 @@ private:
 
 		if (closestObj->m_info->specular)
 		{
-			Schlick_Approximation schlick{ 1.0, refractive };
-			const double scaling_BRDF{ schlick(cos_theta) };
+			const double scaling_BRDF{ BRDF(1.0, refractive).get_Reflection(cos_theta) };
 			// In this case Fine, but also a bit dangerous since there is no stopping condition!!! 
 
 			int new_idx = protocol.add_node(parent_index, scaling_BRDF);

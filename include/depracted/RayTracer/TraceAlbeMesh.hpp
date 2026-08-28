@@ -7,9 +7,6 @@
 #include <vector>
 #include <atomic>
 #include <future>
-#include <optional>
-#include <limits>
-#include <stdexcept>
 #include "Mesh.hpp"
 #include "Light.hpp"
 #include "ThreadPool.hpp"
@@ -46,17 +43,12 @@ public:
 	TraceAbleMesh(TriangularMesh* mesh)
 		:m_mesh{ mesh }
 	{
-		if (m_mesh == nullptr)
-			throw std::invalid_argument("TraceAbleMesh received nullptr mesh");
 		build();
 	}
 
 	TraceAbleMesh(Light* light)
 		:m_light{ light }
 	{
-		if (m_light == nullptr)
-			throw std::invalid_argument("TraceAbleMesh received nullptr light");
-
 		auto opt = light->getMesh();
 		if (opt.has_value()) m_mesh = opt.value();
 		else throw std::runtime_error("Light is not traceable");
@@ -68,10 +60,6 @@ public:
 		const Triangle* triangle
 	) 
 	{
-		if (n_Triangles > 0 && triangle == nullptr)
-			throw std::invalid_argument("TraceAbleMesh received nullptr triangle data");
-
-		m_n_triangles = n_Triangles;
 		m_triangle = std::make_unique<Triangle[]>(n_Triangles);
 		for (std::size_t i = 0; i < n_Triangles; ++i) {
 			m_triangle[i] = triangle[i];
@@ -88,6 +76,7 @@ public:
 	) const
 	{
 		double closestT{ std::numeric_limits<double>::infinity() };
+		std::size_t counter{};
 		IntersectProtocoll closestHit_Protocoll{};
 
 		for (std::size_t i = 0; i < m_n_triangles; ++i) {
@@ -119,34 +108,6 @@ public:
 
 		triangle_out = &m_triangle.get()[closestHit_Protocoll.TriangleIndex];
 		return true;
-	}
-
-	// Fast visibility query used by shadow rays. No closest-hit data is required.
-	virtual bool intersectAny(
-		const Eigen::Vector3d& origin,
-		const Eigen::Vector3d& dir,
-		const double maxDistance) const
-	{
-		if (maxDistance <= 0.0) return false;
-
-		for (std::size_t i = 0; i < m_n_triangles; ++i) {
-			double t{}, u{}, v{};
-
-			if (!TriangularMesh::intersect(
-				origin,
-				dir,
-				*m_triangle[i].vertex[0].pos,
-				*m_triangle[i].vertex[1].pos,
-				*m_triangle[i].vertex[2].pos,
-				t, u, v))
-			{
-				continue;
-			}
-
-			if (t < maxDistance) return true;
-		}
-
-		return false;
 	}
 
 	ObjectInfo* m_info{ nullptr };
@@ -201,7 +162,7 @@ private:
 
 		for (std::size_t i = 0; i < n_triangles; ++i)
 		{
-			m_triangle[i] = triangle[i];
+			m_triangle[i] = *triangle;
 		}
 	}
 
@@ -221,9 +182,6 @@ private:
 		if (m_mesh->m_surface_normals == nullptr) {
 			m_mesh->calc_surface_normals();
 		}
-
-		m_info = &m_mesh->m_info;
-		m_area = &m_mesh->m_completeArea;
 
 		for (std::size_t i = 0; i < static_cast<std::size_t>(n_surfaces); ++i) {
 			std::size_t index[3]{
@@ -248,17 +206,12 @@ private:
 			m_triangle[i].vertex[0].uv_Vertice = &m_mesh->m_vertices[index[0]].uv;
 			m_triangle[i].vertex[1].uv_Vertice = &m_mesh->m_vertices[index[1]].uv;
 			m_triangle[i].vertex[2].uv_Vertice = &m_mesh->m_vertices[index[2]].uv;
-			if (m_mesh->m_vertice_normals != nullptr) {
-				m_triangle[i].vertex[0].vertex_normal = &m_mesh->m_vertice_normals[index[0]];
-				m_triangle[i].vertex[1].vertex_normal = &m_mesh->m_vertice_normals[index[1]];
-				m_triangle[i].vertex[2].vertex_normal = &m_mesh->m_vertice_normals[index[2]];
-			}
-			else {
-				// Flat-normal fallback for meshes without explicit vertex normals.
-				m_triangle[i].vertex[0].vertex_normal = &m_mesh->m_surface_normals[i];
-				m_triangle[i].vertex[1].vertex_normal = &m_mesh->m_surface_normals[i];
-				m_triangle[i].vertex[2].vertex_normal = &m_mesh->m_surface_normals[i];
-			}
+			m_triangle[i].vertex[0].vertex_normal = &m_mesh->m_vertice_normals[index[0]];
+			m_triangle[i].vertex[1].vertex_normal = &m_mesh->m_vertice_normals[index[1]];
+			m_triangle[i].vertex[2].vertex_normal = &m_mesh->m_vertice_normals[index[2]];
+
+			m_info = &m_mesh->m_info;
+			m_area = &m_mesh->m_completeArea;
 		}
 	}
 };
