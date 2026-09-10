@@ -32,6 +32,7 @@ public:
 		Eigen::Vector3d* surf_norm{ nullptr };
 		Vertex vertex[3]{};
 		double* area{};
+		const ObjectInfo::Diffuse_Settings* diffuse_settings{ nullptr };
 	};
 
 	virtual ~TraceAbleMesh() = default;
@@ -132,7 +133,7 @@ public:
 		for (std::size_t i = 0; i < m_n_triangles; ++i) {
 			double t{}, u{}, v{};
 
-			if (!TriangularMesh::intersect(
+			if (!TriangularMesh::intersectTwoSided(
 				origin,
 				dir,
 				*m_triangle[i].vertex[0].pos,
@@ -239,6 +240,13 @@ private:
 
 			m_triangle[i].area = &m_mesh->m_area[i];
 			m_triangle[i].surf_norm = &m_mesh->m_surface_normals[i];
+
+			// If no diffuse settings for the surface are provided every triangle gets the 
+			// One could think about giving a mesh the categories of diffuse specular emitting per triangle
+			m_triangle[i].diffuse_settings =
+				(m_mesh->m_diffuse_settings_per_surface != nullptr)
+				? &m_mesh->m_diffuse_settings_per_surface[i]
+				: &m_mesh->m_info.m_diffuse_settings;
 			m_triangle[i].vertex[0].pos = &m_mesh->m_vertices[index[0]].pos;
 			m_triangle[i].vertex[1].pos = &m_mesh->m_vertices[index[1]].pos;
 			m_triangle[i].vertex[2].pos = &m_mesh->m_vertices[index[2]].pos;

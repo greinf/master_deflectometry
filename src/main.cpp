@@ -8,6 +8,7 @@
 #include "Light.hpp"
 #include "Scene.hpp"
 #include <opencv2/core/eigen.hpp> // Must include this header
+#include "Utils.hpp"
 
 
 auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
@@ -64,8 +65,58 @@ int main()
     camMat[0].at<double>(1, 2) = 2056.0 / 2;
     distCoeffs[0] = cv::Mat(distCoeffs[0].size(), CV_64F, cv::Scalar(0.0));
 
+    double image_scale{ (2464.0 * 3.45e-3 / 1.75 ) / (30 * 12) };
+
+    std::filesystem::path d{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/SyntheticCalibration/Test" };
+
+    Protocoll::SimulationProtocoll protocoll{};
+
+    // protocoll.read(d.string());
+
+    Eigen::Matrix3d intrinsic = Eigen::Matrix3d::Identity();
+
+    Eigen::VectorXd distortion{};
+
+    Eigen::MatrixXd result = Eigen::MatrixXd::Random(2464, 2056);
+
+    distortion.resize(7, 1);
+
+    distortion.fill(1.0);
+
+    protocoll.m_camera.objective = &Protocoll::CameraData::C2514_M;
+
+    protocoll.m_camera.distortionCoefficients = distortion;
+
+    protocoll.m_camera.intrinsicMatrix = intrinsic;
+
+    protocoll.m_calibration.pattern_width = 30;
+
+    protocoll.m_calibration.pattern_x = 9;
+    
+    protocoll.m_calibration.pattern_y = 12;
+
+    protocoll.m_calibration.translationMatrix = { Eigen::Matrix4d::Random().eval() };
+
+    protocoll.m_simulation.m_simulated_images = { result };
+
+    protocoll.save(d.string());
+
+    std::cout << "Make Lookie lookie \n";
+
+    /*Eigen::Matrix3d intrsinisc = CameraMatrix::generateIntrinsicMatrix(
+        &syntheticCalibration::C2514_M,
+        16.0,
+        image_scale,
+        3.45e-3,
+        2464 / 2.0,
+        2056 / 2.0
+    );*/
+
+    SamplingSetting sample{ 6, 6 };
+
     std::unique_ptr<Camera> cam_ptr = 
-        std::make_unique<Camera>(std::make_unique<OpenCvMatrix>(camMat[0], distCoeffs[0]));
+        std::make_unique<Camera>(std::make_unique<OpenCvMatrix>(camMat[0], distCoeffs[0]),
+            sample);
     
     raycasting.addCamera(std::move(cam_ptr));
 
@@ -80,16 +131,16 @@ int main()
             0, 0, -1, 3700,
             0, 0, 0, 1).finished();
 
-   /* Eigen::Matrix4d mirror_trans1 =
+    /* Eigen::Matrix4d mirror_trans1 =
         (Eigen::Matrix4d() <<
             std::cos(CV_PI * 0.99), 0.0, std::sin(CV_PI * 0.99), 0.0,
             0.0, 1.0, 0.0, 0.0,
             -std::sin(CV_PI * 0.99), 0.0, std::cos(CV_PI * 0.99), 4000.0
-            ).finished();*/
+            ).finished(); */
 
     parabolical_mirror->addTransform(mirror_trans);
 
-    raycasting.addObject(std::move(parabolical_mirror));
+    // raycasting.addObject(std::move(parabolical_mirror));
 
     std::unique_ptr<TriangularMesh> tubus{ PolygonMesh::TelsecopeTubus(
         1100,
@@ -98,15 +149,31 @@ int main()
         0.1,
         10)->convert2Triangular() };
 
-    Eigen::Matrix4d tubus_trans =
-        (Eigen::Matrix4d() << -1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, -1, 4000,
-            0, 0, 0, 1).finished();
+    // tubus->addTransform(tubus_trans);
 
-    tubus->addTransform(tubus_trans);
+    // raycasting.addObject(std::move(tubus));
 
-    raycasting.addObject(std::move(tubus));
+    std::unique_ptr<TriangularMesh> board{ TriangularMesh::CalibrationBoard(
+        12,
+        9,
+        30,
+        0.6,
+        0.04,
+        0.35,
+        50)
+    };
+
+    Eigen::Matrix4d board_trans =
+            (Eigen::Matrix4d() <<
+                std::cos(CV_PI * 0.7), 0.0, std::sin(CV_PI * 0.7), 0.0,
+                0.0, 1.0, 0.0, 0.0,
+                -std::sin(CV_PI * 0.7), 0.0, std::cos(CV_PI * 0.7), 4000.0,
+                0, 0, 0, 1
+                ).finished();
+
+    board->addTransform(board_trans);
+
+    raycasting.addObject(std::move(board));
 
     constexpr double width = 1920.0 * 0.2745;
     constexpr double height = 1080.0 * 0.2745;
@@ -145,24 +212,31 @@ int main()
     std::cout << outputImages.size() << '\n';
 
     cv::Mat output;
+    for (const auto& img : outputImages) {
+        cv::eigen2cv(outputImages.at(0), output);
 
-    cv::eigen2cv(outputImages.at(0), output);
+        cv::Mat scaledOutput;
 
-    double maxVal;
-    // Pass cv::noArray() or NULL if you don't need the minimum value or locations
-    cv::minMaxLoc(output, nullptr, &maxVal);
+        cv::resize(output, scaledOutput, cv::Size(2464, 2056));
 
-    std::cout << "Max coefficient: " << maxVal << std::endl;
+        double maxVal;
+        // Pass cv::noArray() or NULL if you don't need the minimum value or locations
+        cv::minMaxLoc(scaledOutput, nullptr, &maxVal);
 
-    shownormalized(output);
+        std::cout << "Max coefficient: " << maxVal << std::endl;
+
+        shownormalized(scaledOutput);
+    }
 
     return 0;
 
 }
 
 
-/*open3d::geometry::TriangleMesh mesh(*tubus);
+/*
+    open3d::geometry::TriangleMesh mesh(*tubus);
 
     auto tubus_mesh_ptr = std::make_shared<open3d::geometry::TriangleMesh>(mesh);
 
-    open3d::visualization::DrawGeometries({ tubus_mesh_ptr }, "Custom Mesh Window");*/
+    open3d::visualization::DrawGeometries({ tubus_mesh_ptr }, "Custom Mesh Window");
+*/

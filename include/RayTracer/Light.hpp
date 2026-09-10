@@ -129,7 +129,15 @@ public:
 			image_y - 1
 		);
 
-		const double val = m_Texture->at(i)(y_i, x_i);
+		// Static area-light textures remain unchanged during a display
+		// phase-shift sequence. If exactly one texture is present, reuse it.
+		const std::size_t texture_index =
+			(m_Texture->size() == 1) ? 0 : i;
+
+		if (texture_index >= m_Texture->size())
+			throw std::out_of_range("AreaLight texture index out of range");
+
+		const double val = m_Texture->at(texture_index)(y_i, x_i);
 		return val;
 	}
 

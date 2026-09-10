@@ -2,12 +2,24 @@
 #define CAMERAMATRIX_HPP
 
 #include "Object.hpp"
+#include "Utils.hpp"
 #include <opencv2/opencv.hpp>
 #include <algorithm>
+#include <array>
+#include <string>
+#include <string_view>
+#include <filesystem>
+#include <chrono>
+#include <sstream>
+#include <iomanip>
+#include <ios>
+#include <Eigen/dense>
+
 
 // Everything is stored in (x,y,z) 
 using Rays = Eigen::Matrix<Eigen::Vector3d, Eigen::Dynamic, Eigen::Dynamic>;
 using Sensor = Eigen::Matrix<Eigen::Vector2d, Eigen::Dynamic, Eigen::Dynamic>;
+
 
 
 class CameraMatrix: public Object {
@@ -77,6 +89,115 @@ public:
 		check();
 	}
 
+	static Eigen::Matrix3d generateIntrinsicMatrix(
+		const Protocoll::CameraData::ObjectiveData* objective,
+		const double& f_number,
+		const double& image_scale_goal_abs,
+		const double& pixel_pitch,
+		const double& px,
+		const double& py,
+		std::pair<int, int>& sensor_dimension = std::pair<int, int>(2464, 2056),
+		const double& fx_fy_ratio = 1.0 /*fx/fy*/ )
+	{
+		if (fx_fy_ratio != 1.0) std::cout << "WARNING: Ratio fx to fy is != 0 \n";
+		if (objective == nullptr) throw std::invalid_argument("Objective Data is nullptr");
+		if (image_scale_goal_abs > 1.0 || image_scale_goal_abs <= 0.0) throw 
+			std::invalid_argument("ImageScale must be a positive value smaller than 1.0");
+		if (pixel_pitch <= 0.0) throw std::invalid_argument("Pixel Pitch must greater than zero");
+
+		if (!objective->valid_Iris(f_number)) throw std::invalid_argument("F-Number not allowed");
+
+		const double object_length{ (image_scale_goal_abs + 1) * objective->focal_length / image_scale_goal_abs };
+
+		auto focusPoints = objective->generateFocusPoints(
+			image_scale_goal_abs,
+			f_number,
+			pixel_pitch,
+			object_length);
+		
+		if (focusPoints.FarPoint <= object_length || focusPoints.NearPoint >= object_length)
+			throw std::invalid_argument("Object lies outside the focus area");
+
+		// Debugging
+		/*{
+			std::cout << "Object to Hauptebene: " << object_length << '\n';
+			std::cout << "Nahpunkt: " << focusPoints.NearPoint << '\n';
+			std::cout << "Fernpunkt: " << focusPoints.FarPoint << '\n';
+		}*/
+		
+		const double normalized_focal{
+			objective->focal_length / pixel_pitch
+		};
+
+		const double normalized_fx{
+			normalized_focal * fx_fy_ratio
+		};
+
+		Eigen::Matrix3d intrinsic =
+			(Eigen::Matrix3d() <<
+				normalized_fx, 0.0, px,
+				0.0, normalized_focal, py,
+				0.0, 0.0, 1.0).finished();
+
+		return intrinsic;
+	}
+
+
+	static bool isSparseIntrinsic(const Eigen::Matrix3d& K) noexcept {
+		// Define the expected non-zero pattern (true where elements CAN be set)
+		const Eigen::Matrix<bool, 3, 3> mask{
+			{false, true, false},	
+			{true, false, false},
+			{true, true, false}
+		};
+
+		// Check that every element where mask is false is exactly 0.0
+		return (mask).select(K, 0.0).isZero(0.0);
+	}
+
+
+	// Creates Random Translation matrices for a given Intrinsic Matrix and Distortion Coefficients
+	static std::vector<Eigen::Matrix4d> generateTranslationMatrixForCalibrationBoard_SyntheticCalibration(
+		const Eigen::Matrix3d& intrinsic_matrix,
+		const Eigen::Vector6d& distortion_Coefficients,
+		const double& camera_pixel_pitch,
+		const std::pair<int, int> pixel_xy,
+		const std::pair<int, int> pattern_x_y,
+		const double& pattern_width,
+		const std::size_t n_positions)
+	{
+		/*if (intrinsic_matrix(0, 0) <= 0.0 || intrinsic_matrix(1, 1) <= 0.0)
+			throw std::invalid_argument("The focus length must be bigger than 0");*/
+
+		if (isSparseIntrinsic(intrinsic_matrix))
+			throw std::invalid_argument("Only fx fy px and py must be set ");
+
+		const bool has_distortion{ distortion_Coefficients.isZero() };
+
+		if (camera_pixel_pitch <= 0)
+			throw std::invalid_argument("Pixel_pitch must be bigger than 0");
+		if (pattern_x_y.first <= 0 || pattern_x_y.second <= 0)
+			throw std::invalid_argument("Calibration Board size must be bigger than 0");
+		if (pattern_width <= 0)
+			throw std::invalid_argument("Pattern size must be bigger than zero");
+		if (n_positions <= 0)
+			throw std::invalid_argument("...");
+		
+		std::size_t n_translation{};
+
+		std::vector<Eigen::Matrix4d> translationMatrices(n_positions);
+
+		while (true) {
+
+		}
+
+		
+
+
+	}
+
+
+
 	static Sensor generateSensorCoords(
 		const double x_start = 0.0,
 		const double y_start = 0.0,
@@ -125,7 +246,8 @@ public:
 
 	virtual void castRays(
 		Rays& rays,
-		const Sensor*) const = 0;
+		const Sensor*,
+		const SamplingSetting& sample) const = 0;
 	
 	virtual ~CameraMatrix() = default;
 
@@ -172,11 +294,32 @@ public:
 	// Return normalized direction Vectors for each pixel 
 	void castRays(
 		Rays& rays,
-		const Sensor* sensor_coords) const override {
-		if (sensor_coords->size() == 0) throw std::runtime_error("The SensorCoords must be Available");
-		if (rays.size() == 0) rays.resize(sensor_coords->rows(), sensor_coords->cols());
+		const Sensor* sensor_coords,
+		const SamplingSetting& sample) const override {
+		if (sensor_coords == nullptr)
+			throw std::invalid_argument("Sensor pointer must not be nullptr");
 
-		rays = sensor_coords->unaryExpr(
+		if (sensor_coords->size() == 0) throw std::runtime_error("The SensorCoords must be Available");
+
+		if (rays.rows() != sensor_coords->rows() * sample.samples_y ||
+			rays.cols() != sensor_coords->cols() * sample.samples_x)
+		{
+			rays.resize(
+				sensor_coords->rows() * sample.samples_y,
+				sensor_coords->cols() * sample.samples_x
+			);
+		}
+
+		Sensor sensor_Sampling{generateSensorCoords(
+			0.0,
+			0.0,
+			2464.0,
+			2056.0,
+			1.0/sample.samples_x,
+			1.0/sample.samples_y)
+		};
+
+		rays = sensor_Sampling.unaryExpr(
 			[this](const Eigen::Vector2d& coords) -> Eigen::Vector3d
 			{
 				Eigen::Vector3d homogeneousCoords(coords[0], coords[1], 1.0);
@@ -296,7 +439,8 @@ public:
 
 	void castRays(
 		Rays& rays,
-		const Sensor* sensor_coord) const override {
+		const Sensor* sensor_coord,
+		const SamplingSetting& sample) const override {
 		throw std::runtime_error("Not implemented for Manual Camera Matrix");
 	}
 

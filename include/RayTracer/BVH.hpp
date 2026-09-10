@@ -422,7 +422,7 @@ public:
 
                     double t{}, u{}, v{};
 
-                    if (!TriangularMesh::intersect(
+                    if (!TriangularMesh::intersectTwoSided(
                         origin,
                         direction,
                         *triangle.vertex[0].pos,

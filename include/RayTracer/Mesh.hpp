@@ -19,27 +19,42 @@ struct ObjectInfo {
 	bool emitter{ false };
 	
 	struct Diffuse_Settings {
+		// Lambertian / diffuse reflectivity
 		double reflectivity_scattered{ 0.2 };
-		double reflectivity_direct{ 0.1 };
 
-		Diffuse_Settings() = default;
+		// rough specular reflectivity
+		double reflectivity_direct{ 0.0 };
 
-		Diffuse_Settings(double scattered, double direct)
-			: reflectivity_scattered{ scattered }
-			, reflectivity_direct{ direct }
-		{
-			validate();
-		}
+		// Phong reflectivity 
+		// width of the specular lobe:
+		// small  -> broad halo
+		// large  -> sharper highlight
+		double specular_exponent{ 20.0 };
 
 		void validate() const {
-			if (reflectivity_scattered < 0.0 || reflectivity_direct < 0.0)
-				throw std::invalid_argument("Diffuse reflectivities must be non-negative");
+			if (reflectivity_scattered < 0.0 ||
+				reflectivity_direct < 0.0)
+			{
+				throw std::runtime_error(
+					"Reflectivities must be >= 0"
+				);
+			}
 
-			if (reflectivity_scattered + reflectivity_direct >= 1.0)
-				throw std::invalid_argument("Sum of diffuse reflectivities must be lower than 1");
+			if (reflectivity_scattered + reflectivity_direct > 1.0)
+			{
+				throw std::runtime_error(
+					"Sum of diffuse settings must be <= 1"
+				);
+			}
+
+			if (specular_exponent < 0.0)
+			{
+				throw std::runtime_error(
+					"Specular exponent must be >= 0"
+				);
+			}
 		}
 	} m_diffuse_settings{};
-	
 };
 
 // Utilities 
@@ -47,7 +62,6 @@ struct Vertice {
 	Eigen::Vector3d pos{};
 	Eigen::Vector2d uv{};
 	std::complex<double> refractive_index{};
-	// if not specifically marked objects are specular
 };
 
 class PolygonMesh;
@@ -68,6 +82,7 @@ public:
 		std::swap(m_n_surfaces, mesh.m_n_surfaces);
 		std::swap(m_surface_normals, mesh.m_surface_normals);
 		std::swap(m_area, mesh.m_area);
+		std::swap(m_diffuse_settings_per_surface, mesh.m_diffuse_settings_per_surface);
 		std::swap(m_completeArea, mesh.m_completeArea);
 		std::swap(m_info, mesh.m_info);
 		std::swap(m_transform, mesh.m_transform);
@@ -83,7 +98,7 @@ public:
 		const std::uint32_t& n_surface,
 		const ObjectInfo& info,
 		const Eigen::Matrix4d& transform)
-		: Object(std::move(transform))
+		: Object(transform)
 		, m_vertices{ std::move(vertices) }
 		, m_vertice_normals{ std::move(vertice_normal) }
 		, m_indices{ std::move(indices) }
@@ -104,6 +119,7 @@ public:
 		, m_n_surfaces{ std::move(mesh.m_n_surfaces) }
 		, m_surface_normals{std::move(mesh.m_surface_normals)}
 		, m_area{std::move(mesh.m_area)}
+		, m_diffuse_settings_per_surface{std::move(mesh.m_diffuse_settings_per_surface)}
 		, m_info{std::move(mesh.m_info)}
 		, m_completeArea{mesh.m_completeArea}
 	{ }
@@ -118,6 +134,7 @@ public:
 		, m_n_surfaces{std::move(mesh->m_n_surfaces)}
 		, m_surface_normals{std::move(mesh->m_surface_normals)}
 		, m_area{std::move(mesh->m_area)}
+		, m_diffuse_settings_per_surface{std::move(mesh->m_diffuse_settings_per_surface)}
 		, m_info{ std::move(mesh->m_info) }
 		, m_completeArea{mesh->m_completeArea}
 	{ }
@@ -237,6 +254,11 @@ public:
 	std::unique_ptr<std::uint32_t[]> m_indices = nullptr;
 	std::unique_ptr<std::uint32_t[]> m_n_ver_per_surface = nullptr;
 	std::unique_ptr<double[]> m_area = nullptr;
+
+	// Optional material override for individual triangular surfaces.
+	// If nullptr, m_info.m_diffuse_settings is used for the entire mesh.
+	std::unique_ptr<ObjectInfo::Diffuse_Settings[]> m_diffuse_settings_per_surface = nullptr;
+
 	std::uint32_t m_n_vertices{};
 	std::uint32_t m_n_surfaces{};
 	ObjectInfo m_info{};
@@ -289,7 +311,7 @@ public:
 		const Eigen::Vector3d& v2,
 		const double& u,
 		const double& v
-	)
+	) noexcept
 	{
 		const Eigen::Vector3d BA{ v1 - v0 };
 		const Eigen::Vector3d CA{ v2 - v0 };
@@ -303,7 +325,7 @@ public:
 		const Eigen::Vector3d& v2,
 		const double& u,
 		const double& v
-	)noexcept 
+	) noexcept 
 	{
 		const double w{ 1.0 - u - v };
 		return (w * v0 + u * v1 + v * v2).normalized();
@@ -407,6 +429,257 @@ public:
 		return true;
 	}
 
+	// Moller-Trumbore/Cramer intersection without backface culling.
+	// Used for visibility/shadow rays where an opaque triangle blocks light
+	// from either side. Primary camera rays continue to use intersect().
+	static bool intersectTwoSided(
+		const Eigen::Vector3d& origin,
+		const Eigen::Vector3d& dir,
+		const Eigen::Vector3d& v0,
+		const Eigen::Vector3d& v1,
+		const Eigen::Vector3d& v2,
+		double& t, double& u, double& v)
+	{
+		const Eigen::Vector3d AB{v1 - v0};
+		const Eigen::Vector3d AC{v2 - v0};
+		const Eigen::Vector3d R{origin - v0};
+
+		constexpr double eps{1e-9};
+
+		const Eigen::Vector3d e1xe2 = -dir.cross(AB);
+		const Eigen::Vector3d e2xe3 = AB.cross(AC);
+		const Eigen::Vector3d e3xe1 = AC.cross(-dir);
+
+		const double det{e1xe2.dot(AC)};
+		if (std::abs(det) < eps) return false;
+
+		const double inv_det{1.0 / det};
+
+		u = e3xe1.dot(R) * inv_det;
+		if (u < 0.0 || u > 1.0) return false;
+
+		t = e2xe3.dot(R) * inv_det;
+		if (t < eps) return false;
+
+		v = e1xe2.dot(R) * inv_det;
+		if (v < 0.0 || v > 1.0) return false;
+
+		return u + v <= 1.0;
+	}
+
+	void setDiffuseSettingsForTriangle(
+		const std::size_t triangle_index,
+		const ObjectInfo::Diffuse_Settings& settings)
+	{
+		if (triangle_index >= static_cast<std::size_t>(m_n_surfaces))
+			throw std::out_of_range("Triangle material index out of range");
+
+		settings.validate();
+
+		if (m_diffuse_settings_per_surface == nullptr) {
+			m_diffuse_settings_per_surface =
+				std::make_unique<ObjectInfo::Diffuse_Settings[]>(m_n_surfaces);
+
+			for (std::size_t i = 0; i < static_cast<std::size_t>(m_n_surfaces); ++i)
+				m_diffuse_settings_per_surface[i] = m_info.m_diffuse_settings;
+		}
+
+		m_diffuse_settings_per_surface[triangle_index] = settings;
+	}
+
+	[[nodiscard]] const ObjectInfo::Diffuse_Settings&
+	getDiffuseSettingsForTriangle(const std::size_t triangle_index) const
+	{
+		if (triangle_index >= static_cast<std::size_t>(m_n_surfaces))
+			throw std::out_of_range("Triangle material index out of range");
+
+		if (m_diffuse_settings_per_surface != nullptr)
+			return m_diffuse_settings_per_surface[triangle_index];
+
+		return m_info.m_diffuse_settings;
+	}
+
+	// Creates a planar checkerboard in the xy-plane with normal +z.
+	// UV coordinates span [0,1] across the complete board.
+	// Every square consists of two triangles and receives its own
+	// diffuse material, so black/white reflectivities can be varied
+	// without splitting the board into multiple scene objects.
+	static std::unique_ptr<TriangularMesh> CalibrationBoard(
+		const std::size_t squares_x,
+		const std::size_t squares_y,
+		const double square_size,
+		const double white_reflectivity = 0.9,
+		const double black_reflectivity = 0.04,
+		const double specular_reflectivity = 0.0,
+		const double specular_exponent = 20.0)
+	{
+		if (squares_x == 0 || squares_y == 0)
+			throw std::invalid_argument("Calibration board requires at least one square");
+		if (square_size <= 0.0)
+			throw std::invalid_argument("Calibration board square size must be positive");
+
+		ObjectInfo::Diffuse_Settings white{};
+		white.reflectivity_scattered = white_reflectivity;
+		white.reflectivity_direct = specular_reflectivity;
+		white.specular_exponent = specular_exponent;
+		white.validate();
+
+		ObjectInfo::Diffuse_Settings black{};
+		black.reflectivity_scattered = black_reflectivity;
+		black.reflectivity_direct = specular_reflectivity;
+		black.specular_exponent = specular_exponent;
+		black.validate();
+
+		const std::size_t nSquares =
+			squares_x * squares_y;
+
+		const std::size_t nVertices =
+			(squares_x + 1) * (squares_y + 1);
+
+		const std::size_t nTriangles =
+			2 * nSquares;
+
+		auto vertices =
+			std::make_unique<Vertice[]>(nVertices);
+
+		auto normals =
+			std::make_unique<Eigen::Vector3d[]>(nVertices);
+
+		auto indices =
+			std::make_unique<std::uint32_t[]>(3 * nTriangles);
+
+		auto verticesPerSurface =
+			std::make_unique<std::uint32_t[]>(nTriangles);
+
+		auto materials =
+			std::make_unique<ObjectInfo::Diffuse_Settings[]>(nTriangles);
+
+
+		// --- Vertices ---
+		std::size_t vertices_index{ 0 };
+
+		for (std::size_t y = 0; y <= squares_y; ++y)
+		{
+			for (std::size_t x = 0; x <= squares_x; ++x)
+			{
+				vertices[vertices_index].pos =
+					Eigen::Vector3d{
+						static_cast<double>(x) * square_size,
+						static_cast<double>(y) * square_size,
+						0.0
+				};
+
+				const double u =
+					static_cast<double>(x) /
+					static_cast<double>(squares_x);
+
+				const double v =
+					static_cast<double>(y) /
+					static_cast<double>(squares_y);
+
+				vertices[vertices_index].uv =
+					Eigen::Vector2d{ u, v };
+
+				normals[vertices_index] =
+					Eigen::Vector3d{ 0.0, 0.0, 1.0 };
+
+				++vertices_index;
+			}
+		}
+
+
+		// --- Connectivity ---
+
+		std::size_t indices_index{ 0 };
+
+		const std::size_t rowLength =
+			squares_x + 1;
+
+		for (std::size_t y = 0; y < squares_y; ++y)
+		{
+			for (std::size_t x = 0; x < squares_x; ++x)
+			{
+				const std::size_t ulc =
+					x + y * rowLength;
+
+				const std::size_t urc =
+					(x + 1) + y * rowLength;
+
+				const std::size_t dlc =
+					x + (y + 1) * rowLength;
+
+				const std::size_t drc =
+					(x + 1) + (y + 1) * rowLength;
+
+
+				const std::size_t squareIndex =
+					x + y * squares_x;
+
+				const std::size_t triangleIndex =
+					2 * squareIndex;
+
+
+				// Triangle 1, winding -> +z
+				indices[indices_index++] =
+					static_cast<std::uint32_t>(ulc);
+
+				indices[indices_index++] =
+					static_cast<std::uint32_t>(drc);
+
+				indices[indices_index++] =
+					static_cast<std::uint32_t>(dlc);
+
+
+				// Triangle 2, winding -> +z
+				indices[indices_index++] =
+					static_cast<std::uint32_t>(ulc);
+
+				indices[indices_index++] =
+					static_cast<std::uint32_t>(urc);
+
+				indices[indices_index++] =
+					static_cast<std::uint32_t>(drc);
+
+
+				verticesPerSurface[triangleIndex] = 3;
+				verticesPerSurface[triangleIndex + 1] = 3;
+
+
+				const auto& squareMaterial =
+					((x + y) % 2 == 0)
+					? black
+					: white;
+
+				materials[triangleIndex] =
+					squareMaterial;
+
+				materials[triangleIndex + 1] =
+					squareMaterial;
+			}
+		}
+
+		ObjectInfo info{};
+		info.closed = false;
+		info.specular = false;
+		info.diffuse = true;
+		info.emitter = false;
+		info.m_diffuse_settings = white; // default/fallback only
+
+		auto board = std::make_unique<TriangularMesh>(
+			std::move(vertices),
+			std::move(normals),
+			std::move(indices),
+			std::move(verticesPerSurface),
+			static_cast<std::uint32_t>(nVertices),
+			static_cast<std::uint32_t>(nTriangles),
+			info,
+			Eigen::Matrix4d::Identity()
+		);
+
+		board->m_diffuse_settings_per_surface = std::move(materials);
+		return board;
+	}
+
 	operator open3d::geometry::TriangleMesh() const
 	{
 		if (m_n_vertices == 0) {
@@ -467,8 +740,6 @@ public:
 
 		return result;
 	}
-
-private:
 	
 };
 
@@ -723,6 +994,7 @@ public:
 		const double& hemisphäric_reflectivity,
 		const double& direct_light_reflectifity,
 		const std::size_t& division,
+		const double& specular_exponent = 20.0,
 		const std::complex<double>& refractive_ind = {}
 	)
 	{
@@ -919,10 +1191,16 @@ public:
 		ObjectInfo info{};
 		info.diffuse = true;
 
-		info.m_diffuse_settings = ObjectInfo::Diffuse_Settings{
-			hemisphäric_reflectivity,
-			direct_light_reflectifity
-		};
+		info.m_diffuse_settings.reflectivity_scattered =
+			hemisphäric_reflectivity;
+
+		info.m_diffuse_settings.reflectivity_direct =
+			direct_light_reflectifity;
+
+		info.m_diffuse_settings.specular_exponent =
+			specular_exponent;
+
+		info.m_diffuse_settings.validate();
 
 		if (vert_index != n_tubus_vertices)
 			throw std::runtime_error("Wrong vertex count");

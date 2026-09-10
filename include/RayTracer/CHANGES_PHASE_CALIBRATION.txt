@@ -1,0 +1,77 @@
+RayTracer - phase shift / calibration-board working revision
+============================================================
+
+Main changes
+------------
+1. Shadow rays are two-sided.
+   - TriangularMesh::intersectTwoSided() was added.
+   - TraceAbleMesh::intersectAny() and BVH::intersectAny() use it.
+   - Integrator::obscured() now calls intersectAny() instead of full closest-hit intersection.
+   - Primary/camera rays still use the original backface-culling intersection.
+
+2. Display phase-shift pattern index is propagated consistently.
+   - Scene::raytraceScene(out, pattern_index) renders one selected pattern.
+   - Scene::raytracePhaseShiftSequence(out) renders all 2*n_shifts patterns for one camera.
+   - The same pattern index is used for directly visible emitter hits and Integrator light samples.
+   - Geometry/BVH setup is done only once for the complete phase-shift sequence.
+   - Pattern order: first n_shifts use one orientation, next n_shifts use the second orientation.
+
+3. Diffuse material settings can be local per triangle.
+   - Mesh contains optional m_diffuse_settings_per_surface.
+   - TraceAbleMesh::Triangle stores a pointer to the local material settings.
+   - If no local material is defined, the mesh-wide ObjectInfo::m_diffuse_settings remains the fallback.
+   - TriangularMesh::setDiffuseSettingsForTriangle() allows later modification.
+
+4. Calibration board factory.
+   Example:
+
+       auto board = TriangularMesh::CalibrationBoard(
+           9,       // squares x
+           6,       // squares y
+           25.0,    // square size (same length unit as scene)
+           0.80,    // white diffuse reflectivity
+           0.04,    // black diffuse reflectivity
+           0.00,    // rough-specular reflectivity
+           20.0     // Phong exponent
+       );
+
+       Eigen::Matrix4d boardTransform = Eigen::Matrix4d::Identity();
+       // fill boardTransform as required
+       board->addTransform(boardTransform);
+       scene.addObject(std::move(board));
+
+   Board geometry lies in xy at z=0 and faces +z. UV coordinates cover [0,1]x[0,1].
+   Every square is represented by two triangles with identical local material settings.
+
+5. Scene::trace() correction.
+   - Removed the accidental reflection of ray.dir before material dispatch.
+   - True specular objects create a reflected ray only inside the specular branch.
+   - Diffuse/rough-specular materials receive the original outgoing direction.
+   - The barycentrically interpolated vertex normal is passed into the Integrator.
+
+Phase-shift usage
+-----------------
+Single pattern:
+
+    std::vector<Eigen::MatrixXd> image;
+    scene.raytraceScene(image, 2);   // pattern 2
+
+Complete sequence (current implementation intentionally requires exactly one camera):
+
+    std::vector<Eigen::MatrixXd> phaseImages;
+    scene.raytracePhaseShiftSequence(phaseImages);
+
+For a Display with n_shifts=5, phaseImages contains 10 images:
+    0..4 : first fringe orientation
+    5..9 : second fringe orientation
+
+Important remaining limitations
+-------------------------------
+- Mesh::applyTransform() still transforms vertex data destructively. The new phase-shift sequence avoids
+  repeated transforms by preparing geometry once, but repeated independent calls to raytraceScene() on
+  the same Scene are still not a good way to generate multiple camera poses.
+- The tube backplate/tube-edge vertex-normal discontinuity is NOT fixed in this revision. The correct
+  solution is duplicate vertices at the hard 90-degree edge so backplate and tube can have separate normals.
+- Display angular emission characteristic is still not modeled. m_power is still used as the radiance scale.
+- The rough-specular term remains normalized Phong, not GGX/microfacet.
+- General diffuse indirect illumination is not implemented.

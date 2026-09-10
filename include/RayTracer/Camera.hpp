@@ -2,21 +2,18 @@
 #define CAMERA_HPP
 
 #include "CameraMatrix.hpp"
-
 #include <memory>
-
-struct CameraData {
-	const Eigen::Matrix3d* camMat{ nullptr };
-	const Eigen::VectorXd* distCoeffs{ nullptr };
-};
+#include <Eigen/dense>
 
 class Camera {
 public:
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
-		Sensor sensor_coords = CameraMatrix::generateSensorCoords())
+		Sensor sensor_coords = CameraMatrix::generateSensorCoords(),
+		const SamplingSetting setting = {})
 		: m_cameraMatrix{std::move(camMat)}
 		, m_sensorCoords{std::make_unique<Sensor>(std::move(sensor_coords))}
+		, m_setting{setting}
 	{
 		if (m_cameraMatrix == nullptr)
 			throw std::invalid_argument("Camera received nullptr CameraMatrix");
@@ -24,9 +21,11 @@ public:
 
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
-		std::unique_ptr<Sensor>&& sensor_coords)
+		std::unique_ptr<Sensor>&& sensor_coords,
+		const SamplingSetting setting = {})
 		: m_cameraMatrix{ std::move(camMat) }
 		, m_sensorCoords{ std::move(sensor_coords) }
+		, m_setting{setting}
 	{
 		if (m_cameraMatrix == nullptr || m_sensorCoords == nullptr)
 			throw std::invalid_argument("Camera received nullptr input");
@@ -34,8 +33,21 @@ public:
 
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
-		const cv::Mat_<cv::Vec2d>& sensor)
+		const SamplingSetting setting = {})
 		: m_cameraMatrix{ std::move(camMat) }
+		, m_setting{ setting }
+	{
+		m_sensorCoords = std::make_unique<Sensor>(CameraMatrix::generateSensorCoords());
+		if (m_cameraMatrix == nullptr)
+			throw std::invalid_argument("Camera received nullptr input");
+	}
+
+	Camera(
+		std::unique_ptr<CameraMatrix>&& camMat,
+		const cv::Mat_<cv::Vec2d>& sensor,
+		const SamplingSetting setting = {})
+		: m_cameraMatrix{ std::move(camMat) }
+		, m_setting{setting}
 	{
 		if (m_cameraMatrix == nullptr)
 			throw std::invalid_argument("Camera received nullptr CameraMatrix");
@@ -63,7 +75,7 @@ public:
 	}
 	
 	[[nodiscard]] void generateRays(Rays& rays) const {
-		m_cameraMatrix->castRays(rays, m_sensorCoords.get());
+		m_cameraMatrix->castRays(rays, m_sensorCoords.get(), m_setting);
 	}
 
 	[[nodiscard]] const Eigen::Matrix4d& getTransform() const {
@@ -72,6 +84,7 @@ public:
 
 	std::unique_ptr<Sensor> m_sensorCoords{ nullptr };
 
+	SamplingSetting m_setting{};
 private:
 	std::unique_ptr<CameraMatrix> m_cameraMatrix{ nullptr };
 };

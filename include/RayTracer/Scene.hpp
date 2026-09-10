@@ -192,7 +192,9 @@ public:
 			[](const auto& light) { return light != nullptr && light->is_Display(); }
 		);
 	}
+	
 
+	// Checkup if every dispaly is showing the same Scene
 	[[nodiscard]] std::optional<std::size_t> displayShiftCount() const
 	{
 		std::optional<std::size_t> shiftCount{};
@@ -213,149 +215,73 @@ public:
 		return shiftCount;
 	}
 
-	// The main Controll function from which every task gets started 
-	void raytraceScene(std::vector<Eigen::MatrixXd>& out_img)
+	[[nodiscard]] std::optional<std::size_t> displayPatternCount() const
 	{
-		const std::size_t rays_per_thread{ 500 };
+		const auto shifts{ displayShiftCount() };
+		if (!shifts.has_value())
+			return std::nullopt;
+		return 2 * shifts.value();
+	}
 
-		if (m_cam.empty()) {
+	// Renders one selected display pattern. For scenes without a Display,
+	// pattern_index must remain zero. Output contains one image per camera.
+	void raytraceScene(
+		std::vector<Eigen::MatrixXd>& out_img,
+		const std::size_t pattern_index = 0)
+	{
+		if (m_cam.empty())
 			throw std::runtime_error("No Camera in the scene");
-			return;
-		}
+
+		validatePatternIndex(pattern_index);
+
 		if (m_mesh.empty()) std::cout << "No object in the scene \n";
 		if (m_light.empty()) std::cout << "No Light sources in the scene \n";
 
 		out_img.clear();
 		out_img.reserve(m_cam.size());
 
-		// Get the instance of ThreadPool
-		ThreadPool& thread_p = ThreadPool::instance();
-		// Create the future Object
-		std::vector<std::shared_future<std::vector<double>>> result_task_All;
-
 		Integrator& integrator{ Integrator::instance() };
 
-		// Work for every Camera seperatly
-		// For each loop and for each camera the world coordiante System must be the camera system
 		for (const auto& cam : m_cam) {
-			// Transform all vertices 
-
-			// Clear the old working Vectors!!!
-			m_workingMeshes.clear();
-			integrator.clear();
-
-			transform_all(cam->getTransform());
-
 			Rays rays{};
-			cam->generateRays(rays);
-
-			// --- Create TraceAbleMeshes from Objects and Lights --- 
-			// TraceAbleMeshes is the Working Class for processing the only holds pointer to the Mesh Data
-			// TraceAbleMesh is the Base Class of BVH. BVH is used to directly create a Bounding Hirachy of the Meshes 
-			// Also Integrator is gets Ptrs to the newly created TraceAbleMeshes and Light instances. 
-			for (const auto& mesh : m_mesh) {
-				m_workingMeshes.emplace_back(std::make_unique<BVH>(mesh.get()));
-			}
-			for (const auto& light_mesh : m_light) {
-				const auto& mesh_opt{ light_mesh->getMesh() };
-				// This is optional since at some Point Spot light might be implemented which should not be tested 
-				if (!mesh_opt.has_value()) {
-					integrator.addLight(light_mesh.get(), nullptr);
-					continue;
-				}
-				const auto& mesh{ mesh_opt.value() };
-				m_workingMeshes.emplace_back(std::make_unique<BVH>(light_mesh.get()));
-				integrator.addLight(light_mesh.get(), m_workingMeshes.back().get());
-			}
-
-			// Ad all Traceable Objects (as ptr) to the Integrator
-			for (const auto& workers : m_workingMeshes) {
-				integrator.addTraceAbleObjects(workers.get());
-			}
-
-			IntegratorSettings integ_set{};
-
-			// Here Some options can be applied to the intergrator by assinging values to Integrator Settings. 
-			integrator.check(std::move(integ_set));
-
-			out_img.push_back(Eigen::MatrixXd());
-			Eigen::MatrixXd& result = out_img.back();
-			result.resize(
-				rays.rows(),
-				rays.cols());
-
-			const std::size_t numberOfRays{
-				static_cast<std::size_t>(rays.size()) };
-
-			const Eigen::Vector3d start = Eigen::Vector3d::Zero();
-
-			auto task = [
-				function = &Scene::castRay,
-				instance_ptr = this,
-				rays_per_thread,
-				&rays,
-				start](const std::size_t start_index) -> std::vector<double>
-				{
-					std::vector<double> results;
-					results.reserve(rays_per_thread);
-
-					const std::size_t end_index =
-						std::min(
-							start_index + rays_per_thread,
-							static_cast<std::size_t>(rays.size())
-						);
-
-					HitProtocol protocoll{};
-
-					for (std::size_t i = start_index; i < end_index; ++i)
-					{
-						const int root_idx{ protocoll.add_root() };
-
-						RayStructure ray{
-							{&rays.data()[i]},
-							{&start}
-						};
-
-						results.push_back(std::invoke(function, instance_ptr, ray, protocoll, root_idx));
-
-						protocoll.clear();
-					}
-					return results;
-				};
-
-			thread_p.start();
-
-
-			for (std::size_t i = 0; i < numberOfRays; i += rays_per_thread) {
-				std::shared_future<std::vector<double>> result =
-					thread_p.queueTask(task, i);
-
-				result_task_All.push_back(std::move(result));
-			}
-
-			thread_p.stop();
-
-			{ // Extract
-				for (std::size_t i = 0; i < result_task_All.size(); ++i) {
-					std::vector<double> task_res = result_task_All[i].get();
-
-					const std::size_t target_counter = i * rays_per_thread;
-
-					std::copy(task_res.begin(), task_res.end(), result.data() + target_counter);
-				}
-			}
-
-			result_task_All.clear();
+			prepareCamera(*cam, rays, integrator);
+			out_img.push_back(renderPreparedRays(rays, pattern_index));
 		}
+	}
 
-		return;
+	// Convenience function for a complete two-orientation phase-shift
+	// sequence. The current geometry transform implementation is destructive,
+	// therefore this method intentionally supports one camera per Scene.
+	// Geometry/BVH setup is performed once; only the display pattern changes.
+	void raytracePhaseShiftSequence(std::vector<Eigen::MatrixXd>& out_img)
+	{
+		if (m_cam.empty())
+			throw std::runtime_error("No Camera in the scene");
+		if (m_cam.size() != 1)
+			throw std::logic_error(
+				"raytracePhaseShiftSequence currently requires exactly one camera");
+
+		const auto patternCount{ displayPatternCount() };
+		if (!patternCount.has_value())
+			throw std::logic_error("No Display in scene for phase-shift rendering");
+
+		out_img.clear();
+		out_img.reserve(patternCount.value());
+
+		Integrator& integrator{ Integrator::instance() };
+		Rays rays{};
+		prepareCamera(*m_cam.front(), rays, integrator);
+
+		for (std::size_t pattern = 0; pattern < patternCount.value(); ++pattern)
+			out_img.push_back(renderPreparedRays(rays, pattern));
 	}
 
 	// Cast Rays into the Scene. Ray and origin point are provided
 	[[nodiscard]] double castRay(
 		RayStructure& ray,
 		HitProtocol& protocol,
-		const int parent_index)
+		const int parent_index,
+		const std::size_t pattern_index)
 	{
 		double closestT = std::numeric_limits<double>::infinity();
 
@@ -402,7 +328,8 @@ public:
 			closestV,
 			closestT,
 			protocol,
-			parent_index);
+			parent_index,
+			pattern_index);
 	}
 
 private:
@@ -413,6 +340,129 @@ private:
 	std::vector<std::unique_ptr<TraceAbleMesh>> m_workingMeshes{ };
 
 
+	void validatePatternIndex(const std::size_t pattern_index) const
+	{
+		const auto count{ displayPatternCount() };
+
+		if (!count.has_value()) {
+			if (pattern_index != 0)
+				throw std::out_of_range("Pattern index requires a Display in the Scene");
+			return;
+		}
+
+		if (pattern_index >= count.value())
+			throw std::out_of_range("Display pattern index out of range");
+	}
+
+	void prepareCamera(
+		const Camera& cam,
+		Rays& rays,
+		Integrator& integrator)
+	{
+		m_workingMeshes.clear();
+		integrator.clear();
+
+		transform_all(cam.getTransform());
+		cam.generateRays(rays);
+
+		for (const auto& mesh : m_mesh)
+			m_workingMeshes.emplace_back(std::make_unique<BVH>(mesh.get()));
+
+		for (const auto& light_mesh : m_light) {
+			const auto mesh_opt{ light_mesh->getMesh() };
+
+			if (!mesh_opt.has_value()) {
+				integrator.addLight(light_mesh.get(), nullptr);
+				continue;
+			}
+
+			m_workingMeshes.emplace_back(std::make_unique<BVH>(light_mesh.get()));
+			integrator.addLight(light_mesh.get(), m_workingMeshes.back().get());
+		}
+
+		for (const auto& worker : m_workingMeshes)
+			integrator.addTraceAbleObjects(worker.get());
+
+		IntegratorSettings settings{};
+		integrator.check(std::move(settings));
+	}
+
+	Eigen::MatrixXd renderPreparedRays(
+		Rays& rays,
+		const std::size_t pattern_index)
+	{
+		validatePatternIndex(pattern_index);
+
+		constexpr std::size_t rays_per_thread{ 500 };
+
+		Eigen::MatrixXd result{};
+		result.resize(rays.rows(), rays.cols());
+
+		const std::size_t numberOfRays{ static_cast<std::size_t>(rays.size()) };
+		const Eigen::Vector3d start{ Eigen::Vector3d::Zero() };
+
+		ThreadPool& thread_p{ ThreadPool::instance() };
+		std::vector<std::shared_future<std::vector<double>>> futures{};
+		futures.reserve((numberOfRays + rays_per_thread - 1) / rays_per_thread);
+
+		auto task = [
+			function = &Scene::castRay,
+			instance_ptr = this,
+			rays_per_thread,
+			&rays,
+			start,
+			pattern_index](const std::size_t start_index) -> std::vector<double>
+		{
+			std::vector<double> results{};
+			results.reserve(rays_per_thread);
+
+			const std::size_t end_index =
+				std::min(
+					start_index + rays_per_thread,
+					static_cast<std::size_t>(rays.size()));
+
+			HitProtocol protocol{};
+
+			for (std::size_t i = start_index; i < end_index; ++i) {
+				const int root_idx{ protocol.add_root() };
+
+				RayStructure ray{
+					{ &rays.data()[i] },
+					{ &start }
+				};
+
+				results.push_back(std::invoke(
+					function,
+					instance_ptr,
+					ray,
+					protocol,
+					root_idx,
+					pattern_index));
+
+				protocol.clear();
+			}
+
+			return results;
+		};
+
+		thread_p.start();
+
+		for (std::size_t i = 0; i < numberOfRays; i += rays_per_thread)
+			futures.push_back(thread_p.queueTask(task, i));
+
+		thread_p.stop();
+
+		for (std::size_t i = 0; i < futures.size(); ++i) {
+			std::vector<double> task_res{ futures[i].get() };
+			const std::size_t target_counter{ i * rays_per_thread };
+			std::copy(task_res.begin(), task_res.end(), result.data() + target_counter);
+		}
+
+		return result;
+	}
+	
+	// This leaves big room for improvement. At this point all objects get destroyed - transformed 
+	// and recreated as TraceAbleMesh. Just Leaf the Objects transform the starting rays. 
 	void transform_all(const Eigen::Matrix4d& cam_transform) {
 		for (auto& obj : m_mesh) {
 			obj->applyTransform(cam_transform);
@@ -430,7 +480,8 @@ private:
 		const double& v,
 		const double& t,
 		HitProtocol& protocol,
-		const int parent_index)
+		const int parent_index,
+		const std::size_t pattern_index)
 	{
 		const std::complex<double> refractive{
 			TriangularMesh::get_Barycentric_Interpolated_refractive_index(
@@ -459,62 +510,60 @@ private:
 
 		Eigen::Vector3d newOrigin =
 			hitPoint + ray_epsilon * vert_normal.normalized();
-
-		// Hardcoded Display Image !!! 
+ 
 		if (closestObj->m_info->emitter == true) {
 
-			const Eigen::Vector2d texture_coord{ TriangularMesh::get_Texture_Coord(
-				*closestTri->vertex[0].uv_Vertice,
-				*closestTri->vertex[1].uv_Vertice,
-				*closestTri->vertex[2].uv_Vertice,
-				u,
-				v)
+			const Eigen::Vector2d texture_coord{
+				TriangularMesh::get_Texture_Coord(
+					*closestTri->vertex[0].uv_Vertice,
+					*closestTri->vertex[1].uv_Vertice,
+					*closestTri->vertex[2].uv_Vertice,
+					u,
+					v)
 			};
 
 			auto optLight{ closestObj->getLight() };
-			if (!optLight.has_value())
-				throw std::logic_error("Emitter mesh is not associated with a Light instance");
+			auto light_ptr{ optLight.value() };
 
-			const auto light_ptr{ optLight.value() };
+			const double light_Brightness{
+				light_ptr->get_local_Texture(texture_coord, pattern_index)
+			};
 
-			// Schlick is used directly here to avoid a heap allocation for every hit.
-			Schlick_Approximation schlick{ 1.0, refractive };
-			const double scalingBRDF{ schlick(cos_theta) };
-			// Local Brightness in [0...1] 
-			const double light_Brightness{ light_ptr->get_local_Texture(texture_coord, 0) };
-			// Return maxLightPower * Angle- * Brightness IF the light is modular
-
-			int new_idx = protocol.add_node(parent_index, scalingBRDF);
-
-			if (protocol.should_abort(new_idx, m_config.min_scaling_factor, m_config.max_intersections)) {
-				return 0.0;
-			}
-
-			return light_ptr->m_info.m_power * scalingBRDF * light_Brightness;
+			return light_ptr->m_info.m_power * light_Brightness;
 		}
 
-		Eigen::Vector3d reflected = reflect_ray(
-			*ray.dir,
-			vert_normal);
-
-		ray.dir = &reflected;
-		ray.origin = &newOrigin;
 
 		if (closestObj->m_info->specular)
 		{
+			Eigen::Vector3d reflected{
+				reflect_ray(*ray.dir, vert_normal)
+			};
+
+			RayStructure reflectedRay{
+				{ &reflected },
+				{ &newOrigin }
+			};
+
 			Schlick_Approximation schlick{ 1.0, refractive };
-			const double scaling_BRDF{ schlick(cos_theta) };
-			// In this case Fine, but also a bit dangerous since there is no stopping condition!!! 
+			const double scaling_BRDF{
+				schlick(cos_theta)
+			};
 
 			int new_idx = protocol.add_node(parent_index, scaling_BRDF);
 
-			if (protocol.should_abort(new_idx, m_config.min_scaling_factor, m_config.max_intersections))
+			if (protocol.should_abort(
+				new_idx,
+				m_config.min_scaling_factor,
+				m_config.max_intersections))
+			{
 				return 0.0;
+			}
 
 			return scaling_BRDF * castRay(
-				ray,
+				reflectedRay,
 				protocol,
-				new_idx
+				new_idx,
+				pattern_index
 			);
 		}
 
@@ -522,27 +571,23 @@ private:
 		{
 			Integrator& instance = Integrator::instance();
 
-			const double scattered_scaling = closestObj->m_info->m_diffuse_settings.reflectivity_scattered;
+			const Eigen::Vector3d outgoing_dir{
+				(-*ray.dir).normalized()
+			};
 
-			const double direct_light_scaling = closestObj->m_info->m_diffuse_settings.reflectivity_direct;
+			if (closestTri->diffuse_settings == nullptr)
+				throw std::logic_error("Diffuse triangle has no material settings");
 
-			int scattered_index = protocol.add_node(parent_index, scattered_scaling);
-
-			double scattered{ protocol.should_abort(
-				scattered_index,
-				m_config.min_scaling_factor,
-				m_config.max_intersections) ? (0.0) : instance.evaluate(newOrigin, closestTri, cos_theta) };
-
-			int direct_index = protocol.add_node(parent_index, direct_light_scaling);
-
-			double direct{ protocol.should_abort(
-				direct_index,
-				m_config.min_scaling_factor,
-				m_config.max_intersections) ? (0.0) : castRay(ray, protocol, direct_index) };
-
-			return scattered_scaling * scattered + direct_light_scaling * direct;
-
+			return instance.evaluate(
+				newOrigin,
+				closestTri,
+				vert_normal,
+				outgoing_dir,
+				*closestTri->diffuse_settings,
+				pattern_index
+			);
 		}
+
 		return 0.0;
 	}
 
