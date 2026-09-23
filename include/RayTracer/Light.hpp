@@ -37,8 +37,11 @@ public:
 
 class Light {
 public:
-	Light() = default;
-
+	Light(const double& power = 255.0)
+	{
+		m_info.m_power = power;
+	}
+		
 	virtual ~Light() = default;
 
 	virtual void applyTransform(const Eigen::Matrix4d&) = 0;
@@ -74,6 +77,22 @@ public:
 class AreaLight : public Light{
 public:
 	explicit AreaLight(
+		std::unique_ptr<TriangularMesh>&& mesh,
+		const double& power)
+		: Light(power)
+		, m_mesh{ std::move(mesh) }
+	{
+		if (m_mesh == nullptr)
+			throw std::invalid_argument("AreaLight received nullptr mesh");
+
+		// Wrapper for the Mesh Transformation
+		m_info.add_Transform(&m_mesh->m_transform);
+		m_mesh->m_info.diffuse = false;
+		m_mesh->m_info.specular = false;
+		m_mesh->m_info.emitter = true;
+	}
+
+	explicit AreaLight(
 		std::unique_ptr<TriangularMesh>&& mesh)
 		: Light()
 		, m_mesh{ std::move(mesh) }
@@ -90,6 +109,17 @@ public:
 
 	~AreaLight() override = default;
 
+	static std::unique_ptr<AreaLight> generateSimpleAreaLight(
+		const double& height,
+		const double& width,
+		const double& luminance
+	)
+	{
+		auto mesh = TriangularMesh::generateSquare(height, width);
+		
+		return std::make_unique<AreaLight>(std::move(mesh), luminance);
+	}
+	
 	bool is_Display() const override { return false; }
 
 	std::optional<std::size_t> n_display_shifts() const noexcept override {

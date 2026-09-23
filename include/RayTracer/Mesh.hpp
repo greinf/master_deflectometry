@@ -293,6 +293,76 @@ public:
 		:Mesh()
 	{ }
 
+	// Method for creating fast a Sqare surface. 
+	// Only vertices and connectivity is set
+	[[nodiscard]] static std::unique_ptr<TriangularMesh> generateSquare(
+		const double& height,
+		const double& width)
+	{
+		if (height <= 0.0 || width <= 0.0)
+			throw std::invalid_argument("Height width must be bigger than zero");
+
+		std::unique_ptr<Vertice[]> vertices{
+			std::make_unique<Vertice[]>(4)
+		};
+
+		std::unique_ptr<Eigen::Vector3d[]> vert_normal{
+			std::make_unique<Eigen::Vector3d[]>(4)
+		};
+
+		std::unique_ptr<std::uint32_t[]> indices{
+			std::make_unique<std::uint32_t[]>(6)
+		};
+
+		std::unique_ptr<std::uint32_t[]> n_ver_per_surf{
+			std::make_unique<std::uint32_t[]>(2)
+		};
+
+		vertices[0].pos = Eigen::Vector3d(0.0, 0.0, 0.0);
+		vertices[1].pos = Eigen::Vector3d(0.0, height, 0.0);
+		vertices[2].pos = Eigen::Vector3d(width, height, 0.0);
+		vertices[3].pos = Eigen::Vector3d(width, 0.0, 0.0);
+
+		const auto z_unit = Eigen::Vector3d::UnitZ();
+
+		vert_normal[0] = z_unit;
+		vert_normal[1] = z_unit;
+		vert_normal[2] = z_unit;
+		vert_normal[3] = z_unit;
+
+		indices[0] = 0;
+		indices[1] = 1;
+		indices[2] = 2;
+		indices[3] = 0;
+		indices[4] = 2;
+		indices[5] = 3;
+
+		n_ver_per_surf[0] = 3;
+		n_ver_per_surf[1] = 3;
+
+		const std::uint32_t n_surfaces{ 2 };
+		const std::uint32_t n_vertices{ 4 };
+
+		ObjectInfo info{};
+		info.closed = false;
+		info.diffuse = false;
+		info.emitter = false;
+		info.specular = false;
+
+		return std::make_unique<TriangularMesh>(
+			std::move(vertices),
+			std::move(nullptr),
+			std::move(indices),
+			std::move(n_ver_per_surf),
+			n_vertices,
+			n_surfaces,
+			info,
+			Eigen::Matrix4d::Identity()
+		);
+	}
+
+
+
 	[[nodiscard]] static Eigen::Vector2d get_Texture_Coord(
 		const Eigen::Vector2d& v0,
 		const Eigen::Vector2d& v1,
@@ -581,7 +651,7 @@ public:
 					Eigen::Vector2d{ u, v };
 
 				normals[vertices_index] =
-					Eigen::Vector3d{ 0.0, 0.0, 1.0 };
+					Eigen::Vector3d{ 0.0, 0.0, -1.0 };
 
 				++vertices_index;
 			}
@@ -592,6 +662,7 @@ public:
 
 		std::size_t indices_index{ 0 };
 
+		// Vertices per Row
 		const std::size_t rowLength =
 			squares_x + 1;
 
@@ -599,6 +670,7 @@ public:
 		{
 			for (std::size_t x = 0; x < squares_x; ++x)
 			{
+				// Four Indices per Square (Checkerboard)
 				const std::size_t ulc =
 					x + y * rowLength;
 
@@ -624,10 +696,10 @@ public:
 					static_cast<std::uint32_t>(ulc);
 
 				indices[indices_index++] =
-					static_cast<std::uint32_t>(drc);
+					static_cast<std::uint32_t>(dlc);
 
 				indices[indices_index++] =
-					static_cast<std::uint32_t>(dlc);
+					static_cast<std::uint32_t>(drc);
 
 
 				// Triangle 2, winding -> +z
@@ -635,10 +707,10 @@ public:
 					static_cast<std::uint32_t>(ulc);
 
 				indices[indices_index++] =
-					static_cast<std::uint32_t>(urc);
+					static_cast<std::uint32_t>(drc);
 
 				indices[indices_index++] =
-					static_cast<std::uint32_t>(drc);
+					static_cast<std::uint32_t>(urc);
 
 
 				verticesPerSurface[triangleIndex] = 3;

@@ -82,6 +82,10 @@ public:
 		return m_cameraMatrix->m_transform;
 	}
 
+	static std::pair<int, int> G507_B_SensorDimesnions() noexcept {
+		return std::pair<int, int>{2464, 2056};
+	}
+
 	std::unique_ptr<Sensor> m_sensorCoords{ nullptr };
 
 	SamplingSetting m_setting{};

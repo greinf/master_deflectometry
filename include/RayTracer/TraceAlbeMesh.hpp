@@ -61,7 +61,12 @@ public:
 		auto opt = light->getMesh();
 		if (opt.has_value()) m_mesh = opt.value();
 		else throw std::runtime_error("Light is not traceable");
-		build();
+		try {
+			build();
+		}
+		catch (const std::exception& exp) {
+			std::cout << "EXCEPTION: " << exp.what() << std::endl;
+		}
 	}
 
 	TraceAbleMesh(
@@ -210,9 +215,12 @@ private:
 		auto n_surfaces{ static_cast<std::size_t>(m_mesh->m_n_surfaces) };
 
 		if (n_surfaces == 0) throw std::invalid_argument("Empty Mesh given");
-
-		m_triangle = std::unique_ptr<Triangle[]>(new Triangle[n_surfaces]);
-
+		try {
+			m_triangle = std::make_unique<Triangle[]>(n_surfaces);
+		}
+		catch (const std::exception& e) {
+			std::cout << "EXCEPTION: " << e.what() << std::endl;
+		}
 		m_n_triangles = n_surfaces;
 
 		if (m_mesh->m_area == nullptr) {
