@@ -117,10 +117,19 @@ namespace Protocoll {
                     result.push_back(entry.path());
             }
             
-            // Names start with 000_, 001_, ... so lexical sort restores build order.
+            // Numeric prefix order also works after setup 999.
             std::sort(result.begin(), result.end(),
                 [](const fs::path& lhs, const fs::path& rhs) {
-                    return lhs.filename().string() < rhs.filename().string();
+                    auto key = [](const fs::path& p) {
+                        const auto name = p.filename().string();
+                        const auto separator = name.find('_');
+                        const auto prefix = name.substr(0, separator);
+                        if (prefix.empty() || !std::all_of(prefix.begin(), prefix.end(),
+                            [](unsigned char c) { return std::isdigit(c); }))
+                            throw std::runtime_error("Setup directory has no numeric ID: " + name);
+                        return std::make_pair(std::stoull(prefix), name);
+                    };
+                    return key(lhs) < key(rhs);
                 });
 
             return result;
@@ -158,6 +167,16 @@ namespace Protocoll {
 
             if (setup_directories.size() != protocols.size())
                 throw std::runtime_error("Protocol count does not match setup-directory count");
+
+            // Check ALL destinations before overwriting ANY payload. Matching by
+            // position alone is unsafe after callers reorder/filter protocols.
+            for (std::size_t i = 0; i < protocols.size(); ++i) {
+                const auto xml = (setup_directories[i] / protocol_xml_name).string();
+                if (!(CameraData::read(xml) == protocols[i].m_camera) ||
+                    !(CalibrationData::read(xml) == protocols[i].m_calibration) ||
+                    !protocols[i].validAndSet())
+                    throw std::runtime_error("Refusing mismatched/incomplete simulation writeback");
+            }
 
             for (std::size_t i = 0; i < protocols.size(); ++i) {
                 const fs::path binary_path =

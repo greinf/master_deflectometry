@@ -1,206 +1,207 @@
-﻿#define VERSION "1"
-#include <cstddef>
+#include "RayTracer/SyntheticCalibration.hpp"
+#include "RayTracer/CalibrationCallAble.hpp"
+#include "RayTracer/ProtocollBatchIO.hpp"
+
 #include <iostream>
-#include <ImageStore.hpp>
-#include <Eigen/Dense>
-#include <opencv2/core/eigen.hpp> // Must include this header
-#include "Scene.hpp"
-#include "Utils.hpp"
-#include "SyntheticCalibration.hpp"
-#include "CalibrationCallAble.hpp"
 
-auto showNormalized2Channel = [](const cv::Mat& img, const std::string& winName = "Roflcopter")
-    {
-        CV_Assert(img.type() == CV_64FC2);
+//int main() {
+//    try {
+//        const double magnification =
+//            (2464.0 * 0.00345 / 1.5) / (30.0 * 12.0);
+//
+//        SyntheticCalibration generator;
+//
+//        generator.build(
+//            magnification,
+//            { &Protocoll::CameraData::C5028_M },
+//            {},                    // Nur Nullverzeichnung
+//            5,                    // Anzahl der Ansichten
+//            SamplingSetting{ 1, 1 },
+//            CV_PI / 4.0,
+//            { 12, 9 },               // Quadrate des Schachbretts
+//            30.0,                  // Quadratseite in mm
+//            16.0,
+//            { 2464, 2056 },
+//            0.00345,
+//            60.0,
+//            { 0.0, 0.0 },
+//            { 11, 15 },
+//            42ULL
+//        );
+//
+//        auto protocols = generator.calibrations();
+//
+//        Protocoll::BatchIO::renderAll(protocols, Tracing_CallAble);
+//
+//        protocols.front().m_simulation.showAll();
+//
+//        return 0;
+//    }
+//    catch (const std::exception& e) {
+//        std::cerr << e.what() << '\n';
+//        return 1;
+//    }
+//}
+//
+// Replace the current diagnostic main.cpp with this file for this run.
+// Requires the corrected RayTracer headers AND corrected CameraCalibration.cpp.
+#include "RayTracer/SyntheticCalibration.hpp"
+#include "RayTracer/CalibrationCallAble.hpp"
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
 
-        std::vector<cv::Mat> channels(2);
-        cv::split(img, channels);   // -> channels[0] = X, channels[1] = Y
+namespace fs = std::filesystem;
 
-        cv::Mat normX, normY;
-        cv::normalize(channels[0], normX, 0, 255, cv::NORM_MINMAX);
-        cv::normalize(channels[1], normY, 0, 255, cv::NORM_MINMAX);
+static std::string number(size_t i) {
+    std::ostringstream s; s << std::setw(3) << std::setfill('0') << i;
+    return s.str();
+}
 
-        // Optional 3rd channel = zero for visualization
-        cv::Mat zero = cv::Mat::zeros(img.rows, img.cols, CV_64F);
+static bool report(const fs::path& path, const MonoCalibrationResult& r,
+    const cv::Mat& kGT, const cv::Mat& dGT,
+    const std::vector<int>& accepted, const CalibrationConfig& c) {
+    cv::FileStorage out(path.string(), cv::FileStorage::WRITE);
+    if (!out.isOpened()) throw std::runtime_error("Cannot write " + path.string());
+    out << "success" << int(r.success) << "error" << r.errorMessage;
+    out << "K_GT" << kGT << "D_GT" << dGT << "K_estimated" << r.cameraMatrix;
+    out << "D_estimated" << r.distCoeffs << "RMS" << r.avgReprojectionError;
+    out << "optimizer_RMS" << r.optimizerRms << "flags" << r.calibrationFlags;
+    out << "accepted_indices" << accepted << "SB" << int(c.useSBDetector);
+    out << "kernel_bias" << c.preprocessingKernelBias;
+    out << "max_iterations" << c.maxIterations << "epsilon" << c.epsilon;
+    std::cout << "\n" << path.filename().string() << ": " << accepted.size()
+        << " accepted views; RMS=" << r.avgReprojectionError << '\n';
+    if (r.success) {
+        cv::Mat delta = r.cameraMatrix - kGT;
+        out << "delta_K" << delta;
+        std::cout << "K_GT:\n" << kGT << "\nK:\n" << r.cameraMatrix
+            << "\ndelta_K:\n" << delta << '\n';
+    }
+    else std::cerr << r.errorMessage << '\n';
+    return r.success;
+}
 
-        cv::Mat merged;
-        cv::merge(std::vector<cv::Mat>{normX, normY, zero}, merged); // 3-Channel Float
+int main() {
 
-        cv::Mat display8u;
-        merged.convertTo(display8u, CV_8UC3);
+    std::filesystem::path path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-10-28_DistortionCalibration/Test/test.csv" };
 
-        cv::imshow(winName, display8u);
-        cv::waitKey(0);
-    };
+    CameraCalibration::_TestDistortionCalibrationConfig config{};
+    config.add_noise = false;
+    config.stddev_noise = 0.4;
+    config.p1 = 0.1;
+    config.p2 = 0.1;
 
-auto shownormalized = [](const cv::Mat& d) {
-    cv::Mat img;
-    cv::normalize(d, img, 0, 255, cv::NORM_MINMAX, CV_8U);
-
-    // Erlaubt das freie Skalieren des Fensters per Maus
-    cv::namedWindow("norm", cv::WINDOW_NORMAL);
-
-    cv::imshow("norm", img);
-    cv::waitKey(0);
-    };
+    CameraCalibration::_TestDistortionCalibration(config, {}, path);
 
 
-int main() 
-{
-    // Suppress INFO messages, only show WARNING and ERROR
-    cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_WARNING);
+    //try {
+    //    // EDIT THIS ONE PATH. Each run creates a NEW subdirectory.
+    //    const fs::path root = R"(C:\Users\grein\Desktop\SyntheticCalibration_50mm)";
+    //    constexpr size_t views = 10;
+    //    const cv::Size imageSize{ 2464, 2056 };
+    //    const SamplingSetting samples{ 1, 1 };
+    //    const double magnification = (2464.0 * 0.00345 / 1.75) / (30.0 * 12.0);
 
-    const std::string& path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-05-25_CameraCalibration_useGuessIntrinsic/Stereo_Calib.xml" };
-    ImageStore img_store{};
-    
+    //    SyntheticCalibration generator;
+    //    // Only 50 mm, zero distortion: no matching to another objective.
+    //    generator.build(magnification, { &Protocoll::CameraData::C5028_M }, {},
+    //        views, samples, CV_PI / 4.0, { 12, 9 }, 30.0, 16.0,
+    //        { imageSize.width, imageSize.height }, 0.00345, 60.0,
+    //        { 0.0, 0.0 }, { 11, 15 }, 42ULL);
+    //    auto protocol = generator.calibrations().front();
+    //    fs::create_directories(root);
+    //    fs::path directory;
+    //    for (size_t i = 0;; ++i) {
+    //        directory = root / ("C5028_M_4x4_" + number(i));
+    //        if (fs::create_directory(directory)) break;
+    //    }
+    //    std::cout << "Output: " << directory << '\n';
+    //    // Saves XML and validates V2 metadata/platform before streaming images.
+    //    protocol.saveProtocol(directory);
+    //    fs::create_directory(directory / "previews");
 
-    double image_scale{ (2464.0 * 3.45e-3 / 1.75 ) / (30.0 * 12) };
+    //    cv::Mat kGT, dGT;
+    //    cv::eigen2cv(protocol.m_camera.intrinsicMatrix, kGT);
+    //    cv::eigen2cv(protocol.m_camera.distortionCoefficients, dGT);
+    //    CalibrationConfig c;
+    //    c.boardSize = { 11, 8 }; c.squareSize = 30.0f;
+    //    c.zeroTangentDist = true; c.fixK1 = c.fixK2 = c.fixK3 = true;
+    //    c.fixAspectRatio = false; c.useIntrinsicGuess = true;
+    //    c.preprocessingKernelBias = 2; // s=4 -> odd Gaussian kernel 7, then AREA.
+    //    auto exactPoints = SyntheticCalibration::projectGroundTruthCorners(protocol);
+    //    std::vector<int> all;
+    //    for (size_t i = 0; i < views; ++i) all.push_back(static_cast<int>(i));
+    //    auto exact = CameraCalibration::calibrateMonoSyn(exactPoints, c, kGT, dGT, imageSize);
+    //    if (!report(directory / "exact.xml", exact, kGT, dGT, all, c))
+    //        throw std::runtime_error("Exact calibration failed; rendering cancelled");
 
-    SamplingSetting sample{ 5, 5 };
-
-    std::filesystem::path d{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/SyntheticCalibration/" };
-    
-    SyntheticCalibration raycastingCalibration{};
-
-    std::vector<const Protocoll::CameraData::ObjectiveData*> objectives{ {
-            //&Protocoll::CameraData::C2514_M,
-            //&Protocoll::CameraData::C3516_M
-            &Protocoll::CameraData::C5028_M
-            //&Protocoll::CameraData::C7528_M
-            }
-    };
-
-    Eigen::VectorXd dist = (Eigen::VectorXd(5) <<
-        -1.0, 2.0, 0.0, 0.0, 0.0).finished();
-    
-    raycastingCalibration.build(
-        image_scale,
-        objectives,
-        {},
-        15,
-        sample
-    );
-
-    std::vector<Protocoll::SimulationProtocoll> protocoll = raycastingCalibration.calibrations();
-
-    Protocoll::BatchIO::renderAll(protocoll, Tracing_CallAble);
-
-    Protocoll::BatchIO::saveAll(protocoll, d);
-
-    protocoll[0].m_simulation.showAll();
-
-    //std::vector<Protocoll::SimulationProtocoll> protocoll_{ Protocoll::BatchIO::loadAll(d) };
-
-    //if (protocoll_.size() != protocoll.size()) {
-    //    std::cout << "wait\n";
+    //    // V2 streaming uses the same layout as corrected Simulation::save().
+    //    // Keep one raw image in RAM; do not retain 20 raw 4x4 images.
+    //    const fs::path partial = directory / "Binary.bin.partial";
+    //    std::ofstream binary(partial, std::ios::binary);
+    //    if (!binary) throw std::runtime_error("Cannot open raw image output");
+    //    binary << "RayTracerSimulationV2\n" << samples.samples_x << ' '
+    //        << samples.samples_y << ' ' << imageSize.width << ' '
+    //        << imageSize.height << " 1 " << views
+    //        << "\nIEEE754_LE_COLUMN_MAJOR_F64\n";
+    //    std::vector<std::vector<cv::Point2f>> points[2];
+    //    std::vector<int> indices[2];
+    //    for (size_t i = 0; i < views; ++i) {
+    //        std::cout << "\nRendering " << i + 1 << '/' << views << "\n" << std::flush;
+    //        auto& rawImages = protocol.m_simulation.m_simulated_images;
+    //        rawImages.clear();
+    //        Tracing_CallAble(protocol, 0, i);
+    //        if (rawImages.size() != 1) throw std::runtime_error("Expected one image");
+    //        const auto& raw = rawImages.front();
+    //        protocol.m_simulation.validateImage(raw);
+    //        binary << "BinaryImage\n" << raw.rows() << ' ' << raw.cols() << " double\n";
+    //        binary.write(reinterpret_cast<const char*>(raw.data()),
+    //            static_cast<std::streamsize>(raw.size()) * sizeof(double));
+    //        binary << "\n\n";
+    //        binary.flush();
+    //        if (!binary) throw std::runtime_error("Raw image write failed (disk full?)");
+    //        cv::Mat image;
+    //        cv::eigen2cv(protocol.m_simulation.prepareImageforProcessing(raw,
+    //            c.preprocessingKernelBias), image);
+    //        image = CameraCalibration::toGray8(image);
+    //        const auto preview = directory / "previews" / ("image_" + number(i) + ".png");
+    //        if (!cv::imwrite(preview.string(), image)) throw std::runtime_error("PNG write failed");
+    //        for (int detector = 0; detector < 2; ++detector) {
+    //            std::vector<cv::Point2f> corners;
+    //            const bool found = CameraCalibration::detectChessboardCorners(
+    //                image, c.boardSize, corners, c.subPixWindow, detector == 1);
+    //            const std::string name = detector ? "SB" : "classic";
+    //            std::cout << name << ": " << (found ? "OK" : "FAILED") << '\n';
+    //            if (found) { indices[detector].push_back(static_cast<int>(i)); points[detector].push_back(corners); }
+    //            cv::Mat overlay; cv::cvtColor(image, overlay, cv::COLOR_GRAY2BGR);
+    //            cv::drawChessboardCorners(overlay, c.boardSize, corners, found);
+    //            if (!cv::imwrite((directory / "previews" /
+    //                (name + "_" + number(i) + ".png")).string(), overlay))
+    //                throw std::runtime_error("Overlay write failed");
+    //        }
+    //        rawImages.clear();
+    //    }
+    //    binary.close();
+    //    if (!binary) throw std::runtime_error("Raw image close failed");
+    //    fs::remove(directory / "Binary.bin"); // replace only our own empty placeholder
+    //    fs::rename(partial, directory / "Binary.bin");
+    //    bool anySuccess = false;
+    //    for (int detector = 0; detector < 2; ++detector) {
+    //        c.useSBDetector = detector == 1;
+    //        auto result = CameraCalibration::calibrateMonoSyn(points[detector], c, kGT, dGT, imageSize);
+    //        anySuccess |= report(directory / (detector ? "images_SB.xml" : "images_classic.xml"),
+    //            result, kGT, dGT, indices[detector], c);
+    //    }
+    //    std::cout << "\nSaved V2 dataset and previews: " << directory << '\n';
+    //    return anySuccess ? 0 : 2;
     //}
-
-    //for (std::size_t i = 0; i < protocoll_.size(); ++i) {
-    //    if (!(protocoll[i] == protocoll_[i]))
-    //        std::cout << i << "Failed \n";
+    //catch (const std::exception& e) {
+    //    std::cerr << "ERROR: " << e.what() << '\n';
+    //    return 1;
     //}
-   
-    //// auto protocol = Protocoll::BatchIO::loadAll(d);
-
-    //// protocoll[0].m_simulation.showAll();
-
-    //// protocoll[1].m_simulation.showAll();
-
-    //std::cout << "Readout \n";
-    
-    //std::unique_ptr<TriangularMesh> parabolical_mirror{ PolygonMesh::ParabolicalMirror(
-    //    1600.0,
-    //    200.0,
-    //    10)->convert2Triangular() };
-
-    //Eigen::Matrix4d mirror_trans =
-    //    (Eigen::Matrix4d() << -1, 0, 0, 0,
-    //        0, 1, 0, 0,
-    //        0, 0, -1, 3700,
-    //        0, 0, 0, 1).finished();
-
-    ///* Eigen::Matrix4d mirror_trans1 =
-    //    (Eigen::Matrix4d() <<
-    //        std::cos(CV_PI * 0.99), 0.0, std::sin(CV_PI * 0.99), 0.0,
-    //        0.0, 1.0, 0.0, 0.0,
-    //        -std::sin(CV_PI * 0.99), 0.0, std::cos(CV_PI * 0.99), 4000.0
-    //        ).finished(); */
-
-    //parabolical_mirror->addTransform(mirror_trans);
-
-    //// raycasting.addObject(std::move(parabolical_mirror));
-
-    //std::unique_ptr<TriangularMesh> tubus{ PolygonMesh::TelsecopeTubus(
-    //    1100,
-    //    500,
-    //    0.8,
-    //    0.1,
-    //    10)->convert2Triangular() };
-
-    // tubus->addTransform(tubus_trans);
-
-    // raycasting.addObject(std::move(tubus));
-
-    /*Eigen::Matrix4d board_trans =
-            (Eigen::Matrix4d() <<
-                std::cos(CV_PI * 0.7), 0.0, std::sin(CV_PI * 0.7), 0.0,
-                0.0, 1.0, 0.0, 0.0,
-                -std::sin(CV_PI * 0.7), 0.0, std::cos(CV_PI * 0.7), 4000.0,
-                0, 0, 0, 1
-                ).finished();
-
-    board->addTransform(board_trans);
-
-    raycasting.addObject(std::move(board));*/
-
-    //constexpr double width = 1920.0 * 0.2745;
-    //constexpr double height = 1080.0 * 0.2745;
-
-    //const double z = 0.0;
-
-    //Eigen::Matrix4d display_trans =
-    //    (Eigen::Matrix4d() <<
-    //        1, 0, 0, -width / 2.0,
-    //        0, 1, 0, - height / 2.0,
-    //        0, 0, 1, z,
-    //        0, 0, 0, 1
-    //        ).finished();
-
-    //std::unique_ptr<TriangularMesh> displayMesh{ PolygonMesh::Display()->convert2Triangular() };
-
-    //displayMesh->addTransform(display_trans);
-
-    //std::unique_ptr<Display> display{ new Display(
-    //    std::move(displayMesh),
-    //    1920,
-    //    1080,
-    //    0.2745,
-    //    108*0.2745,
-    //    4
-    //) };
-
-    //display->m_info.m_power = 220.0;
-
-    //raycasting.addLight(std::move(display));
-
-    return 0;
 }
 
 
-/*
-    open3d::geometry::TriangleMesh mesh(*tubus);
-
-    auto tubus_mesh_ptr = std::make_shared<open3d::geometry::TriangleMesh>(mesh);
-
-    open3d::visualization::DrawGeometries({ tubus_mesh_ptr }, "Custom Mesh Window");
-*/
-
-/*img_store.loadRoleXML(FrameRole::CalibrationMatrix, path);
-
-    std::vector<cv::Mat> camMat{ img_store.get(FrameRole::CalibrationMatrix) };
-    std::vector<cv::Mat> distCoeffs{ img_store.get(FrameRole::DistortionCoeff) };
-
-
-    camMat[0].at<double>(0, 2) = 2464.0 / 2;
-    camMat[0].at<double>(1, 2) = 2056.0 / 2;
-    distCoeffs[0] = cv::Mat(distCoeffs[0].size(), CV_64F, cv::Scalar(0.0));*/

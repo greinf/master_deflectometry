@@ -9,29 +9,116 @@
 #include <cstdint>
 #include <stdexcept>
 #include <random>
-#include <Eigen/dense>
+#include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 
 
+
+
+
 class SyntheticCalibration {
 public:
+
+   
 
     struct PoseMatchQuality {
         double rms_px{};
         double max_px{};
     };
 
-    static void doSyntheticCalibration(
-        const std::vector<Protocoll::SimulationProtocoll>& protocoll)
-    {
+    static void protocoll_Vector_check(const std::vector<Protocoll::SimulationProtocoll>& protocoll) {
         if (protocoll.empty()) throw std::invalid_argument("Protocoll contains no Data");
-        if (std::all_of(protocoll.begin(), protocoll.end(), 
-            [](const Protocoll::SimulationProtocoll& protocoll) -> bool {
-                return protocoll.validAndSet();
+        if (protocoll.size() == 1) std::cout << "WARNING: Container only has one entry \n";
+        if (!std::all_of(protocoll.begin(), protocoll.end(),
+            [](const Protocoll::SimulationProtocoll& protocoll_) -> bool {
+                return protocoll_.validAndSet();
             })) throw std::invalid_argument("Protocoll data is not fully set");
 
+        auto size = protocoll.front().m_simulation.m_simulated_images.size();
+        // We expect in every protocoll the same ammount of images
+        if (std::any_of(protocoll.begin(), protocoll.end(),
+            [&size](const Protocoll::SimulationProtocoll& protocoll_) -> bool {
+                return size != protocoll_.m_simulation.m_simulated_images.size();
+            })) throw std::invalid_argument("Protocolls have varying ammount of images");
 
+        return;
+    }
+
+    
+
+    // It might be helpfull at some point to introdcue a SyntehticCalibratinConfig to define preprocessing
+    static MonoCalibrationResult doSyntheticCalibration(
+        Protocoll::SimulationProtocoll& protocol,
+        const std::pair<cv::Mat, cv::Mat>& guess,
+        const CalibrationConfig& config)
+    {
+        if (!protocol.m_simulation.metadata_explicit)
+            throw std::runtime_error("Old Binary.bin has no sampling metadata: call setLegacyMetadata first");
+        if (!protocol.validAndSet() || !config.isValid())
+            throw std::invalid_argument("Invalid protocol/calibration configuration");
+        const auto& board = protocol.m_calibration;
+        if (config.boardSize != cv::Size(board.pattern_x - 1, board.pattern_y - 1) ||
+            std::abs(config.squareSize - board.pattern_width) > 1e-6 * board.pattern_width)
+            throw std::invalid_argument("Detector grid/square size does not match rendered board");
+
+        std::vector<std::vector<cv::Point2f>> points;
+        std::vector<int> accepted, rejected;
+        cv::Size size;
+        const auto& simulation = protocol.m_simulation;
+        // Do not materialize a second complete image stack.
+        for (size_t i = 0; i < simulation.m_simulated_images.size(); ++i) {
+            const Eigen::MatrixXd prepared = simulation.prepareImageforProcessing(
+                simulation.m_simulated_images[i], config.preprocessingKernelBias);
+            cv::Mat image; cv::eigen2cv(prepared, image);
+            if (size.empty()) size = image.size();
+            if (image.size() != size) throw std::runtime_error("Mixed prepared image resolutions");
+            std::vector<cv::Point2f> corners;
+            if (!CameraCalibration::detectChessboardCorners(image, config.boardSize, corners,
+                config.subPixWindow, config.useSBDetector)) {
+                rejected.push_back(static_cast<int>(i));
+                std::cerr << "Detection failed: original pose/image " << i << '\n';
+                continue;
+            }
+            accepted.push_back(static_cast<int>(i));
+            points.push_back(std::move(corners));
+        }
+        auto result = CameraCalibration::calibrateMonoSyn(points, config, guess.first, guess.second, size);
+        result.acceptedImageIndices = std::move(accepted);
+        result.rejectedImageIndices = std::move(rejected);
+        return result;
+    }
+
+    // Analytic round-trip control, without rasterization/lighting/detection.
+    // Renderer origin: first OUTER board corner. Calibrator origin: first
+    // INNER corner. That fixed offset affects extrinsics, never K.
+    static std::vector<std::vector<cv::Point2f>> projectGroundTruthCorners(
+        const Protocoll::SimulationProtocoll& protocol)
+    {
+        if (!protocol.m_camera.validAndSet() || !protocol.m_calibration.validAndSet())
+            throw std::invalid_argument("Invalid camera or board/pose metadata");
+        const auto& board = protocol.m_calibration;
+        std::vector<cv::Point3d> objects;
+        for (int y = 1; y < board.pattern_y; ++y)
+            for (int x = 1; x < board.pattern_x; ++x)
+                objects.emplace_back(x * board.pattern_width, y * board.pattern_width, 0);
+        cv::Mat k, d;
+        cv::eigen2cv(protocol.m_camera.intrinsicMatrix, k);
+        if (protocol.m_camera.distortionCoefficients.size())
+            cv::eigen2cv(protocol.m_camera.distortionCoefficients, d);
+        std::vector<std::vector<cv::Point2f>> points;
+        for (const auto& pose : board.translationMatrix) {
+            const Eigen::Matrix3d rotation = pose.block<3, 3>(0, 0);
+            const Eigen::Vector3d translation = pose.block<3, 1>(0, 3);
+            cv::Mat r, rv, t; cv::eigen2cv(rotation, r); cv::eigen2cv(translation, t);
+            cv::Rodrigues(r, rv);
+            std::vector<cv::Point2d> exact;
+            cv::projectPoints(objects, rv, t, k, d, exact);
+            std::vector<cv::Point2f> view;
+            for (const auto& p : exact) view.emplace_back(static_cast<float>(p.x), static_cast<float>(p.y));
+            points.push_back(std::move(view));
+        }
+        return points;
     }
 
     SyntheticCalibration() = default;
@@ -123,6 +210,9 @@ public:
                 setup.m_camera.focus_points.ObjectLength = focus_points.ObjectLength;
 
                 setup.m_simulation.settings = settings;
+                setup.m_simulation.target_image_size = {sensor_dimension.first, sensor_dimension.second};
+                setup.m_simulation.centered_subsamples = true;
+                setup.m_simulation.validateMetadata();
 
                 setup.m_calibration.pattern_x =
                     checkedCastToUint16(calibBoardDimension.first, "pattern_x");
@@ -254,6 +344,10 @@ private:
         const std::pair<double, double>& z_offset_range,
         const std::pair<int, int>& support_grid)
     {
+        if (!std::isfinite(image_magnification) || !std::isfinite(board_rotation_limit) ||
+            !std::isfinite(pattern_width) || !std::isfinite(pixel_pitch) || !std::isfinite(margin_px) ||
+            !std::isfinite(z_offset_range.first) || !std::isfinite(z_offset_range.second))
+            throw std::invalid_argument("Non-finite generation parameters");
         if (n_translations == 0)
             throw std::invalid_argument("n_translations must be bigger than zero");
         if (image_magnification <= 0.0 || image_magnification > 1.0)
@@ -264,8 +358,8 @@ private:
             throw std::invalid_argument("Sensor dimensions must be bigger than zero");
         if (pixel_pitch <= 0.0)
             throw std::invalid_argument("Pixel pitch must be bigger than zero");
-        if (board_dimension.first <= 0 || board_dimension.second <= 0)
-            throw std::invalid_argument("Board dimensions must be bigger than zero");
+        if (board_dimension.first < 4 || board_dimension.second < 4)
+            throw std::invalid_argument("Detector requires at least 3x3 inner corners (4x4 squares)");
         if (pattern_width <= 0.0)
             throw std::invalid_argument("Pattern width must be bigger than zero");
         if (board_rotation_limit < 0.0 || board_rotation_limit >= CV_PI / 2.0)
@@ -289,10 +383,14 @@ private:
         result.emplace_back(Eigen::VectorXd::Zero(5));
 
         for (const auto& distortion : distortion_coefficients) {
+            if (!distortion.allFinite() || (distortion.size() != 0 && distortion.size() != 4 && distortion.size() != 5))
+                throw std::invalid_argument("Renderer supports only empty/4/5 Brown coefficients");
             if (distortion.size() == 0 || distortion.isZero())
                 continue;
 
-            result.push_back(distortion);
+            Eigen::VectorXd padded = Eigen::VectorXd::Zero(5);
+            padded.head(distortion.size()) = distortion;
+            result.push_back(padded);
         }
 
         std::cout << result.size() << " distortion variations will be tested\n"
@@ -695,10 +793,14 @@ private:
         const double& pixel_pitch,
         const double& px,
         const double& py,
-        std::pair<int, int>& sensor_dimension = std::pair<int, int>(2464, 2056),
+        const std::pair<int, int>& sensor_dimension = std::pair<int, int>(2464, 2056),
         const double& fx_fy_ratio = 1.0 /*fx/fy*/)
     {
-        if (fx_fy_ratio != 1.0) std::cout << "WARNING: Ratio fx to fy is != 0 \n";
+        (void)sensor_dimension; // retained only for source compatibility
+        if (!std::isfinite(fx_fy_ratio) || fx_fy_ratio <= 0 ||
+            !std::isfinite(image_scale_goal_abs) || !std::isfinite(pixel_pitch) ||
+            !std::isfinite(px) || !std::isfinite(py)) throw std::invalid_argument("Invalid intrinsic input");
+        if (fx_fy_ratio != 1.0) std::cout << "WARNING: Ratio fx to fy is != 1 \n";
         if (objective == nullptr) throw std::invalid_argument("Objective Data is nullptr");
         if (image_scale_goal_abs > 1.0 || image_scale_goal_abs <= 0.0) throw
             std::invalid_argument("ImageScale must be a positive value smaller than 1.0");

@@ -5,7 +5,7 @@
 #include "TraceAlbeMesh.hpp"
 #include "Light.hpp"
 #include "Object.hpp"
-#include <Eigen/dense>
+#include <Eigen/Dense>
 #include <vector>
 #include <optional>
 #include <memory>

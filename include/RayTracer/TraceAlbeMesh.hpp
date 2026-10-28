@@ -1,7 +1,7 @@
 #ifndef TRACEABLEMESH_HPP	
 #define TRACEABLEMESH_HPP
 
-#include <Eigen/dense>
+#include <Eigen/Dense>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -66,6 +66,7 @@ public:
 		}
 		catch (const std::exception& exp) {
 			std::cout << "EXCEPTION: " << exp.what() << std::endl;
+			throw;
 		}
 	}
 
@@ -220,6 +221,7 @@ private:
 		}
 		catch (const std::exception& e) {
 			std::cout << "EXCEPTION: " << e.what() << std::endl;
+			throw;
 		}
 		m_n_triangles = n_surfaces;
 

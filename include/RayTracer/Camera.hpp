@@ -3,13 +3,13 @@
 
 #include "CameraMatrix.hpp"
 #include <memory>
-#include <Eigen/dense>
+#include <Eigen/Dense>
 
 class Camera {
 public:
 	Camera(
 		std::unique_ptr<CameraMatrix>&& camMat,
-		Sensor sensor_coords = CameraMatrix::generateSensorCoords(),
+		Sensor sensor_coords,
 		const SamplingSetting setting = {})
 		: m_cameraMatrix{std::move(camMat)}
 		, m_sensorCoords{std::make_unique<Sensor>(std::move(sensor_coords))}

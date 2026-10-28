@@ -1,6 +1,6 @@
 #ifndef RAYTRACER_OBJECT_BASE_HPP
 #define RAYTRACER_OBJECT_BASE_HPP	
-#include <Eigen/dense>
+#include <Eigen/Dense>
 #include <memory>
 #include <vector>
 #include <cmath>

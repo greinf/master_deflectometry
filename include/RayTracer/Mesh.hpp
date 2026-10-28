@@ -1,9 +1,11 @@
 #ifndef MESH_HPP
 #define MESH_HPP
 
-#include <Eigen/dense>
+#include <Eigen/Dense>
 #include "Object.hpp"
 #include <vector>
+#include <array>
+#include <cmath>
 #include <iterator>
 #include <algorithm>
 #include <open3d/geometry/TriangleMesh.h>
@@ -17,7 +19,7 @@ struct ObjectInfo {
 	bool specular{ false };
 	bool diffuse{ false };
 	bool emitter{ false };
-	
+
 	struct Diffuse_Settings {
 		// Lambertian / diffuse reflectivity
 		double reflectivity_scattered{ 0.2 };
@@ -89,7 +91,7 @@ public:
 		return *this;
 	}
 
-	
+
 	explicit Mesh(std::unique_ptr<Vertice[]>&& vertices,
 		std::unique_ptr<Eigen::Vector3d[]>&& vertice_normal,
 		std::unique_ptr<std::uint32_t[]>&& indices,
@@ -105,7 +107,7 @@ public:
 		, m_n_ver_per_surface{ std::move(n_ver_per_surface) }
 		, m_n_vertices{ n_vertice }
 		, m_n_surfaces{ n_surface }
-		, m_info{info}
+		, m_info{ info }
 	{
 	}
 
@@ -117,27 +119,29 @@ public:
 		, m_n_ver_per_surface{ std::move(mesh.m_n_ver_per_surface) }
 		, m_n_vertices{ std::move(mesh.m_n_vertices) }
 		, m_n_surfaces{ std::move(mesh.m_n_surfaces) }
-		, m_surface_normals{std::move(mesh.m_surface_normals)}
-		, m_area{std::move(mesh.m_area)}
-		, m_diffuse_settings_per_surface{std::move(mesh.m_diffuse_settings_per_surface)}
-		, m_info{std::move(mesh.m_info)}
-		, m_completeArea{mesh.m_completeArea}
-	{ }
+		, m_surface_normals{ std::move(mesh.m_surface_normals) }
+		, m_area{ std::move(mesh.m_area) }
+		, m_diffuse_settings_per_surface{ std::move(mesh.m_diffuse_settings_per_surface) }
+		, m_info{ std::move(mesh.m_info) }
+		, m_completeArea{ mesh.m_completeArea }
+	{
+	}
 
 	Mesh(std::unique_ptr<Mesh>&& mesh) noexcept
 		: Object(std::move(mesh->m_transform))
-		, m_vertices{std::move(mesh->m_vertices)}
-		, m_vertice_normals{std::move(mesh->m_vertice_normals)}
-		, m_indices{std::move(mesh->m_indices)}
-		, m_n_ver_per_surface{std::move(mesh->m_n_ver_per_surface)}
-		, m_n_vertices{std::move(mesh->m_n_vertices)}
-		, m_n_surfaces{std::move(mesh->m_n_surfaces)}
-		, m_surface_normals{std::move(mesh->m_surface_normals)}
-		, m_area{std::move(mesh->m_area)}
-		, m_diffuse_settings_per_surface{std::move(mesh->m_diffuse_settings_per_surface)}
+		, m_vertices{ std::move(mesh->m_vertices) }
+		, m_vertice_normals{ std::move(mesh->m_vertice_normals) }
+		, m_indices{ std::move(mesh->m_indices) }
+		, m_n_ver_per_surface{ std::move(mesh->m_n_ver_per_surface) }
+		, m_n_vertices{ std::move(mesh->m_n_vertices) }
+		, m_n_surfaces{ std::move(mesh->m_n_surfaces) }
+		, m_surface_normals{ std::move(mesh->m_surface_normals) }
+		, m_area{ std::move(mesh->m_area) }
+		, m_diffuse_settings_per_surface{ std::move(mesh->m_diffuse_settings_per_surface) }
 		, m_info{ std::move(mesh->m_info) }
-		, m_completeArea{mesh->m_completeArea}
-	{ }
+		, m_completeArea{ mesh->m_completeArea }
+	{
+	}
 
 	virtual void get_Area() = 0;
 
@@ -277,7 +281,7 @@ public:
 		const std::uint32_t& n_surfaces,
 		const ObjectInfo& info,
 		const Eigen::Matrix4d& m_transform
-		)
+	)
 		:Mesh(
 			std::move(vertices),
 			std::move(vertice_normals),
@@ -287,11 +291,13 @@ public:
 			n_surfaces,
 			info,
 			m_transform)
-	{ }
+	{
+	}
 
 	TriangularMesh()
 		:Mesh()
-	{ }
+	{
+	}
 
 	// Method for creating fast a Sqare surface. 
 	// Only vertices and connectivity is set
@@ -369,7 +375,7 @@ public:
 		const Eigen::Vector2d& v2,
 		const double& u,
 		const double& v
-		) noexcept
+	) noexcept
 	{
 		const double w{ 1 - u - v };
 		return Eigen::Vector2d{ v0 * w + v1 * u + v2 * v };
@@ -395,7 +401,7 @@ public:
 		const Eigen::Vector3d& v2,
 		const double& u,
 		const double& v
-	) noexcept 
+	) noexcept
 	{
 		const double w{ 1.0 - u - v };
 		return (w * v0 + u * v1 + v * v2).normalized();
@@ -410,7 +416,7 @@ public:
 	) noexcept
 	{
 		if (v0 == v1 &&
-			v0 == v2) 
+			v0 == v2)
 			return v1;
 
 		const double w{ 1.0 - u - v };
@@ -418,10 +424,10 @@ public:
 		return v0 * w + v1 * u + v2 * v;
 	}
 
-	void get_Area() override 
+	void get_Area() override
 	{
 		m_completeArea = 0.0;
-		std::unique_ptr<double[]> area{new double[m_n_surfaces]};
+		std::unique_ptr<double[]> area{ new double[m_n_surfaces] };
 
 		std::size_t index[3]{};
 
@@ -429,14 +435,14 @@ public:
 			index[0] = static_cast<std::size_t>(m_indices[i * 3]);
 			index[1] = static_cast<std::size_t>(m_indices[i * 3 + 1]);
 			index[2] = static_cast<std::size_t>(m_indices[i * 3 + 2]);
-			const Eigen::Vector3d b_a{ m_vertices[index[1]].pos - m_vertices[index[0]].pos};
-			const Eigen::Vector3d c_a{ m_vertices[index[2]].pos - m_vertices[index[0]].pos};
+			const Eigen::Vector3d b_a{ m_vertices[index[1]].pos - m_vertices[index[0]].pos };
+			const Eigen::Vector3d c_a{ m_vertices[index[2]].pos - m_vertices[index[0]].pos };
 			area[i] = b_a.cross(c_a).norm() * 0.5;
 			m_completeArea += area[i];
 		}
 		m_area = std::move(area);
 	}
-	
+
 	bool shade() const override
 	{
 		throw std::runtime_error("not implemented");
@@ -455,7 +461,7 @@ public:
 		const Eigen::Vector3d AB{ v1 - v0 };
 		const Eigen::Vector3d AC{ v2 - v0 };
 		const Eigen::Vector3d R{ origin - v0 };
-		
+
 		constexpr double eps{ 1e-9 };
 
 		// Matrix mat(e1, e2, e3): det(mat) -> (e1 x e2) * e3
@@ -468,7 +474,7 @@ public:
 		// O + t*D = A + u(B-A) + v(C-A)
 		// O - A = -tD + u(B-A) + v(C-A)
 		// [-D (B-A) (C-A)] * [t u v]^T = O - A
-		
+
 		const Eigen::Vector3d e1xe2 = -dir.cross(AB);
 		const Eigen::Vector3d e2xe3 = AB.cross(AC);
 		const Eigen::Vector3d e3xe1 = AC.cross(-dir);
@@ -493,9 +499,9 @@ public:
 		const double det_v{ e1xe2.dot(R) };
 		v = det_v * inv_det;
 		if (v < 0.0 || v > 1.0) return false;
-		
+
 		if (u + v > 1.0) return false;
-		
+
 		return true;
 	}
 
@@ -510,20 +516,20 @@ public:
 		const Eigen::Vector3d& v2,
 		double& t, double& u, double& v)
 	{
-		const Eigen::Vector3d AB{v1 - v0};
-		const Eigen::Vector3d AC{v2 - v0};
-		const Eigen::Vector3d R{origin - v0};
+		const Eigen::Vector3d AB{ v1 - v0 };
+		const Eigen::Vector3d AC{ v2 - v0 };
+		const Eigen::Vector3d R{ origin - v0 };
 
-		constexpr double eps{1e-9};
+		constexpr double eps{ 1e-9 };
 
 		const Eigen::Vector3d e1xe2 = -dir.cross(AB);
 		const Eigen::Vector3d e2xe3 = AB.cross(AC);
 		const Eigen::Vector3d e3xe1 = AC.cross(-dir);
 
-		const double det{e1xe2.dot(AC)};
+		const double det{ e1xe2.dot(AC) };
 		if (std::abs(det) < eps) return false;
 
-		const double inv_det{1.0 / det};
+		const double inv_det{ 1.0 / det };
 
 		u = e3xe1.dot(R) * inv_det;
 		if (u < 0.0 || u > 1.0) return false;
@@ -558,7 +564,7 @@ public:
 	}
 
 	[[nodiscard]] const ObjectInfo::Diffuse_Settings&
-	getDiffuseSettingsForTriangle(const std::size_t triangle_index) const
+		getDiffuseSettingsForTriangle(const std::size_t triangle_index) const
 	{
 		if (triangle_index >= static_cast<std::size_t>(m_n_surfaces))
 			throw std::out_of_range("Triangle material index out of range");
@@ -581,12 +587,21 @@ public:
 		const double white_reflectivity = 0.9,
 		const double black_reflectivity = 0.04,
 		const double specular_reflectivity = 0.0,
-		const double specular_exponent = 20.0)
+		const double specular_exponent = 20.0,
+		const double white_border_width_in_squares = 0.5)
 	{
 		if (squares_x == 0 || squares_y == 0)
 			throw std::invalid_argument("Calibration board requires at least one square");
 		if (square_size <= 0.0)
 			throw std::invalid_argument("Calibration board square size must be positive");
+
+		// Checkerboard origin and square coordinates remain unchanged.
+		// Border is outside [0,W] x [0,H]; 0 disables it.
+		if (!std::isfinite(white_border_width_in_squares) || white_border_width_in_squares < 0.0)
+			throw std::invalid_argument("White border width must be finite and nonnegative");
+		const double border = white_border_width_in_squares * square_size;
+		if (!std::isfinite(border)) throw std::invalid_argument("Border width overflow");
+		const bool has_border = border > 0.0;
 
 		ObjectInfo::Diffuse_Settings white{};
 		white.reflectivity_scattered = white_reflectivity;
@@ -604,10 +619,10 @@ public:
 			squares_x * squares_y;
 
 		const std::size_t nVertices =
-			(squares_x + 1) * (squares_y + 1);
+			(squares_x + 1) * (squares_y + 1) + (has_border ? 16 : 0);
 
 		const std::size_t nTriangles =
-			2 * nSquares;
+			2 * nSquares + (has_border ? 8 : 0);
 
 		auto vertices =
 			std::make_unique<Vertice[]>(nVertices);
@@ -730,6 +745,41 @@ public:
 			}
 		}
 
+		// Append four non-overlapping white strips in the same z=0 plane.
+		// All original vertices, indices, normals and materials remain first.
+		if (has_border) {
+			const double width = static_cast<double>(squares_x) * square_size;
+			const double height = static_cast<double>(squares_y) * square_size;
+			if (!std::isfinite(width + border) || !std::isfinite(height + border))
+				throw std::invalid_argument("Border coordinates overflow");
+			const std::array<std::array<double, 4>, 4> strips{ {
+				{{-border, -border, width + border, 0.0}},
+				{{-border, height, width + border, height + border}},
+				{{-border, 0.0, 0.0, height}},
+				{{width, 0.0, width + border, height}}
+			} };
+			for (std::size_t strip = 0; strip < strips.size(); ++strip) {
+				const auto& r = strips[strip]; // x0, y0, x1, y1
+				const std::size_t first = vertices_index;
+				const std::array<Eigen::Vector3d, 4> positions{ {
+					{r[0], r[1], 0.0}, {r[2], r[1], 0.0},
+					{r[0], r[3], 0.0}, {r[2], r[3], 0.0}
+				} };
+				for (const auto& position : positions) {
+					vertices[vertices_index].pos = position;
+					vertices[vertices_index].uv = Eigen::Vector2d{ position.x() / width, position.y() / height };
+					normals[vertices_index] = Eigen::Vector3d{ 0.0, 0.0, -1.0 };
+					++vertices_index;
+				}
+				const std::array<std::size_t, 6> connectivity{ {0, 2, 3, 0, 3, 1} };
+				for (const auto offset : connectivity)
+					indices[indices_index++] = static_cast<std::uint32_t>(first + offset);
+				const std::size_t triangle = 2 * nSquares + 2 * strip;
+				verticesPerSurface[triangle] = verticesPerSurface[triangle + 1] = 3;
+				materials[triangle] = materials[triangle + 1] = white;
+			}
+		}
+
 		ObjectInfo info{};
 		info.closed = false;
 		info.specular = false;
@@ -812,18 +862,19 @@ public:
 
 		return result;
 	}
-	
+
 };
 
 class PolygonMesh : public Mesh {
 public:
-	
+
 	PolygonMesh(const PolygonMesh&) = delete;
 	PolygonMesh& operator=(const PolygonMesh&) = delete;
 
 	PolygonMesh()
 		:Mesh()
-	{ }
+	{
+	}
 
 	explicit PolygonMesh(
 		std::unique_ptr<Vertice[]>&& vertices,
@@ -843,7 +894,8 @@ public:
 			n_surfaces,
 			info,
 			std::move(transform))
-	{ }
+	{
+	}
 
 	bool shade() const override {
 		throw std::runtime_error("Not implemented");
@@ -909,7 +961,7 @@ public:
 					indizes
 				);
 			}
-			
+
 			else if (m_n_ver_per_surface[i] > 3) {
 				const std::size_t n_vertices{ static_cast<std::size_t>(m_n_ver_per_surface[i]) };
 				std::vector<std::uint32_t> indizes_poly(n_vertices);
@@ -920,7 +972,7 @@ public:
 					indizes_poly[u] = *index_ptr;
 					++index_ptr;
 				}
-				
+
 				// Bring the indizes in the new order
 				for (std::size_t j = 0; j + 2 < n_vertices; ++j) {
 					indizes[0] = indizes_poly[0];
@@ -936,7 +988,7 @@ public:
 				}
 			}
 		}
-		
+
 		// Refill the Containers
 		const std::size_t ver_per_surf_size{ n_ver_per_surface_temp.size() };
 		const std::size_t indizes_size{ indizes_temp.size() };
@@ -959,7 +1011,7 @@ public:
 		}
 
 		// Create deepcopy
-		std::unique_ptr<Vertice[]> 
+		std::unique_ptr<Vertice[]>
 			vertice_copy{ new Vertice[static_cast<std::size_t>(m_n_vertices)] };
 		std::unique_ptr<Eigen::Vector3d[]> vertice_normal_copy{ nullptr };
 		if (m_vertice_normals != nullptr) {
@@ -982,7 +1034,7 @@ public:
 			static_cast<std::uint32_t>(n_ver_per_surface_temp.size());
 
 		// It might be interesting to share the vertice points between different representations (polygonMesh and Triangular)
-		
+
 		return std::make_unique<TriangularMesh>(
 			std::move(vertice_copy),
 			std::move(vertice_normal_copy),
@@ -992,7 +1044,7 @@ public:
 			n_triangles,
 			m_info,
 			m_transform
-			);
+		);
 	}
 
 	// CoordianteSystem placed in upper left corner! 
@@ -1001,7 +1053,7 @@ public:
 		const int& pixel_y = 1080,
 		const double& pixel_pitch = 0.2745)
 	{
-		if (pixel_x <= 0 || pixel_y <= 0 || pixel_pitch <= 0) 
+		if (pixel_x <= 0 || pixel_y <= 0 || pixel_pitch <= 0)
 			throw std::invalid_argument("Display Parameters must be bigger than zero \n");
 
 		const std::size_t n_surfaces{ 1 };
@@ -1019,8 +1071,8 @@ public:
 		vertice_temp[1].pos = Eigen::Vector3d(pixel_x * pixel_pitch, 0.0, 0.0);
 		vertice_temp[2].pos = Eigen::Vector3d(pixel_x * pixel_pitch, pixel_y * pixel_pitch, 0.0);
 		vertice_temp[3].pos = Eigen::Vector3d(0.0, pixel_y * pixel_pitch, 0.0);
-		
-		
+
+
 
 		// Define TextureInformation
 		vertice_temp[0].uv = Eigen::Vector2d{ 0.0, 0.0 };
@@ -1028,7 +1080,7 @@ public:
 		vertice_temp[2].uv = Eigen::Vector2d{ pixel_x * pixel_pitch, pixel_y * pixel_pitch };
 		vertice_temp[3].uv = Eigen::Vector2d{ 0.0, pixel_y * pixel_pitch };
 
-		
+
 		vertex_normals_temp[0] = Eigen::Vector3d(0.0, 0.0, 1.0);
 		vertex_normals_temp[1] = vertex_normals_temp[0];
 		vertex_normals_temp[2] = vertex_normals_temp[0];
@@ -1059,7 +1111,7 @@ public:
 			info
 		);
 	}
-	
+
 	static std::unique_ptr<PolygonMesh> TelsecopeTubus(
 		const double& length,
 		const double& diameter,
@@ -1086,27 +1138,27 @@ public:
 
 		const double radius{ diameter / 2.0 };
 
-		const double radius_steps{ radius / static_cast<double>(division-1) };
+		const double radius_steps{ radius / static_cast<double>(division - 1) };
 
 		const double angle_step{ two_pi / division };
 
-		const double z_axis_steps{ length / static_cast<double>(division-1)};
+		const double z_axis_steps{ length / static_cast<double>(division - 1) };
 
 		const std::size_t div{ division };
 
 		const std::size_t n_tubus_surfaces{
-			div + div * (div-2) + div * (div-1)};
+			div + div * (div - 2) + div * (div - 1) };
 
 		const std::size_t n_tubus_vertices{
-			(div - 1) * div * 2 + 1 
+			(div - 1) * div * 2 + 1
 		};
-		
+
 		const std::size_t n_indices{
 			div * 3 +                   // center triangles
 			div * (div - 2) * 4 +       // backplate quads
 			div * (div - 1) * 4         // tube quads
 		};
-		
+
 		auto vertices =
 			std::make_unique<Vertice[]>(n_tubus_vertices);
 
@@ -1124,7 +1176,7 @@ public:
 		vertex_normals[0] = Eigen::Vector3d{ 0.0, 0.0, 1.0 };
 
 		std::size_t vert_index{ 1 };
-		
+
 		// Create Vertices Backplate
 		// Refractive Index and uv Stays blank
 		for (std::size_t i_rad = 1; i_rad < div; ++i_rad) {
@@ -1135,13 +1187,13 @@ public:
 						0.0,
 						0.0,
 						1.0
-					};
+				};
 				vertices[vert_index++].pos =
 					Eigen::Vector3d{
 						radius_steps * i_rad * std::cos(i_angle * angle_step),
 						radius_steps * i_rad * std::sin(i_angle * angle_step),
 						0.0
-					};
+				};
 			}
 		}
 		// Create Vertices Tubus 
@@ -1153,14 +1205,14 @@ public:
 						-radius * std::cos(i_angle * angle_step),
 						-radius * std::sin(i_angle * angle_step),
 						0.0
-					}.normalized();
+				}.normalized();
 
 				vertices[vert_index++].pos =
 					Eigen::Vector3d{
 						radius * std::cos(i_angle * angle_step),
 						radius * std::sin(i_angle * angle_step),
 						z_axis * z_axis_steps
-					};
+				};
 			}
 		}
 
@@ -1174,7 +1226,7 @@ public:
 			vertices_per_surface[i_surfaces++] = 3;
 			indices[i_indices++] = static_cast<std::uint32_t>(0);
 			indices[i_indices++] = static_cast<std::uint32_t>(1 + i);
-			indices[i_indices++] = static_cast<std::uint32_t>(1+((1 + i) % div));
+			indices[i_indices++] = static_cast<std::uint32_t>(1 + ((1 + i) % div));
 		}
 
 		// Quads between rings
@@ -1299,7 +1351,7 @@ public:
 		const double& focal_length,
 		const double& max_r,
 		const int& division,
-		const std::complex<double>& refractive_ind = {1.02, 6.63})
+		const std::complex<double>& refractive_ind = { 1.02, 6.63 })
 	{
 		if (division < 3) {
 			throw std::invalid_argument(
@@ -1438,7 +1490,7 @@ public:
 		// Object Info
 		ObjectInfo info{};
 		info.specular = true;
-		
+
 		return std::make_unique<PolygonMesh>(
 			std::move(vertices),
 			std::move(vertex_normals),

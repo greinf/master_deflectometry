@@ -34,6 +34,8 @@ private:
 	std::queue<std::function<void()>> m_task{};
 
 public:
+	// start/stop must be called by the owning thread, never from a worker.
+	~ThreadPool() { stop(); }
 	ThreadPool(const ThreadPool&) = delete;
 	ThreadPool(ThreadPool&&) noexcept = delete;
 
@@ -56,6 +58,7 @@ public:
 			m_stop.store(false, std::memory_order_relaxed);
 		}
 
+		try {
 		for (std::size_t i = 0; i < n_workers; ++i) {
 			m_thread.emplace_back(
 				[this]() {
@@ -94,6 +97,7 @@ public:
 					}
 				});
 		}
+		} catch (...) { stop(); throw; }
 	}
 	
 	std::size_t currentAvailableWorkers() {

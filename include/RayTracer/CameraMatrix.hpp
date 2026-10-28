@@ -13,7 +13,7 @@
 #include <sstream>
 #include <iomanip>
 #include <ios>
-#include <Eigen/dense>
+#include <Eigen/Dense>
 
 
 // Everything is stored in (x,y,z) 
@@ -24,8 +24,8 @@ using Sensor = Eigen::Matrix<Eigen::Vector2d, Eigen::Dynamic, Eigen::Dynamic>;
 
 class CameraMatrix: public Object {
 	struct CamData {
-		Eigen::Matrix3d* camMat{ nullptr };
-		Eigen::VectorXd* distCoeffs{ nullptr };
+		const Eigen::Matrix3d* camMat{ nullptr };
+		const Eigen::VectorXd* distCoeffs{ nullptr };
 	};
 public:
 	CameraMatrix() = default;
@@ -79,12 +79,11 @@ public:
 		m_distCoeffs.resize(nDistCoeffs);
 
 		if (!distCoeffs.empty()) {
-			Eigen::Index coeffIndex{ 0 };
-			distCoeffs.forEach<double>(
-				[this, &coeffIndex](const double& value, const int*) -> void {
-					m_distCoeffs(coeffIndex++) = value;
-				}
-			);
+			if (distCoeffs.rows != 1 && distCoeffs.cols != 1)
+				throw std::invalid_argument("Distortion must be a vector");
+			const cv::Mat flat = distCoeffs.clone().reshape(1, 1);
+			for (Eigen::Index i = 0; i < nDistCoeffs; ++i)
+				m_distCoeffs(i) = flat.at<double>(0, static_cast<int>(i));
 		}
 		check();
 	}
@@ -109,6 +108,10 @@ public:
 		const double stepwidth_x = 1.0,
 		const double stepwidth_y = 1.0)
 	{
+		if (!std::isfinite(x_start) || !std::isfinite(y_start) ||
+			!std::isfinite(width) || !std::isfinite(height) ||
+			!std::isfinite(stepwidth_x) || !std::isfinite(stepwidth_y))
+			throw std::invalid_argument("Non-finite sensor coordinates");
 		if (width <= 0.0 || height <= 0.0) {
 			throw std::invalid_argument("Width and height must be positive");
 		}
@@ -121,6 +124,14 @@ public:
 			y_start < 0.0 || y_start >= height) {
 			throw std::invalid_argument("Sensor start coordinate lies outside the sensor");
 		}
+
+		const double row_count = std::ceil((height - y_start) / stepwidth_y);
+		const double col_count = std::ceil((width - x_start) / stepwidth_x);
+		const double max_count = static_cast<double>(std::numeric_limits<Eigen::Index>::max());
+		if (!std::isfinite(row_count) || !std::isfinite(col_count) ||
+			row_count >= max_count || col_count >= max_count ||
+			row_count * col_count >= max_count / sizeof(Eigen::Vector2d))
+			throw std::overflow_error("Sensor coordinate array size overflow");
 
 		const Eigen::Index rows = static_cast<Eigen::Index>(
 			std::ceil((height - y_start) / stepwidth_y)
@@ -154,7 +165,7 @@ public:
 	
 	virtual ~CameraMatrix() = default;
 
-	CamData getCameraData() {
+	CamData getCameraData() const {
 		return CamData{
 			{&m_camMat},
 			{&m_distCoeffs}
@@ -162,19 +173,20 @@ public:
 	}
 
 protected:
-	Eigen::Matrix3d m_camMat{};
-	Eigen::Matrix3d m_camMat_inv{};
+	Eigen::Matrix3d m_camMat = Eigen::Matrix3d::Zero();
+	Eigen::Matrix3d m_camMat_inv = Eigen::Matrix3d::Zero();
 	Eigen::VectorXd m_distCoeffs{};
 
 private:
 	void check() {
-		if (m_distCoeffs.size() > 5) {
-			std::cout << "Warning: More than 5 Distortion Coefficients \n";
-			std::cout << m_distCoeffs.size() << " - Coefficients provided \n";
-			m_distCoeffs.conservativeResize(5);
-		}
+		if (!m_camMat.allFinite() || !isSparseIntrinsic(m_camMat) ||
+			m_camMat(0, 0) <= 0 || m_camMat(1, 1) <= 0 || std::abs(m_camMat(2, 2) - 1) > 1e-12)
+			throw std::invalid_argument("Invalid camera matrix");
+		m_camMat_inv = m_camMat.inverse();
+		if (!m_camMat_inv.allFinite() || !m_distCoeffs.allFinite() ||
+			(m_distCoeffs.size() != 0 && m_distCoeffs.size() != 4 && m_distCoeffs.size() != 5))
+			throw std::invalid_argument("Only empty/4/5 coefficient Brown vectors are supported");
 		if (m_distCoeffs.size() < 5) {
-			std::cout << "Warning: Less than 5 Distortion Coefficients provided \n";
 			const Eigen::Index wanted_length{ 5 };
 			const Eigen::Index current_length{ m_distCoeffs.size() };
 			m_distCoeffs.conservativeResize(wanted_length);
@@ -203,43 +215,33 @@ public:
 	{ }
 	
 	// Return normalized direction Vectors for each pixel 
-	void castRays(
-		Rays& rays,
-		const Sensor* sensor_coords,
-		const SamplingSetting& sample) const override {
-		if (sensor_coords == nullptr)
-			throw std::invalid_argument("Sensor pointer must not be nullptr");
-
-		if (sensor_coords->size() == 0) throw std::runtime_error("The SensorCoords must be Available");
-
-		if (rays.rows() != sensor_coords->rows() * sample.samples_y ||
-			rays.cols() != sensor_coords->cols() * sample.samples_x)
-		{
-			rays.resize(
-				sensor_coords->rows() * sample.samples_y,
-				sensor_coords->cols() * sample.samples_x
-			);
-		}
-
-		Sensor sensor_Sampling{generateSensorCoords(
-			0.0,
-			0.0,
-			2464.0,
-			2056.0,
-			1.0/sample.samples_x,
-			1.0/sample.samples_y)
-		};
-
-		rays = sensor_Sampling.unaryExpr(
-			[this](const Eigen::Vector2d& coords) -> Eigen::Vector3d
-			{
-				Eigen::Vector3d homogeneousCoords(coords[0], coords[1], 1.0);
-				Eigen::Vector3d camera_coord{ m_camMat_inv * homogeneousCoords };
-				//return camera_coord;
-				Eigen::Vector3d distorted{ newtonSolverdistort(camera_coord, m_distCoeffs) };
-				return distorted.normalized();
+	void castRays(Rays& rays, const Sensor* sensor, const SamplingSetting& sample) const override {
+		if (!sensor || sensor->size() == 0 || sample.samples_x == 0 || sample.samples_y == 0)
+			throw std::invalid_argument("Empty sensor or zero sampling");
+		const auto limit = static_cast<std::uint64_t>(std::numeric_limits<Eigen::Index>::max());
+		if (sample.samples_x > limit / static_cast<std::uint64_t>(sensor->cols()) ||
+			sample.samples_y > limit / static_cast<std::uint64_t>(sensor->rows()))
+			throw std::overflow_error("Ray array dimensions overflow");
+		const Eigen::Index sx = static_cast<Eigen::Index>(sample.samples_x);
+		const Eigen::Index sy = static_cast<Eigen::Index>(sample.samples_y);
+		const Eigen::Index rows = sensor->rows() * sy, cols = sensor->cols() * sx;
+		if (static_cast<std::uint64_t>(rows) > limit / static_cast<std::uint64_t>(cols) / sizeof(Eigen::Vector3d))
+			throw std::overflow_error("Ray array storage overflow");
+		rays.resize(rows, cols);
+		// Integer coordinates denote pixel CENTERS. Each sensor entry describes
+		// a unit-sized pixel in K's coordinate system (ROI offsets are allowed).
+		for (Eigen::Index col = 0; col < sensor->cols(); ++col)
+			for (Eigen::Index row = 0; row < sensor->rows(); ++row) {
+				const auto& center = (*sensor)(row, col);
+				if (!center.allFinite()) throw std::invalid_argument("Non-finite sensor coordinate");
+				for (Eigen::Index ax = 0; ax < sx; ++ax)
+					for (Eigen::Index ay = 0; ay < sy; ++ay) {
+						const double u = center.x() + (ax + 0.5) / sx - 0.5;
+						const double v = center.y() + (ay + 0.5) / sy - 0.5;
+						const Eigen::Vector3d q = m_camMat_inv * Eigen::Vector3d(u, v, 1.0);
+						rays(row * sy + ay, col * sx + ax) = newtonSolverdistort(q, m_distCoeffs).normalized();
+					}
 			}
-		);
 	}
 
 	static Eigen::Vector3d undistort(
@@ -259,9 +261,12 @@ public:
 	}
 
 	static Eigen::Vector3d newtonSolverdistort(
-		const Eigen::Vector3d& pixelCoords,   // (u_d, v_d) verzerrt in Pixeln
+		const Eigen::Vector3d& pixelCoords,   // distorted NORMALIZED coordinates (xd, yd, 1)
 		const Eigen::VectorXd& dist_coeffs)
 	{
+		if (!pixelCoords.allFinite() || !dist_coeffs.allFinite() ||
+			(dist_coeffs.size() != 0 && dist_coeffs.size() != 4 && dist_coeffs.size() != 5))
+			throw std::invalid_argument("Invalid inverse distortion input");
 		const double* dptr = dist_coeffs.data();
 		const double k1 = (dist_coeffs.size() > 0) ? dptr[0] : 0.0;
 		const double k2 = (dist_coeffs.size() > 1) ? dptr[1] : 0.0;
@@ -334,6 +339,12 @@ public:
 				break; // konvergiert
 			}
 		}
+		const double r2 = x_u * x_u + y_u * y_u;
+		const double radial = 1 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2;
+		const double ex = x_u * radial + 2 * p1 * x_u * y_u + p2 * (r2 + 2 * x_u * x_u) - x_d;
+		const double ey = y_u * radial + p1 * (r2 + 2 * y_u * y_u) + 2 * p2 * x_u * y_u - y_d;
+		if (!std::isfinite(ex) || !std::isfinite(ey) || ex * ex + ey * ey > 1e-20)
+			throw std::runtime_error("Inverse Brown distortion failed to converge");
 		return Eigen::Vector3d(x_u, y_u, 1.0);
 	}
 };

@@ -1,7 +1,7 @@
 #ifndef LIGHT_HPP	
 #define LIGHT_HPP
 
-#include <Eigen/dense>
+#include <Eigen/Dense>
 #include <memory>
 #include <vector>
 #include "Mesh.hpp"

@@ -3,11 +3,25 @@
 
 #include <vector>
 #include <array>
+#include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
-#include <Eigen/dense>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
+#include <chrono>
+#include <climits>
+#include <cmath>
+#include <cstdint>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <stdexcept>
+
+
 
 
 struct RayStructure {
@@ -38,7 +52,8 @@ namespace Protocoll {
 				{false, false, true}
 			};
 
-			return (valid).select(matrix, 0.0).isZero();
+			return matrix.allFinite() && (valid.array() == false).select(matrix.array(), 0.0).matrix().isZero(eps) &&
+				matrix(0, 0) > 0 && matrix(1, 1) > 0 && std::abs(matrix(2, 2) - 1) < eps;
 		}
 	public:
 		CameraData() = default;
@@ -46,6 +61,12 @@ namespace Protocoll {
 		bool validAndSet() const {
 			constexpr double eps{ 1e-9 };
 			if (objective == nullptr) return false;
+			if (!is_Intrinsic(intrinsicMatrix) || !distortionCoefficients.allFinite()) return false;
+			if (distortionCoefficients.size() != 0 && distortionCoefficients.size() != 4 && distortionCoefficients.size() != 5) return false;
+			if (!std::isfinite(used_f_num) || !std::isfinite(focus_points.NearPoint) ||
+				!std::isfinite(focus_points.ObjectLength) || std::isnan(focus_points.FarPoint) ||
+				focus_points.NearPoint <= 0 || focus_points.ObjectLength <= focus_points.NearPoint ||
+				focus_points.FarPoint <= focus_points.ObjectLength) return false;
 			if (std::abs(focus_points.FarPoint) < eps) return false;
 			if (std::abs(focus_points.NearPoint) < eps) return false;
 			if (std::abs(focus_points.ObjectLength) < eps) return false;
@@ -190,37 +211,21 @@ namespace Protocoll {
 			node[std::string(m_keys[10])] >> data.focus_points.FarPoint;
 			node[std::string(m_keys[11])] >> data.focus_points.ObjectLength;
 
-			const Eigen::Index distortion_sz{ static_cast<Eigen::Index>(distortion.total()) };
-
-			const Eigen::Index intrinisc_row{ static_cast<Eigen::Index>(intrinsic.rows) };
-			const Eigen::Index intrinsic_col{ static_cast<Eigen::Index>(intrinsic.cols) };
-
-			if (intrinisc_row * intrinsic_col != 9) {
-				std::cout << "Given Intrinsic Matrix seems to have wrong size \n" <<
-					intrinisc_row * intrinsic_col << " Coefficients found";
-				throw std::logic_error("Intrinsic Matrix can not have more than 9 coefficients");
+			if (intrinsic.rows != 3 || intrinsic.cols != 3 || intrinsic.channels() != 1)
+				throw std::invalid_argument("Intrinsic matrix must be 3x3");
+			intrinsic.convertTo(intrinsic, CV_64F);
+			if (!distortion.empty() && (distortion.channels() != 1 ||
+				(distortion.rows != 1 && distortion.cols != 1) ||
+				(distortion.total() != 4 && distortion.total() != 5)))
+				throw std::invalid_argument("Only 4/5 coefficient Brown vectors are supported");
+			data.distortionCoefficients = Eigen::VectorXd::Zero(5);
+			if (!distortion.empty()) {
+				cv::Mat flat;
+				distortion.clone().reshape(1, static_cast<int>(distortion.total())).convertTo(flat, CV_64F);
+				for (int i = 0; i < flat.rows; ++i) data.distortionCoefficients(i) = flat.at<double>(i, 0);
 			}
-
-			if (distortion_sz > 7) {
-				std::cout << "Distortion Coefficient Vector has more elements than expected \n" <<
-					distortion_sz << " Elements found \n";
-				throw std::logic_error("Distortion Vektor can not have more than 7 elements");
-			}
-
-			data.distortionCoefficients.resize(distortion_sz, 1);
-
-			data.intrinsicMatrix.resize(intrinisc_row, intrinsic_col);
-
-			for (Eigen::Index index = 0; index < static_cast<Eigen::Index>(distortion.total()); ++index)
-			{
-				data.distortionCoefficients(index, 0) = distortion.at<double>(index, 0);
-			}
-
-			for (Eigen::Index row = 0; row < static_cast<Eigen::Index>(intrinsic.rows); ++row) {
-				for (Eigen::Index col = 0; col < static_cast<Eigen::Index>(intrinsic.cols); ++col) {
-					data.intrinsicMatrix(row, col) = intrinsic.at<double>(row, col);
-				}
-			}
+			cv::cv2eigen(intrinsic, data.intrinsicMatrix);
+			if (!data.validAndSet()) throw std::runtime_error("Invalid camera metadata");
 
 			fs.release();
 
@@ -229,6 +234,7 @@ namespace Protocoll {
 
 		void save(const std::string& path) const {
 			cv::FileStorage file{};
+			if (!validAndSet()) throw std::invalid_argument("Refusing invalid camera metadata");
 
 			if (!file.open(path, cv::FileStorage::READ))
 				throw std::runtime_error("Opening File: READ failed");
@@ -289,7 +295,7 @@ namespace Protocoll {
 		const ObjectiveData* objective{ nullptr };
 		ObjectiveData::FocusPoints focus_points{};
 		double used_f_num{};
-		Eigen::Matrix3d intrinsicMatrix{};
+		Eigen::Matrix3d intrinsicMatrix = Eigen::Matrix3d::Zero();
 		Eigen::VectorXd distortionCoefficients{};
 
 		bool operator==(const CameraData& data) const {
@@ -297,7 +303,8 @@ namespace Protocoll {
 			if (!(this->focus_points == data.focus_points)) return false;
 			if (this->used_f_num != data.used_f_num) return false;
 			if (!this->intrinsicMatrix.isApprox(data.intrinsicMatrix, 1e-9)) return false;
-			if (!this->distortionCoefficients.isApprox(data.distortionCoefficients, 1e-9)) return false;
+			if (this->distortionCoefficients.size() != data.distortionCoefficients.size() ||
+				!this->distortionCoefficients.isApprox(data.distortionCoefficients, 1e-9)) return false;
 			return true;
 		}
 
@@ -330,185 +337,184 @@ namespace Protocoll {
 	
 	class Simulation {
 	public:
-		bool validAndSet() const {
-			if (settings.samples_x == 0 || settings.samples_y == 0) return false;
-			if (m_simulated_images.empty()) return false;
-			if (m_simulated_images.size() < 1) return false;
-			return true;
-		}
-
-		std::size_t get_Number_of_Images() const {
-			return m_simulated_images.size();
-		}
-		
-		// Member
 		SamplingSetting settings{};
+		cv::Size target_image_size{2464, 2056};
+		bool centered_subsamples = true;
+		bool metadata_explicit = true;
 		std::vector<Eigen::MatrixXd> m_simulated_images{};
 
-		bool operator==(const Simulation& data) const {
-			if (!(this->settings == data.settings)) return false;
-			if (this->m_simulated_images.size() != data.m_simulated_images.size()) return false;
-			if (std::pair<const std::vector<Eigen::MatrixXd>::const_iterator, const std::vector<Eigen::MatrixXd>::const_iterator>
-			{this->m_simulated_images.end(), data.m_simulated_images.end()} !=
-				std::mismatch(this->m_simulated_images.begin(),
-					this->m_simulated_images.end(),
-					data.m_simulated_images.begin(),
-					[](const Eigen::MatrixXd& this_img, const Eigen::MatrixXd& data_img) -> bool {
-						return this_img.isApprox(data_img, 1e-9);
-					})) return false;
+		// Old Binary.bin files contain no sampling metadata. The caller MUST
+		// specify it; neither the old default 1x1 nor a guessed sensor size is safe.
+		void setLegacyMetadata(SamplingSetting sample, cv::Size size, bool centered = false) {
+			if (metadata_explicit)
+				throw std::logic_error("Metadata already exists; do not override it as legacy");
+			settings = sample; target_image_size = size; centered_subsamples = centered;
+			validateMetadata();
+			for (const auto& img : m_simulated_images) validateImage(img);
+			metadata_explicit = true;
+		}
+
+		void validateMetadata() const {
+			if (settings.samples_x == 0 || settings.samples_y == 0 ||
+				settings.samples_x > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+				settings.samples_y > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+				target_image_size.width <= 0 || target_image_size.height <= 0 ||
+				static_cast<std::uint64_t>(target_image_size.width) * settings.samples_x > INT_MAX ||
+				static_cast<std::uint64_t>(target_image_size.height) * settings.samples_y > INT_MAX)
+				throw std::invalid_argument("Invalid sensor size or sampling metadata");
+		}
+		void validateImage(const Eigen::MatrixXd& raw) const {
+			validateMetadata();
+			if (raw.rows() != static_cast<Eigen::Index>(target_image_size.height) * settings.samples_y ||
+				raw.cols() != static_cast<Eigen::Index>(target_image_size.width) * settings.samples_x ||
+				!raw.allFinite())
+				throw std::invalid_argument("Raw image size/values disagree with sampling metadata");
+		}
+		bool validAndSet() const {
+			if (!metadata_explicit || m_simulated_images.empty()) return false;
+			try {
+				for (const auto& img : m_simulated_images) validateImage(img);
+				return true;
+			} catch (const std::exception&) { return false; }
+		}
+		std::size_t get_Number_of_Images() const { return m_simulated_images.size(); }
+		bool operator==(const Simulation& d) const {
+			if (!(settings == d.settings) || target_image_size != d.target_image_size ||
+				centered_subsamples != d.centered_subsamples || metadata_explicit != d.metadata_explicit ||
+				m_simulated_images.size() != d.m_simulated_images.size()) return false;
+			for (size_t i = 0; i < m_simulated_images.size(); ++i) {
+				const auto& a = m_simulated_images[i]; const auto& b = d.m_simulated_images[i];
+				if (a.rows() != b.rows() || a.cols() != b.cols() || !a.isApprox(b, 1e-9)) return false;
+			}
 			return true;
 		}
-
-		void show(const std::size_t i) const {
-			const auto img = m_simulated_images.at(i);
-			cv::Mat img_cv{};
-
-			cv::eigen2cv(img, img_cv);
-
-			cv::Mat scaledOutput{};
-
-			const auto row = img.rows();
-			const auto cols = img.cols();
-
-			int row_out = static_cast<int>(row / settings.samples_x);
-			int col_out = static_cast<int>(cols / settings.samples_y);
-
-			cv::GaussianBlur(img_cv, 
-				img_cv, 
-				cv::Size{static_cast<int>(settings.samples_x + 2), static_cast<int>(settings.samples_y + 2)},
-				0.0);
-
-			cv::resize(img_cv, scaledOutput, cv::Size(col_out, row_out), 0.0, 0.0, cv::INTER_AREA);
-
-			cv::normalize(img_cv, img_cv, 0, 255, cv::NORM_MINMAX, CV_8U);
-			
-			// Erlaubt das freie Skalieren des Fensters per Maus
-			cv::namedWindow("Output", cv::WINDOW_NORMAL);
-
-			cv::imshow("Output", img_cv);
-
-			cv::waitKey(0);
+		[[nodiscard]] Eigen::MatrixXd prepareImageforProcessing(
+			const Eigen::MatrixXd& raw, const int kernel_bias = 2) const {
+			if (!metadata_explicit)
+				throw std::runtime_error("Legacy data: setLegacyMetadata is required before processing");
+			if (kernel_bias < -1 || kernel_bias > 100)
+				throw std::invalid_argument("Kernel bias must be -1 (off) or 0..100");
+			validateImage(raw);
+			cv::Mat input, filtered, resized;
+			cv::eigen2cv(raw, input);
+			filtered = input;
+			if (kernel_bias >= 0) {
+				auto oddKernel = [kernel_bias](size_t samples) {
+					const std::uint64_t n = static_cast<std::uint64_t>(samples) + kernel_bias;
+					if (n > INT_MAX - 1) throw std::overflow_error("Kernel is too large");
+					return static_cast<int>(n) | 1;
+				};
+				cv::GaussianBlur(input, filtered,
+					{oddKernel(settings.samples_x), oddKernel(settings.samples_y)}, 0.0);
+			}
+			// INTER_AREA is the SIXTH argument, not the fourth (which is fx).
+			cv::resize(filtered, resized, target_image_size, 0.0, 0.0, cv::INTER_AREA);
+			Eigen::MatrixXd result; cv::cv2eigen(resized, result); return result;
 		}
-
-		void showAll() const {
-			for (std::size_t i = 0; i < m_simulated_images.size(); ++i) {
-				show(i);
-			}
+		[[nodiscard]] std::vector<Eigen::MatrixXd> prepareAllImages(int kernel_bias = 2) const {
+			std::vector<Eigen::MatrixXd> result;
+			result.reserve(m_simulated_images.size());
+			for (const auto& raw : m_simulated_images) result.push_back(prepareImageforProcessing(raw, kernel_bias));
+			return result;
 		}
-		
-		std::vector<Eigen::MatrixXd> prepareImagesforProcessing(
-			const int kernel_bias = 2) const 
-		{
-			if (kernel_bias < 0) throw std::invalid_argument("Kernel size must be positive");
-			if (m_simulated_images.empty()) {
-				std::cout << "WARNING: Container is empty";
-				return {};
-			}
-			if (settings.samples_x != settings.samples_y) {
-				std::cout << "WARNING: Different Subsampling for x and y direction \n";
-				return {};
-			}
-
-			const int kernel_size{ static_cast<int>(settings.samples_x) + kernel_bias };
-
-			if (kernel_size == 1) return m_simulated_images;
-
-			std::vector<Eigen::MatrixXd> output{};
-
-			output.reserve(m_simulated_images.size());
-
-			const int cam_rows{ 
-				static_cast<int>(m_simulated_images.front().rows()) / 
-				static_cast<int>(settings.samples_y) };
-
-			const int cam_cols{ 
-				static_cast<int>(m_simulated_images.front().cols()) / 
-				static_cast<int>(settings.samples_x) };
-
-			for (const auto& raw : m_simulated_images) {
-				cv::Mat raw_cv{};
-				cv::eigen2cv(raw, raw_cv);
-
-				cv::Mat smoothed_cv{};
-				cv::GaussianBlur(raw_cv, smoothed_cv, cv::Size{ kernel_size, kernel_size }, 0.0);
-
-				cv::Mat downsized{};
-				cv::resize(smoothed_cv, downsized, cv::Size{ cam_cols, cam_rows }, cv::INTER_AREA);
-
-				Eigen::MatrixXd out{};
-				cv::cv2eigen(downsized, out);
-
-				if (out.rows() != cam_rows || out.cols() != cam_cols) throw std::logic_error("MASSIVE ERROR");
-				output.push_back(out);
-			}
-			
-			return output;
+		void show(const size_t& i, const int& kernel_bias = 2) const {
+			cv::Mat display;
+			cv::eigen2cv(prepareImageforProcessing(m_simulated_images.at(i), kernel_bias), display);
+			cv::normalize(display, display, 0, 255, cv::NORM_MINMAX, CV_8U);
+			cv::namedWindow("Output", cv::WINDOW_NORMAL); cv::imshow("Output", display); cv::waitKey(0);
 		}
-
+		void showAll(int kernelBias = 2) const {
+			for (size_t i = 0; i < m_simulated_images.size(); ++i) show(i, kernelBias);
+		}
 		void save(const std::string& path) const {
-			std::ofstream fs{ path, std::ios_base::out | std::ios_base::binary };
-			if (!fs.is_open()) throw std::runtime_error("Could not open File");
-
+			checkBinaryPlatform();
+			if (!metadata_explicit) throw std::runtime_error("Refusing to save ambiguous legacy sampling");
+			validateMetadata();
+			for (const auto& img : m_simulated_images) validateImage(img);
+			std::ofstream fs(path, std::ios::binary | std::ios::trunc);
+			if (!fs) throw std::runtime_error("Cannot open simulation output");
+			fs << "RayTracerSimulationV2\n"
+				<< settings.samples_x << ' ' << settings.samples_y << ' '
+				<< target_image_size.width << ' ' << target_image_size.height << ' '
+				<< static_cast<int>(centered_subsamples) << ' ' << m_simulated_images.size() << '\n'
+				<< "IEEE754_LE_COLUMN_MAJOR_F64\n";
 			for (const auto& img : m_simulated_images) {
-				fs << "BinaryImage" << '\n';
-				fs << img.rows() << " " << img.cols() << " " << "double" << '\n';
-
-				std::streamsize data_size{
-					static_cast<std::streamsize>(sizeof(std::decay_t<decltype(img)>::Scalar)) *
-					static_cast<std::streamsize>(img.size()) };
-
-				fs.write(reinterpret_cast<const char*>(img.data()), data_size);
-
+				fs << "BinaryImage\n" << img.rows() << ' ' << img.cols() << " double\n";
+				fs.write(reinterpret_cast<const char*>(img.data()), byteCount(img.rows(), img.cols()));
 				fs << "\n\n";
 			}
-			fs.close();
+			fs.flush();
+			if (!fs) throw std::runtime_error("Simulation write failed");
 		}
-
 		static Simulation read(const std::filesystem::path& path) {
-
-			std::ifstream fs{ path, std::ios_base::in | std::ios_base::binary };
-
-			if (!fs.is_open()) throw std::runtime_error("File is already open");
-
-			Simulation data{};
-
-			std::vector<Eigen::MatrixXd> loaded{};
-
-			while (true) {
-				int rows, cols;
-				std::string datatype, type;
-				char newline;
-
-				fs >> type;
-			
-				if (fs.eof()) break;
-
-				if (type != std::string("BinaryImage")) {
-					throw std::logic_error("Wrong Datatype \n");
-				}
-
-				fs >> rows >> cols >> datatype;
-
-				if (datatype != std::string("double")) {
-					std::cout << "WARNING: The binary is not marked as double. Expect broken data \n";
-				}
-
-				// extract the newline after type
-				fs.get(newline);
-
-				std::streamsize data_sz{ rows * cols * sizeof(double) };
-
-				Eigen::MatrixXd temp{};
-
-				temp.resize(static_cast<Eigen::Index>(rows), static_cast<Eigen::Index>(cols));
-
-				loaded.push_back(std::move(temp));
-
-				fs.read(reinterpret_cast<char*>(loaded.back().data()), data_sz);
+			checkBinaryPlatform();
+			std::ifstream fs(path, std::ios::binary);
+			if (!fs) throw std::runtime_error("Cannot open simulation file");
+			Simulation data;
+			std::string token;
+			size_t count = 0;
+			bool v2 = false;
+			if (fs >> token) v2 = token == "RayTracerSimulationV2";
+			if (v2) {
+				int centered = -1;
+				if (!(fs >> data.settings.samples_x >> data.settings.samples_y >>
+					data.target_image_size.width >> data.target_image_size.height >> centered >> count) ||
+					(centered != 0 && centered != 1) || count > 100000)
+					throw std::runtime_error("Invalid V2 header");
+				data.centered_subsamples = centered == 1;
+				data.validateMetadata();
+				if (!(fs >> token) || token != "IEEE754_LE_COLUMN_MAJOR_F64")
+					throw std::runtime_error("Unsupported binary layout");
+			} else {
+				data.metadata_explicit = false;
+				data.target_image_size = {};
+				fs.clear(); fs.seekg(0);
 			}
-
-			data.m_simulated_images = std::move(loaded);
+			while (true) {
+				if (!(fs >> token)) {
+					if (fs.eof()) break;
+					throw std::runtime_error("Failed reading binary marker");
+				}
+				if (token != "BinaryImage") throw std::runtime_error("Invalid binary image marker");
+				if (v2 && data.m_simulated_images.size() >= count)
+					throw std::runtime_error("Extra images after declared count");
+				std::int64_t rows = 0, cols = 0;
+				std::string type;
+				if (!(fs >> rows >> cols >> type) || type != "double" || rows <= 0 || cols <= 0 ||
+					rows > INT_MAX || cols > INT_MAX) throw std::runtime_error("Invalid binary dimensions/type");
+				char newline = 0; fs.get(newline);
+				if (newline == '\r') fs.get(newline);
+				if (newline != '\n') throw std::runtime_error("Missing binary payload separator");
+				const auto bytes = byteCount(rows, cols);
+				const auto offset = fs.tellg();
+				if (offset < 0 || static_cast<std::uintmax_t>(offset) > std::filesystem::file_size(path) ||
+					static_cast<std::uintmax_t>(bytes) > std::filesystem::file_size(path) -
+						static_cast<std::uintmax_t>(offset))
+					throw std::runtime_error("Truncated binary image");
+				if (v2 && (rows != static_cast<std::int64_t>(data.target_image_size.height) * data.settings.samples_y ||
+					cols != static_cast<std::int64_t>(data.target_image_size.width) * data.settings.samples_x))
+					throw std::runtime_error("Binary dimensions disagree with metadata");
+				Eigen::MatrixXd image(rows, cols);
+				if (!fs.read(reinterpret_cast<char*>(image.data()), bytes))
+					throw std::runtime_error("Short binary image read");
+				if (!image.allFinite()) throw std::runtime_error("Non-finite binary image");
+				data.m_simulated_images.push_back(std::move(image));
+			}
+			if (v2 && data.m_simulated_images.size() != count) throw std::runtime_error("Missing binary images");
 			return data;
+		}
+	private:
+		static void checkBinaryPlatform() {
+			const std::uint16_t test = 1;
+			if (sizeof(double) != 8 || !std::numeric_limits<double>::is_iec559 ||
+				*reinterpret_cast<const unsigned char*>(&test) != 1)
+				throw std::runtime_error("Binary format requires little-endian IEEE754 doubles");
+		}
+		static std::streamsize byteCount(std::int64_t rows, std::int64_t cols) {
+			if (rows <= 0 || cols <= 0 ||
+				static_cast<std::uint64_t>(rows) > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max()) / 8 /
+					static_cast<std::uint64_t>(cols)) throw std::overflow_error("Image payload size overflow");
+			return static_cast<std::streamsize>(rows) * static_cast<std::streamsize>(cols) * 8;
 		}
 	};
 
@@ -518,9 +524,15 @@ namespace Protocoll {
 		// Member
 		bool validAndSet() const {
 			constexpr double eps = 1e-9;
-			if (pattern_x == 0 || pattern_y == 0) return false;
-			if (pattern_width < eps) return false;
+			if (pattern_x < 4 || pattern_y < 4) return false;
+			if (!std::isfinite(pattern_width) || pattern_width < eps) return false;
 			if (translationMatrix.empty()) return false;
+			for (const auto& pose : translationMatrix) {
+				const Eigen::Matrix3d R = pose.block<3, 3>(0, 0);
+				if (!pose.allFinite() || !pose.row(3).isApprox(Eigen::RowVector4d(0, 0, 0, 1), 1e-9) ||
+					!(R.transpose() * R).isApprox(Eigen::Matrix3d::Identity(), 1e-7) ||
+					std::abs(R.determinant() - 1) > 1e-7) return false;
+			}
 
 			return true;
 		}
@@ -617,8 +629,13 @@ namespace Protocoll {
 
 			CalibrationData data{};
 
-			node[std::string(m_keys[1])] >> data.pattern_x;
-			node[std::string(m_keys[2])] >> data.pattern_y;
+			int width = 0, height = 0;
+			node[std::string(m_keys[1])] >> width;
+			node[std::string(m_keys[2])] >> height;
+			if (width < 4 || height < 4 || width > UINT16_MAX || height > UINT16_MAX)
+				throw std::runtime_error("Invalid board dimensions");
+			data.pattern_x = static_cast<std::uint16_t>(width);
+			data.pattern_y = static_cast<std::uint16_t>(height);
 			node[std::string(m_keys[3])] >> data.pattern_width;
 
 			cv::FileNodeIterator start = node[std::string(m_keys[4])].begin();
@@ -635,6 +652,9 @@ namespace Protocoll {
 			for (auto it = start; it != end; ++it) {
 				cv::Mat currentTranslation{};
 				*it >> currentTranslation;
+				if (currentTranslation.size() != cv::Size(4, 4) || currentTranslation.channels() != 1)
+					throw std::runtime_error("Pose must be a 4x4 matrix");
+				currentTranslation.convertTo(currentTranslation, CV_64F);
 
 				Eigen::Matrix4d matrix = Eigen::Matrix4d::Zero();
 
@@ -646,6 +666,7 @@ namespace Protocoll {
 
 				data.translationMatrix.push_back(std::move(matrix));
 			}
+			if (!data.validAndSet()) throw std::runtime_error("Invalid board or pose metadata");
 			return data;
 		}
 	};
@@ -685,19 +706,50 @@ namespace Protocoll {
 			file.open(save_path, std::ios_base::in);
 			std::string path{};
 
-			file >> path;
-
-			int c{ file.get() };
-			
-			if (c != '\n')
-				throw std::runtime_error("Datatype has a Proceeding Whitspace");
-
-			file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+			if (!std::getline(file, path)) throw std::runtime_error("Cannot read saved path");
+			if (!path.empty() && path.back() == '\r') path.pop_back();
 
 			SaveProtocoll save{};
 			save.path = path;
 
 			return save;
+		}
+	};
+
+	
+	// This struct defines mainly which variations of the synthetic groundtruth should be tested
+	// 1) Noise of found image coordinates in x and y direction (calculate for a given pixeloffset)
+	// 2) Maybe "undistort" images that should not have distortoin coefficient and look what happens
+	// 3) Smoothing should be defined here. (Mainly the Kernel offset):
+	//  Supersampling is done for each image over which we apply a smoothing whith the filter kernel is size +2 defaulted.
+	// Per-axis kernel sizes are samples+kernel_offset, rounded up to an odd size.
+	// The processing stage then performs true INTER_AREA downsampling.
+	struct SyntheticCalibrationConfig {
+		int kernel_offset{ 2 };
+		// Noise that is applied on found chessboard corners 
+		struct Noise {
+			bool use_noise{ false };
+			Eigen::Vector2d max_noise{};
+			Eigen::Vector2d min_noise{};
+		}
+		m_noise{};
+
+		bool validAndSet() const {
+			if (kernel_offset > 100 || kernel_offset < 0) return false;
+			if (!m_noise.use_noise) return true;
+			if (!m_noise.max_noise.allFinite() || !m_noise.min_noise.allFinite() ||
+				(m_noise.max_noise.array() < m_noise.min_noise.array()).any()) return false;
+
+			return true;
+		}
+	};
+
+	class SyntheticCalibrationConfigPacket {
+		std::vector<SyntheticCalibrationConfig> m_workload{};
+
+		bool validAndSet() const {
+			return !m_workload.empty() && std::all_of(m_workload.begin(), m_workload.end(),
+				[](const SyntheticCalibrationConfig& c) { return c.validAndSet(); });
 		}
 	};
 
@@ -709,10 +761,10 @@ namespace Protocoll {
 
 		bool validAndSet() const 
 		{
-			if (m_camera.validAndSet()) return false;
-			if (m_calibration.validAndSet()) return false;
+			if (!m_camera.validAndSet()) return false;
+			if (!m_calibration.validAndSet()) return false;
 			const std::size_t n_trans{ m_calibration.get_number_of_translation() };
-			if (m_simulation.validAndSet()) return false;
+			if (!m_simulation.validAndSet()) return false;
 
 			return n_trans == m_simulation.get_Number_of_Images();
 		}
@@ -871,7 +923,7 @@ namespace Protocoll {
 		static Protocoll::SimulationProtocoll readProtocoll(const std::filesystem::path& path) {
 			std::filesystem::path fs{ path };
 			if (!std::filesystem::is_directory(fs))
-				throw std::invalid_argument("Path must be a container");
+				throw std::invalid_argument("Path must be a directory");
 
 			std::filesystem::path xml{ fs / protocol_xml_name };
 			std::filesystem::path binary{ fs / simulation_binary_name };
