@@ -76,6 +76,13 @@ struct MonoCalibrationResult {
     std::string errorMessage;
 };
 
+struct visualizeDistParameters {
+    std::size_t n_points{};
+    int pixel_x{};
+    int pixel_y{};
+
+
+};
 
 struct DistortionCalibrationConfig {
     bool fixK1 = false;
@@ -87,7 +94,7 @@ struct DistortionCalibrationConfig {
     [[nodiscard]] bool valid() const {
         if (fixK1 == true && (fixK2 == false || fixK3 == false))
             return false;
-        if (fixK2 == true || fixK3 == false)
+        if (fixK2 == true && fixK3 == false)
             return false;
         if (fixK1 && fixK2 && fixK3 && !fixTangent) {
             std::cout << "WARNING: ONLY TANGENTIAL DISTORTION ESTIMATION " << std::endl;
@@ -130,8 +137,16 @@ struct DistortionCalibrationResult {
     double x_PBS{};
     double y_PBS{};
 
+    bool converged{};
+
     int iterations{};
-    std::vector<cv::Point2d> point_corrections{};    
+    std::vector<cv::Point2d> point_corrections{};   
+
+    [[nodiscard]] bool valid() const {
+        if (!converged) std::cout << "WARNING: Algorithms did not converge \n";
+        return std::isfinite(k1) && std::isfinite(k2) && std::isfinite(k3) &&
+            std::isfinite(p1) && std::isfinite(p2);
+    }
 };
 
 struct StereoCalibrationResult {
@@ -154,11 +169,13 @@ public:
 
     struct _TestDistortionCalibrationConfig {
         // Distortion Parameters
-        double k1{0.15};
-        double k2{-0.2};
-        double k3{0.1};
-        double p1{0.2};
-        double p2{-0.2};
+        double k1{};
+        double k2{};
+        double k3{};
+        double p1{};
+        double p2{};
+        double x_PBS{ };
+        double y_PBS{};
         bool add_noise{ true };
         bool save{ true };
 
@@ -193,7 +210,7 @@ public:
 
         [[nodiscard]] bool valid() const {
             if (!lineParameters.valid()) return false;
-            if (std::abs(stddev_noise) > 1.0 ) return false;
+            // if (std::abs(stddev_noise) > 1.0 ) return false;
 
             return std::isfinite(k1) && std::isfinite(k2) &&
                 std::isfinite(k3) && std::isfinite(p1) && std::isfinite(p2);
@@ -209,7 +226,7 @@ public:
                 save_path.append(".csv");
 
             // Ensure parent directory exists
-            if (save_path.parent_path().empty() && !std::filesystem::create_directories(save_path.parent_path())) {
+            if (!std::filesystem::create_directories(save_path.parent_path()) && save_path.parent_path().empty()) {
                 std::cout << "Creating files failed: Abort " << std::endl;
                 return false;
             }
@@ -220,12 +237,14 @@ public:
                 std::ofstream file(save_path, std::ios::out | std::ios::app);
                 if (!file.is_open()) return false;
 
+                file.precision(std::numeric_limits<double>::max_digits10);
+
                 // Write header only if file is newly created
                 if (!file_exists) {
                     file << "timestamp,"
-                        << "gt_k1,gt_k2,gt_k3,gt_p1,gt_p2,"
-                        << "points_per_line,noise_std_dev,"
-                        << "res_k1,res_k2,res_k3,res_p1,res_p2\n";
+                        << "gt_k1,gt_k2,gt_k3,gt_p1,gt_p2, gt_xPBS, gt_yPBS,"
+                        << "points_per_line,offset, angles, noise_std_dev, converged," 
+                        << "res_k1,res_k2,res_k3,res_p1,res_p2,res_X_PBS,res_Y_PBS\n";
                 }
 
                 // Get current timestamp
@@ -235,11 +254,32 @@ public:
 
                 // Write summary row
                 file << time_buf << ","
-                    << k1 << "," << k2 << "," << k3 << "," << p1 << "," << p2 << ","
-                    << lineParameters.points_on_line << ","
-                    << stddev_noise << ","
-                    << results.k1 << "," << results.k2 << "," << results.k3 << ","
-                    << results.p1 << "," << results.p2 << "\n";
+                    << k1 << "," << k2 << "," << k3 << "," << p1 << "," << p2 << "," 
+                    << x_PBS << "," << y_PBS << ","
+                    << lineParameters.points_on_line << ",";
+                for (const auto& offset : lineParameters.offset)
+                    file << offset << " ";
+                file << ',';
+                for (const auto& ang : lineParameters.angles)
+                    file << ang << " ";
+                file << ','
+                    << stddev_noise << "," << results.converged << ',';
+                if (std::isnan(results.k1)) file << "NaN";
+                else file << results.k1;
+                file << ',';
+                if (std::isnan(results.k2)) file << "NaN";
+                else file << results.k2;
+                file << ',';
+                if (std::isnan(results.k3)) file << "NaN";
+                else file << results.k3;
+                file << ',';
+                if (std::isnan(results.p1)) file << "NaN";
+                else file << results.p1;
+                file << ',';
+                if (std::isnan(results.p2)) file << "NaN";
+                else file << results.p2;
+                file << ',';
+                file << -results.x_PBS << ',' << -results.y_PBS;
 
                 // If point corrections need to be saved, write them to a separate companion file
                 if (save_point_corrections && !results.point_corrections.empty()) {
@@ -253,8 +293,11 @@ public:
                         for (const auto& pt : results.point_corrections) {
                             pc_file << pt.x << "," << pt.y << "\n";
                         }
+                        pc_file.close();
                     }
                 }
+                file << '\n';
+                file.close();
 
                 return true;
             }
@@ -270,6 +313,24 @@ public:
         const _TestDistortionCalibrationConfig& config_test,
         const DistortionCalibrationConfig& config,
         const std::filesystem::path& path);
+
+    struct _gtData_Analyse {
+        double k1{}, k2{}, k3{}, p1{}, p2{}, x_PBS{}, y_PBS{};
+
+        double noise{};
+
+        bool valid() const {
+            return std::isfinite(k1) && std::isfinite(k2) &&
+                std::isfinite(k3) && std::isfinite(p1) && std::isfinite(p2);
+        }
+    };
+
+    static void analyseDistortionResults(
+        const _gtData_Analyse& config,
+        const DistortionCalibrationResult& result,
+        bool visualize,
+        const std::pair<int,int>& supportPts = {100, 100},
+        const bool markPBS = false);
 
     [[nodiscard]] static DistortionCalibrationResult DistortionCalibration(
         const std::vector<std::vector<cv::Point2d>>& imagePts,

@@ -4,6 +4,9 @@
 #include <iostream>
 #include <numeric>
 #include <tuple>
+#include <Eigen/Dense>
+#include <opencv2/core/eigen.hpp>
+#include <CameraMatrix.hpp>
 
 namespace {
 cv::TermCriteria criteria(const CalibrationConfig& c) {
@@ -991,6 +994,45 @@ DistortionCalibrationResult CameraCalibration::DistortionCalibration(
 
     std::size_t iterations{ 0 };
 
+    //auto solve_with_point_refinement = [&]() -> void
+    //    {
+    //        const std::size_t max_iterations{ 1000 };
+    //        const int max_retries{ 30 };
+
+    //        // Tolerances for normalized image coordinates.
+    //        const double residual_tolerance{ 1e-12 };
+    //        const double gradient_tolerance{ 1e-10 };
+    //        const double min_damping{ 1e-15 };
+    //        const double max_damping{ 1e16 };
+
+    //        double damping{ 1e-3 };
+    //        bool converged{ false };
+
+    //        if (!evaluate(x, point_correct, a, b, residuals, config, orderedPts, point_indices))
+    //            throw std::runtime_error("Invalid initial model evaluation");
+
+    //        double cost = 0.5 * residuals.dot(residuals);
+
+    //        if (!std::isfinite(cost))
+    //            throw std::runtime_error("Initial invalid objective");
+
+    //        while (true)
+    //        {
+    //            if (std::sqrt(2.0 * cost / a.rows) <= residual_tolerance)
+    //            {
+    //                converged = true;
+    //                break;
+    //            }
+
+    //            const cv::Mat gradient_coefficients = a.t() * x;
+
+
+
+    //        }
+    //    };
+
+
+
     // This lambda owns the existing LM loop without point refinement.
     // The future refinement solver will use the same evaluate lambda.
     auto solve_without_point_refinement = [&]() -> void
@@ -1023,6 +1065,9 @@ DistortionCalibrationResult CameraCalibration::DistortionCalibration(
                     break;
                 }
 
+                // --- If we linearise the function f around one point we get a
+                // 
+                //
                 const cv::Mat gradient = a.t() * residuals;
                 double scaled_gradient_max{ 0.0 };
 
@@ -1136,6 +1181,7 @@ DistortionCalibrationResult CameraCalibration::DistortionCalibration(
         // Future solver: use evaluate(x, point_correct, a, b, residuals,
         //                            config, orderedPts, point_indices).
         // It must own its constrained iteration and step acceptance.
+        // solve_with_point_refinement();
         throw std::logic_error("Point refinement solver is not implemented yet");
     }
     else
@@ -1151,6 +1197,7 @@ DistortionCalibrationResult CameraCalibration::DistortionCalibration(
     result.p2 = (tangential) ? (x.at<double>(cv::Point(0, index++))) : (std::numeric_limits<double>::quiet_NaN());
     result.x_PBS = x.at<double>(cv::Point(0, index++));
     result.y_PBS = x.at<double>(cv::Point(0, index++));
+    result.converged = true;
 
     result.iterations = iterations;
     // result.point_corrections = (config.pointRefinement) ? ()
@@ -1181,9 +1228,16 @@ void CameraCalibration::_TestDistortionCalibration(
     const double& p2 = config_test.p2;
 
     // Identity K: all coordinates are already normalized.
-    const cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+    cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+    cameraMatrix.at<double>(0, 2) = config_test.x_PBS;
+    cameraMatrix.at<double>(1, 2) = config_test.y_PBS;
+
     const cv::Mat coefficients = (cv::Mat_<double>(1, 5) <<
         k1, k2, p1, p2, k3);
+
+    Eigen::VectorXd dist_coefficients(5);
+    dist_coefficients << k1, k2, p1, p2, k3;
+    
 
     const cv::Vec3d zero(0.0, 0.0, 0.0);
     const std::size_t n_lines = config_test.lineParameters.angles.size() * config_test.lineParameters.offset.size();
@@ -1214,12 +1268,26 @@ void CameraCalibration::_TestDistortionCalibration(
                 const double t = range * static_cast<double>(i) / 
                     config_test.lineParameters.points_on_line - (range/2.0);
 
-                straight.emplace_back(
+                cv::Point2d new_pt{
                     offset * normal.x + t * direction.x,
-                    offset * normal.y + t * direction.y);
+                    offset * normal.y + t * direction.y };
+
+                //// If point lies outside the image boundaries it is not accepted 
+                //if (std::abs(new_pt.x) >= 1.0 || std::abs(new_pt.y) >= 1.0)
+                //    continue;
+
+                straight.push_back(std::move(new_pt));
             }
 
             std::vector<cv::Point2d> meassured_distorted{};
+            meassured_distorted.reserve(straight.size());
+
+            /*for (const auto& pt : straight) {
+                auto dist = OpenCvMatrix::newtonSolverdistort(
+                    Eigen::Vector3d(pt.x , pt.y, 1.0), dist_coefficients);
+                meassured_distorted.emplace_back(dist.x() + config_test.x_PBS , dist.y() + config_test.y_PBS);
+            }*/
+
 
             // Ironcially undistortPoints does a distortion of the image coordiantes 
             cv::undistortPoints(
@@ -1228,7 +1296,7 @@ void CameraCalibration::_TestDistortionCalibration(
                 cameraMatrix,
                 coefficients,
                 cv::noArray(),
-                cv::noArray(),
+                cameraMatrix,
                 cv::TermCriteria(
                     cv::TermCriteria::COUNT | cv::TermCriteria::EPS,
                     100, 1e-14)
@@ -1246,11 +1314,21 @@ void CameraCalibration::_TestDistortionCalibration(
                 }
             }
 
-            points.push_back(std::move(meassured_distorted));
+            // Since before some points get rejected
+            if(straight.size() >=3)
+                points.push_back(std::move(meassured_distorted));
         }
     }
 
-    const auto result = DistortionCalibration(points, config);
+    DistortionCalibrationResult result;
+
+    try {
+        result = DistortionCalibration(points, config);
+    }
+    catch (const std::exception& e) {
+        std::cout << e.what() << std::endl;
+        result.converged = false;
+    }
 
     auto print = [](const char* name, double expected, double estimated)
         {
@@ -1274,8 +1352,8 @@ void CameraCalibration::_TestDistortionCalibration(
         print("p2", p2, result.p2);
     }
 
-    print("x_PBS", 0.0, result.x_PBS);
-    print("y_PBS", 0.0, result.y_PBS);
+    print("x_PBS", config_test.x_PBS, result.x_PBS);
+    print("y_PBS", config_test.x_PBS, result.y_PBS);
 
     std::cout << "Iterations: " << result.iterations << '\n';
 
@@ -1289,3 +1367,131 @@ void CameraCalibration::_TestDistortionCalibration(
     return;
 }
 
+
+void CameraCalibration::analyseDistortionResults(
+    const _gtData_Analyse& config,
+    const DistortionCalibrationResult& result,
+    bool visualize,
+    const std::pair<int, int>& supportPts,
+    const bool markPBS)
+{
+    if (!config.valid()) throw std::invalid_argument("Gt Data is corrupted");
+    if (!result.valid()) throw std::invalid_argument("Result data is corrupted");
+    
+    cv::Mat camMat = cv::Mat::eye(3, 3, CV_64F);
+
+    cv::Mat distortionGT = (cv::Mat_<double>(1, 5) << 
+        config.k1, config.k2, config.p1, config.p2, config.k3);
+
+    cv::Mat distortionResult = (cv::Mat_<double>(1, 5) <<
+        result.k1, result.k2, result.p1, result.p2, result.k3);
+
+    Eigen::VectorXd distortion{};
+    distortion.resize(static_cast<Eigen::Index>(distortionGT.cols), 1);
+
+    for (std::size_t i = 0; i < distortionGT.cols; ++i) {
+        distortion.data()[i] = distortionGT.ptr<double>(0)[i];
+    }
+    
+    // OpenCV
+    std::vector<cv::Point2d> image_pts_Distorted{};
+    std::vector<cv::Point2d> image_pts_undistorted{};
+
+    // Eigen
+    std::vector<Eigen::Vector3d> object_pt_GT{};
+    std::vector<Eigen::Vector3d> object_pt_distorted{};
+
+    std::vector<cv::Point2d> image_pts_GT{};
+    image_pts_GT.reserve(supportPts.first * supportPts.second);
+    object_pt_GT.reserve(image_pts_GT.size());
+
+    std::random_device rd{};
+    cv::RNG rng{ static_cast<std::uint64_t>( rd() << 32 | rd() )};
+    const double sigma{ 2.0 * config.noise / 2464 };
+
+    // supportPts.first = rows (y-Achse), supportPts.second = cols (x-Achse)
+    for (int r = 0; r < supportPts.first; ++r) {
+        // mappt r von [0, first-1] auf [-1.0, 1.0]
+        double row = -1.0 + 2.0 * r / std::max(1, supportPts.first - 1);
+
+        for (int c = 0; c < supportPts.second; ++c) {
+            // mappt c von [0, second-1] auf [-1.0, 1.0]
+            double col = -1.0 + 2.0 * c / std::max(1, supportPts.second - 1);
+            
+            image_pts_GT.emplace_back(col, row);
+            object_pt_GT.emplace_back(col + rng.gaussian(sigma), row + rng.gaussian(sigma), 1.0);
+        }
+    }
+
+    object_pt_distorted.reserve(image_pts_GT.size());
+
+    for (const auto& pt : object_pt_GT) {
+        object_pt_distorted.push_back(OpenCvMatrix::newtonSolverdistort(pt, distortion));
+    }
+
+    std::vector<cv::Point3d> newtonDistort{};
+    newtonDistort.reserve(object_pt_GT.size());
+
+    for (const auto& pt : object_pt_distorted)
+        newtonDistort.emplace_back(pt.x(), pt.y(), 1.0);
+
+   
+    cv::Mat rvec = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 0.0);
+    cv::Mat tvec = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 0.0);
+
+    cv::projectPoints(
+        newtonDistort,
+        rvec,
+        tvec,
+        camMat,
+        distortionResult,
+        image_pts_undistorted
+    );
+
+
+    std::map<const cv::Point2d*, cv::Point2d> errorMap{};
+    for (std::size_t i = 0; i < image_pts_undistorted.size(); ++i) {
+        errorMap.insert({
+            &image_pts_GT[i],
+            cv::Point2d(image_pts_GT[i].x - image_pts_undistorted[i].x,
+                        image_pts_GT[i].y - image_pts_undistorted[i].y)
+            });
+    }
+
+    
+    int scale_x{ 100 }, scale_y{ 100 };
+    int img_width = supportPts.second * scale_x; // cols * scale
+    int img_height = supportPts.first * scale_y;  // rows * scale
+
+    cv::Mat errorImg{ img_height, img_width, CV_8UC3, cv::Scalar(0, 0, 0) };
+
+    const double ERROR_MAGNIFICATION = 5.0;
+
+    for (const auto& [pt_gt, pt_err] : errorMap)
+    {
+        // 3. Mapping von [-1, 1] auf Pixelkoordinaten [0, width-1] bzw [0, height-1]
+        double px = (pt_gt->x + 1.0) / 2.0 * (img_width - 1);
+        double py = (pt_gt->y + 1.0) / 2.0 * (img_height - 1);
+        cv::Point2d start{ px, py };
+
+        // Fehler ebenfalls in Pixel umrechnen (nur Skalierung, keine Verschiebung!)
+        // Der Fehler ist im normalisierten Raum, wir bringen ihn in den Pixelraum
+        double err_px = pt_err.x * (img_width / 2.0) * ERROR_MAGNIFICATION;
+        double err_py = pt_err.y * (img_height / 2.0) * ERROR_MAGNIFICATION;
+
+        cv::Point2d end{ px + err_px, py + err_py };
+
+        cv::arrowedLine(
+            errorImg,
+            start,
+            end,
+            cv::Scalar(255, 0, 0), 
+            1,                    
+            cv::LINE_AA       
+        );
+    }
+
+    cv::namedWindow("Error", cv::WINDOW_NORMAL | cv::WINDOW_FREERATIO),
+    cv::imshow("Error", errorImg);
+    cv::waitKey(0);
+}

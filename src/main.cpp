@@ -86,17 +86,83 @@ static bool report(const fs::path& path, const MonoCalibrationResult& r,
 
 int main() {
 
-    std::filesystem::path path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-10-28_DistortionCalibration/Test/test.csv" };
+    std::filesystem::path path{ "C:/Users/grein/Desktop/Master/Project/deflectometrie/data/2026-11-05_DistortionCalibration_PBSmove/NoiseInfluecne_Fix_Coefficients.csv" };
+    std::vector<double> noise_level{ 0.0,  0.01, 0.05, 0.1, 0.2  };
+    /*std::vector<double> coefficients{ 0.1, 0.01, 0.001, 0.0001, 0.00001};
+    std::vector<double> coefficients{ -0.1, -0.01, -0.001 };*/
+    std::vector<DistortionCalibrationConfig> models(1);
 
-    CameraCalibration::_TestDistortionCalibrationConfig config{};
-    config.add_noise = false;
-    config.stddev_noise = 0.4;
-    config.p1 = 0.1;
-    config.p2 = 0.1;
+    std::size_t retry{ 100 };
 
-    CameraCalibration::_TestDistortionCalibration(config, {}, path);
+    models[0].fixK1 = false;
+    models[0].fixK2 = false;
+    models[0].fixK3 = false;
+    models[0].fixTangent = false;
 
+   /* models[1].fixK1 = false;
+    models[1].fixK2 = true;
+    models[1].fixK3 = true;
+    models[1].fixTangent = false;*/
 
+    std::random_device rd;
+    DistortionCalibrationResult result{};
+    /*result.k1 = 0.01;
+    result.k2 = 0.02;
+    result.k3 = 0.015;
+    result.p1 = 0.02;
+    result.p2 = 0.02;
+    result.x_PBS = 0.0;
+    result.y_PBS = 0.0;*/
+
+    result.k1 = 0.010804;
+    result.k2 = -0.00672576;
+    result.k3 = 0.00229186;
+    result.p1 = 0.0219717;
+    result.p2 = 0.0208791;
+    result.x_PBS = -0.33036;
+    result.y_PBS = -0.371504;
+
+    CameraCalibration::_gtData_Analyse gt{};
+    gt.k1 = 0.01;
+    gt.k2 = 0.02;
+    gt.k3 = 0.015;
+    gt.p1 = 0.02;
+    gt.p2 = 0.02;
+    gt.x_PBS = 0.0;
+    gt.y_PBS = 0.0;
+    gt.noise = 1.46;
+
+    CameraCalibration::analyseDistortionResults(
+        gt,
+        result,
+        true,
+        { 20, 20 },
+        false
+    );
+    
+    /*for (const auto& calib_config : models) {
+        for (double noise = 0.0; noise < 5.0; noise += 0.01) {
+            for (std::size_t i = 0; i < retry; ++i) {
+                CameraCalibration::_TestDistortionCalibrationConfig config{};
+                config.x_PBS = 0.01;
+                config.y_PBS = 0.01;
+                config.lineParameters.points_on_line = 20;
+                config.lineParameters.offset = { -0.8, -0.6, -0.4, 0.4, 0.6, 0.8 };
+                config.lineParameters.angles = { 0.0, CV_PI / 4.0, CV_PI / 2.0, CV_PI * 3.0 / 4.0 };
+                config.add_noise = true;
+                config.stddev_noise = noise;
+                config.seed_Random = (static_cast<std::uint64_t>(rd()) << 32) | rd();
+                config.k1 = 0.01;
+                config.k2 = -0.02;
+                config.k3 = 0.015;
+                config.p1 = 0.02;
+                config.p2 = 0.02;
+                config.save = true;
+
+                CameraCalibration::_TestDistortionCalibration(config, calib_config, path);
+            }
+        }
+    }*/
     //try {
     //    // EDIT THIS ONE PATH. Each run creates a NEW subdirectory.
     //    const fs::path root = R"(C:\Users\grein\Desktop\SyntheticCalibration_50mm)";
